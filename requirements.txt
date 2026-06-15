@@ -5,3 +5,4 @@ zeep
 cryptography 
 python-dotenv 
 requests 
+lxml 
