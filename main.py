@@ -19,6 +19,21 @@ load_dotenv()
 
 app = FastAPI(title="Axenda Contable API")
 
+# Si los archivos no existen pero hay contenido en variables de entorno, crearlos
+def setup_cert_files():
+    cert_content = os.getenv("CERT_CONTENT")
+    key_content  = os.getenv("KEY_CONTENT")
+    if cert_content and not Path("axenda-contable.crt").exists():
+        with open("axenda-contable.crt", "w") as f:
+            f.write(cert_content)
+        os.environ["CERT_PATH"] = "axenda-contable.crt"
+    if key_content and not Path("axenda_privada.key").exists():
+        with open("axenda_privada.key", "w") as f:
+            f.write(key_content)
+        os.environ["KEY_PATH"] = "axenda_privada.key"
+
+setup_cert_files()
+
 # CORS — permite que el portal y la webapp accedan al backend
 app.add_middleware(
     CORSMiddleware,
@@ -256,12 +271,14 @@ async def sync_cliente_arca(slug: str):
 
 @app.get("/")
 async def health():
+    cert_ok = bool(os.getenv("CERT_CONTENT") or (CERT_PATH and Path(CERT_PATH).exists()))
+    key_ok  = bool(os.getenv("KEY_CONTENT")  or (KEY_PATH  and Path(KEY_PATH).exists()))
     return {
         "status": "ok",
         "servicio": "Axenda Contable API",
-        "version": "1.0.0",
-        "cert_ok": Path(CERT_PATH).exists() if CERT_PATH else False,
-        "key_ok":  Path(KEY_PATH).exists() if KEY_PATH else False,
+        "version": "1.0.1",
+        "cert_ok": cert_ok,
+        "key_ok":  key_ok,
     }
 
 
