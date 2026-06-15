@@ -1,4 +1,4 @@
-﻿import os, re, json, datetime, base64, uuid, random
+﻿import os, re, datetime, base64, uuid, random, subprocess, tempfile
 from pathlib import Path
 from dotenv import load_dotenv
 from lxml import etree
@@ -6,10 +6,6 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client
 import requests
-from cryptography.hazmat.primitives import serialization, hashes
-from cryptography.hazmat.primitives.serialization import pkcs7
-from cryptography import x509
-from cryptography.hazmat.backends import default_backend
 
 load_dotenv()
 
@@ -62,17 +58,29 @@ def crear_tra(servicio: str) -> str:
 </loginTicketRequest>"""
 
 def firmar_tra(tra: str) -> str:
-    with open(CERT_PATH, "rb") as f:
-        cert = x509.load_pem_x509_certificate(f.read(), default_backend())
-    with open(KEY_PATH, "rb") as f:
-        key = serialization.load_pem_private_key(f.read(), password=None, backend=default_backend())
-    signed = (
-        pkcs7.PKCS7SignatureBuilder()
-        .set_data(tra.encode("utf-8"))
-        .add_signer(cert, key, hashes.SHA256())
-        .sign(serialization.Encoding.DER, [pkcs7.PKCS7Options.DetachedSignature])
-    )
-    return base64.b64encode(signed).decode("utf-8")
+    """Firma el TRA usando openssl via subprocess — compatible con ARCA"""
+    with tempfile.NamedTemporaryFile(suffix=".xml", delete=False, mode="w") as f:
+        f.write(tra)
+        tra_path = f.name
+    out_path = tra_path + ".cms"
+    try:
+        result = subprocess.run([
+            "openssl", "smime", "-sign",
+            "-in",    tra_path,
+            "-signer", CERT_PATH,
+            "-inkey",  KEY_PATH,
+            "-outform", "DER",
+            "-nodetach",
+            "-out",   out_path
+        ], capture_output=True, timeout=15)
+        if result.returncode != 0:
+            raise Exception(f"openssl error: {result.stderr.decode()}")
+        with open(out_path, "rb") as f:
+            return base64.b64encode(f.read()).decode("utf-8")
+    finally:
+        os.unlink(tra_path)
+        if os.path.exists(out_path):
+            os.unlink(out_path)
 
 def obtener_token(servicio: str = "ws_sr_padron_a13") -> dict:
     global _token_cache
@@ -125,7 +133,7 @@ def consultar_padron_a13(cuit: str) -> dict:
     r = requests.post(PADRON_URL, data=soap_body.encode("utf-8"),
                       headers={"Content-Type": "text/xml; charset=UTF-8", "SOAPAction": ""}, timeout=30)
     if r.status_code != 200:
-        raise Exception(f"Padrón A13 error {r.status_code}: {r.text[:500]}")
+        raise Exception(f"Padron A13 error {r.status_code}: {r.text[:500]}")
     root = etree.fromstring(r.content)
     persona = root.find(".//{http://a13.soap.wsServicioConsultaPersona.afip.gov.ar/}persona")
     if persona is None:
@@ -149,12 +157,11 @@ async def health():
     if cert_ok:
         with open(CERT_PATH) as f:
             cert_lines = len(f.readlines())
+    openssl_ok = subprocess.run(["openssl", "version"], capture_output=True).returncode == 0
     return {
-        "status":     "ok",
-        "version":    "1.2.0",
-        "cert_ok":    cert_ok,
-        "key_ok":     key_ok,
-        "cert_lines": cert_lines,
+        "status": "ok", "version": "1.3.0",
+        "cert_ok": cert_ok, "key_ok": key_ok,
+        "cert_lines": cert_lines, "openssl_ok": openssl_ok,
         "cuit_contador": CUIT_CONTADOR,
     }
 
