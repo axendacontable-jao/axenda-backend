@@ -310,7 +310,7 @@ async def wscdc_debug(cuit: str):
   </soapenv:Body>
 </soapenv:Envelope>"""
     r = requests.post(
-        "https://serviciosjava.afip.gob.ar/wscdc/services/WSDCService",
+        "https://aws.afip.gov.ar/wscdc/services/WSDCService",
         data=soap_body.encode("utf-8"),
         headers={"Content-Type": "text/xml; charset=UTF-8", "SOAPAction": ""},
         timeout=30
@@ -320,5 +320,8 @@ async def wscdc_debug(cuit: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
+
+
 
 
