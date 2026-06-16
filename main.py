@@ -37,10 +37,10 @@ setup_cert_files()
 CERT_PATH = os.getenv("CERT_PATH", "axenda-contable.crt")
 KEY_PATH  = os.getenv("KEY_PATH",  "axenda_privada.key")
 
-_token_cache = {"token": None, "sign": None, "expira": None}
+# Cache separado por servicio
+_token_cache = {}
 
 WSAA_URL_PROD = "https://wsaa.afip.gov.ar/ws/services/LoginCms"
-PADRON_URL    = "https://aws.afip.gov.ar/sr-padron/webservices/personaServiceA13"
 
 def crear_tra(servicio: str) -> str:
     ahora = datetime.datetime.now(datetime.timezone.utc)
@@ -58,7 +58,6 @@ def crear_tra(servicio: str) -> str:
 </loginTicketRequest>"""
 
 def firmar_tra(tra: str) -> str:
-    """Firma el TRA usando openssl via subprocess — compatible con ARCA"""
     with tempfile.NamedTemporaryFile(suffix=".xml", delete=False, mode="w") as f:
         f.write(tra)
         tra_path = f.name
@@ -66,12 +65,8 @@ def firmar_tra(tra: str) -> str:
     try:
         result = subprocess.run([
             "openssl", "smime", "-sign",
-            "-in",    tra_path,
-            "-signer", CERT_PATH,
-            "-inkey",  KEY_PATH,
-            "-outform", "DER",
-            "-nodetach",
-            "-out",   out_path
+            "-in", tra_path, "-signer", CERT_PATH, "-inkey", KEY_PATH,
+            "-outform", "DER", "-nodetach", "-out", out_path
         ], capture_output=True, timeout=15)
         if result.returncode != 0:
             raise Exception(f"openssl error: {result.stderr.decode()}")
@@ -82,11 +77,12 @@ def firmar_tra(tra: str) -> str:
         if os.path.exists(out_path):
             os.unlink(out_path)
 
-def obtener_token(servicio: str = "ws_sr_padron_a13") -> dict:
+def obtener_token(servicio: str) -> dict:
     global _token_cache
     ahora = datetime.datetime.now(datetime.timezone.utc)
-    if (_token_cache["token"] and _token_cache["expira"] and ahora < _token_cache["expira"]):
-        return _token_cache
+    cached = _token_cache.get(servicio)
+    if cached and cached["expira"] and ahora < cached["expira"]:
+        return cached
     tra = crear_tra(servicio)
     cms = firmar_tra(tra)
     soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -106,16 +102,57 @@ def obtener_token(servicio: str = "ws_sr_padron_a13") -> dict:
     root = etree.fromstring(r.content)
     resultado = root.find(".//{http://wsaa.view.sua.dvadac.desein.afip.gov}loginCmsReturn")
     if resultado is None:
-        raise Exception(f"WSAA sin loginCmsReturn. Respuesta: {r.text[:500]}")
+        raise Exception(f"WSAA sin loginCmsReturn: {r.text[:500]}")
     ticket = etree.fromstring(resultado.text.encode("utf-8"))
     token = ticket.find(".//token").text
     sign  = ticket.find(".//sign").text
-    expira_str = ticket.find(".//expirationTime").text
-    expira = datetime.datetime.fromisoformat(expira_str)
-    _token_cache = {"token": token, "sign": sign, "expira": expira}
-    return _token_cache
+    expira = datetime.datetime.fromisoformat(ticket.find(".//expirationTime").text)
+    _token_cache[servicio] = {"token": token, "sign": sign, "expira": expira}
+    return _token_cache[servicio]
 
-def consultar_padron_a13(cuit: str) -> dict:
+def buscar_en_constancia(cuit: str) -> dict:
+    """Busca en Padron A5 / constancia inscripcion. Devuelve nombre, apellido y categoria."""
+    auth = obtener_token("ws_sr_constancia_inscripcion")
+    soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:con="http://a5.soap.ws.server.puc.sr/">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <con:getPersona>
+      <token>{auth['token']}</token>
+      <sign>{auth['sign']}</sign>
+      <cuitRepresentada>{CUIT_CONTADOR}</cuitRepresentada>
+      <idPersona>{cuit}</idPersona>
+    </con:getPersona>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+    r = requests.post(
+        "https://aws.afip.gov.ar/sr-padron/webservices/personaServiceA5",
+        data=soap_body.encode("utf-8"),
+        headers={"Content-Type": "text/xml; charset=UTF-8", "SOAPAction": ""},
+        timeout=30
+    )
+    root = etree.fromstring(r.content)
+    def get(tag):
+        el = root.find(f".//{tag}")
+        return el.text if el is not None else ""
+    nombre   = get("nombre")
+    apellido = get("apellido") or get("razonSocial")
+    estado   = get("estadoClave")
+    # Categoria: busqueda flexible
+    categoria = ""
+    for el in root.iter():
+        if "categoria" in el.tag.lower() and el.text:
+            categoria = el.text.strip().split()[0].upper()
+            if categoria.match if hasattr(categoria, 'match') else re.match(r'^[A-K]$', categoria):
+                break
+    if not nombre and not apellido:
+        raise Exception("CUIT no encontrado en constancia")
+    return {"cuit": cuit, "nombre": nombre, "apellido": apellido,
+            "categoria": categoria, "estado": estado, "fuente": "constancia"}
+
+def buscar_en_padron(cuit: str) -> dict:
+    """Fallback: busca en Padron A13. Solo devuelve nombre y apellido."""
     auth = obtener_token("ws_sr_padron_a13")
     soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
@@ -130,24 +167,22 @@ def consultar_padron_a13(cuit: str) -> dict:
     </a13:getPersona>
   </soapenv:Body>
 </soapenv:Envelope>"""
-    r = requests.post(PADRON_URL, data=soap_body.encode("utf-8"),
-                      headers={"Content-Type": "text/xml; charset=UTF-8", "SOAPAction": ""}, timeout=30)
-    if r.status_code != 200:
-        raise Exception(f"Padron A13 error {r.status_code}: {r.text[:500]}")
+    r = requests.post(
+        "https://aws.afip.gov.ar/sr-padron/webservices/personaServiceA13",
+        data=soap_body.encode("utf-8"),
+        headers={"Content-Type": "text/xml; charset=UTF-8", "SOAPAction": ""},
+        timeout=30
+    )
     root = etree.fromstring(r.content)
-    persona = root.find(".//persona")
-    if persona is None:
-        raise Exception(f"CUIT no encontrado. Respuesta: {r.text[:300]}")
     def get(tag):
-        el = persona.find(f".//{tag}")
+        el = root.find(f".//{tag}")
         return el.text if el is not None else ""
-    return {
-        "cuit":     cuit,
-        "nombre":   get("nombre"),
-        "apellido": get("apellido") or get("razonSocial"),
-        "estado":   get("estadoClave"),
-        "tipo":     get("tipoClave"),
-    }
+    nombre   = get("nombre")
+    apellido = get("apellido") or get("razonSocial")
+    if not nombre and not apellido:
+        raise Exception("CUIT no encontrado en padron A13")
+    return {"cuit": cuit, "nombre": nombre, "apellido": apellido,
+            "categoria": "", "estado": get("estadoClave"), "fuente": "padron"}
 
 @app.get("/")
 async def health():
@@ -159,93 +194,28 @@ async def health():
             cert_lines = len(f.readlines())
     openssl_ok = subprocess.run(["openssl", "version"], capture_output=True).returncode == 0
     return {
-        "status": "ok", "version": "1.3.0",
+        "status": "ok", "version": "1.4.0",
         "cert_ok": cert_ok, "key_ok": key_ok,
         "cert_lines": cert_lines, "openssl_ok": openssl_ok,
         "cuit_contador": CUIT_CONTADOR,
+        "servicios_cacheados": list(_token_cache.keys()),
     }
-
-@app.get("/constancia-debug/{cuit}")
-async def constancia_debug(cuit: str):
-    cuit_limpio = re.sub(r"\D", "", cuit)
-    auth = obtener_token("ws_sr_constancia_inscripcion")
-    soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-                  xmlns:con="http://a5.soap.ws.server.puc.sr/">
-  <soapenv:Header/>
-  <soapenv:Body>
-    <con:getPersona>
-      <token>{auth["token"]}</token>
-      <sign>{auth["sign"]}</sign>
-      <cuitRepresentada>{CUIT_CONTADOR}</cuitRepresentada>
-      <idPersona>{cuit_limpio}</idPersona>
-    </con:getPersona>
-  </soapenv:Body>
-</soapenv:Envelope>"""
-    r = requests.post(
-        "https://aws.afip.gov.ar/sr-padron/webservices/personaServiceA5",
-        data=soap_body.encode("utf-8"),
-        headers={"Content-Type": "text/xml; charset=UTF-8", "SOAPAction": ""},
-        timeout=30
-    )
-    return {"raw": r.text}
-
-@app.get("/constancia/{cuit}")
-async def consultar_constancia(cuit: str):
-    cuit_limpio = re.sub(r"\\D", "", cuit)
-    if len(cuit_limpio) != 11:
-        raise HTTPException(400, "CUIT invalido: debe tener 11 digitos")
-    try:
-        auth = obtener_token("ws_sr_constancia_inscripcion")
-        soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-                  xmlns:con="http://a5.soap.ws.server.puc.sr/">
-  <soapenv:Header/>
-  <soapenv:Body>
-    <con:getPersona>
-      <token>{auth["token"]}</token>
-      <sign>{auth["sign"]}</sign>
-      <cuitRepresentada>{CUIT_CONTADOR}</cuitRepresentada>
-      <idPersona>{cuit_limpio}</idPersona>
-    </con:getPersona>
-  </soapenv:Body>
-</soapenv:Envelope>"""
-        r = requests.post(
-            "https://aws.afip.gov.ar/sr-padron/webservices/personaServiceA5",
-            data=soap_body.encode("utf-8"),
-            headers={"Content-Type": "text/xml; charset=UTF-8", "SOAPAction": ""},
-            timeout=30
-        )
-        root = etree.fromstring(r.content)
-        def get(tag):
-            el = root.find(f".//{tag}")
-            return el.text if el is not None else ""
-        tags = [el.tag for el in root.iter()]
-        categoria = ""
-        for t in tags:
-            if "categoria" in t.lower() or "Categoria" in t:
-                el = root.find(f".//{t}")
-                if el is not None and el.text:
-                    categoria = el.text.split()[0] if el.text else ""
-                    break
-        return {
-            "cuit": cuit_limpio,
-            "categoria": categoria,
-            "impuesto": get("descripcionImpuesto"),
-            "estado": get("descripcionEstado"),
-        }
-    except Exception as e:
-        raise HTTPException(500, f"Error constancia: {str(e)}")
 
 @app.get("/padron/{cuit}")
 async def consultar_padron(cuit: str):
     cuit_limpio = re.sub(r'\D', '', cuit)
     if len(cuit_limpio) != 11:
         raise HTTPException(400, "CUIT invalido: debe tener 11 digitos")
+    # 1) Intentar constancia (trae nombre, apellido y categoria)
     try:
-        return consultar_padron_a13(cuit_limpio)
-    except Exception as e:
-        raise HTTPException(500, f"Error ARCA: {str(e)}")
+        return buscar_en_constancia(cuit_limpio)
+    except Exception as e1:
+        pass
+    # 2) Fallback: padron A13 (solo nombre y apellido)
+    try:
+        return buscar_en_padron(cuit_limpio)
+    except Exception as e2:
+        raise HTTPException(404, f"CUIT no encontrado: {str(e2)}")
 
 @app.get("/clientes")
 async def listar_clientes():
@@ -320,17 +290,3 @@ async def datos_portal(slug: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
