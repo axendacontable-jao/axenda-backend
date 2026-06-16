@@ -287,6 +287,37 @@ async def datos_portal(slug: str):
         "documentos": docs_res.data or [], "alertas": alertas_res.data or [],
     }
 
+@app.get("/wscdc-debug/{cuit}")
+async def wscdc_debug(cuit: str):
+    cuit_limpio = re.sub(r"\D", "", cuit)
+    auth = obtener_token("wscdc")
+    soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:wsc="http://ar.gov.afip.dif.wscdc/">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <wsc:consultarComprobantes>
+      <wsc:authRequest>
+        <token>{auth["token"]}</token>
+        <sign>{auth["sign"]}</sign>
+        <cuitRepresentada>{cuit_limpio}</cuitRepresentada>
+      </wsc:authRequest>
+      <wsc:consultaRequest>
+        <fechaDesde>20250701</fechaDesde>
+        <fechaHasta>20260616</fechaHasta>
+      </wsc:consultaRequest>
+    </wsc:consultarComprobantes>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+    r = requests.post(
+        "https://serviciosjava.afip.gob.ar/wscdc/services/WSDCService",
+        data=soap_body.encode("utf-8"),
+        headers={"Content-Type": "text/xml; charset=UTF-8", "SOAPAction": ""},
+        timeout=30
+    )
+    return {"status": r.status_code, "raw": r.text[:3000]}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
