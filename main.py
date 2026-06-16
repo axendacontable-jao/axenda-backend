@@ -171,15 +171,15 @@ async def constancia_debug(cuit: str):
     auth = obtener_token("ws_sr_constancia_inscripcion")
     soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-                  xmlns:con="http://ws.server.constancia.puc.sr/">
+                  xmlns:con="http://a5.soap.ws.server.puc.sr/">
   <soapenv:Header/>
   <soapenv:Body>
-    <con:getConstanciaInscripcion>
+    <con:getPersona>
       <token>{auth["token"]}</token>
       <sign>{auth["sign"]}</sign>
       <cuitRepresentada>{CUIT_CONTADOR}</cuitRepresentada>
       <idPersona>{cuit_limpio}</idPersona>
-    </con:getConstanciaInscripcion>
+    </con:getPersona>
   </soapenv:Body>
 </soapenv:Envelope>"""
     r = requests.post(
@@ -199,15 +199,15 @@ async def consultar_constancia(cuit: str):
         auth = obtener_token("ws_sr_constancia_inscripcion")
         soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-                  xmlns:con="http://ws.server.constancia.puc.sr/">
+                  xmlns:con="http://a5.soap.ws.server.puc.sr/">
   <soapenv:Header/>
   <soapenv:Body>
-    <con:getConstanciaInscripcion>
+    <con:getPersona>
       <token>{auth["token"]}</token>
       <sign>{auth["sign"]}</sign>
       <cuitRepresentada>{CUIT_CONTADOR}</cuitRepresentada>
       <idPersona>{cuit_limpio}</idPersona>
-    </con:getConstanciaInscripcion>
+    </con:getPersona>
   </soapenv:Body>
 </soapenv:Envelope>"""
         r = requests.post(
@@ -313,6 +313,7 @@ async def datos_portal(slug: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
 
 
 
