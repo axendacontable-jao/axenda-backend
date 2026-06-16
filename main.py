@@ -165,6 +165,46 @@ async def health():
         "cuit_contador": CUIT_CONTADOR,
     }
 
+@app.get("/constancia/{cuit}")
+async def consultar_constancia(cuit: str):
+    cuit_limpio = re.sub(r"\\D", "", cuit)
+    if len(cuit_limpio) != 11:
+        raise HTTPException(400, "CUIT invalido: debe tener 11 digitos")
+    try:
+        auth = obtener_token("ws_sr_constancia_inscripcion")
+        soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:con="http://ws.server.constancia.puc.sr/">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <con:getConstanciaInscripcion>
+      <token>{auth["token"]}</token>
+      <sign>{auth["sign"]}</sign>
+      <cuitRepresentada>{CUIT_CONTADOR}</cuitRepresentada>
+      <idPersona>{cuit_limpio}</idPersona>
+    </con:getConstanciaInscripcion>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        r = requests.post(
+            "https://aws.afip.gov.ar/sr-padron/webservices/personaServiceA5",
+            data=soap_body.encode("utf-8"),
+            headers={"Content-Type": "text/xml; charset=UTF-8", "SOAPAction": ""},
+            timeout=30
+        )
+        root = etree.fromstring(r.content)
+        def get(tag):
+            el = root.find(f".//{tag}")
+            return el.text if el is not None else ""
+        categoria = get("categMonotributo") or get("categoria") or ""
+        return {
+            "cuit": cuit_limpio,
+            "categoria": categoria,
+            "impuesto": get("descripcionImpuesto"),
+            "estado": get("descripcionEstado"),
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Error constancia: {str(e)}")
+
 @app.get("/padron/{cuit}")
 async def consultar_padron(cuit: str):
     cuit_limpio = re.sub(r'\D', '', cuit)
@@ -248,6 +288,7 @@ async def datos_portal(slug: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
 
 
 
