@@ -58,12 +58,11 @@ _token_cache = {}
 
 WSAA_URL_PROD = "https://wsaa.afip.gov.ar/ws/services/LoginCms"
 
-def crear_tra(servicio: str, cuit_rep: str = None) -> str:
+def crear_tra(servicio: str) -> str:
     ahora = datetime.datetime.now(datetime.timezone.utc)
     desde = (ahora - datetime.timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
     hasta = (ahora + datetime.timedelta(hours=12)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
     unique_id = str(random.randint(1, 2147483647))
-    rep_tag = f"  <cuitRepresentada>{cuit_rep}</cuitRepresentada>" if cuit_rep else ""
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <loginTicketRequest version="1.0">
   <header>
@@ -72,7 +71,6 @@ def crear_tra(servicio: str, cuit_rep: str = None) -> str:
     <expirationTime>{hasta}</expirationTime>
   </header>
   <service>{servicio}</service>
-{rep_tag}
 </loginTicketRequest>"""
 
 def firmar_tra(tra: str) -> str:
@@ -367,6 +365,9 @@ async def wsfe_debug(cuit: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
+
+
 
 
 
