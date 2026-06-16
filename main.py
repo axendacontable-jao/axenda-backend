@@ -6,6 +6,22 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client
 import requests
+import urllib3
+from requests.adapters import HTTPAdapter
+from urllib3.util.ssl_ import create_urllib3_context
+
+class LegacySSLAdapter(HTTPAdapter):
+    def init_poolmanager(self, *args, **kwargs):
+        ctx = create_urllib3_context()
+        ctx.set_ciphers("DEFAULT:@SECLEVEL=1")
+        ctx.options |= 0x4  # OP_LEGACY_SERVER_CONNECT
+        kwargs["ssl_context"] = ctx
+        return super().init_poolmanager(*args, **kwargs)
+
+def requests_legacy():
+    s = requests.Session()
+    s.mount("https://", LegacySSLAdapter())
+    return s
 
 load_dotenv()
 
@@ -95,7 +111,7 @@ def obtener_token(servicio: str) -> dict:
     </wsaa:loginCms>
   </soapenv:Body>
 </soapenv:Envelope>"""
-    r = requests.post(WSAA_URL_PROD, data=soap_body.encode("utf-8"),
+    r = requests_legacy().post(WSAA_URL_PROD, data=soap_body.encode("utf-8"),
                       headers={"Content-Type": "text/xml; charset=UTF-8", "SOAPAction": ""}, timeout=30)
     if r.status_code != 200:
         raise Exception(f"WSAA error {r.status_code}: {r.text[:500]}")
@@ -126,7 +142,7 @@ def buscar_en_constancia(cuit: str) -> dict:
     </con:getPersona>
   </soapenv:Body>
 </soapenv:Envelope>"""
-    r = requests.post(
+    r = requests_legacy().post(
         "https://aws.afip.gov.ar/sr-padron/webservices/personaServiceA5",
         data=soap_body.encode("utf-8"),
         headers={"Content-Type": "text/xml; charset=UTF-8", "SOAPAction": ""},
@@ -167,7 +183,7 @@ def buscar_en_padron(cuit: str) -> dict:
     </a13:getPersona>
   </soapenv:Body>
 </soapenv:Envelope>"""
-    r = requests.post(
+    r = requests_legacy().post(
         "https://aws.afip.gov.ar/sr-padron/webservices/personaServiceA13",
         data=soap_body.encode("utf-8"),
         headers={"Content-Type": "text/xml; charset=UTF-8", "SOAPAction": ""},
@@ -309,7 +325,7 @@ async def wscdc_debug(cuit: str):
     </wsc:consultarComprobantes>
   </soapenv:Body>
 </soapenv:Envelope>"""
-    r = requests.post(
+    r = requests_legacy().post(
         "https://aws.afip.gov.ar/wscdc/services/WSDCService",
         data=soap_body.encode("utf-8"),
         headers={"Content-Type": "text/xml; charset=UTF-8", "SOAPAction": ""},
@@ -337,7 +353,7 @@ async def wsfe_debug(cuit: str):
     </ar:FECompUltimoAutorizado>
   </soapenv:Body>
 </soapenv:Envelope>"""
-    r = requests.post(
+    r = requests_legacy().post(
         "https://servicios1.afip.gov.ar/wsfev1/service.asmx",
         data=soap_body.encode("utf-8"),
         headers={"Content-Type": "text/xml; charset=UTF-8", "SOAPAction": ""},
@@ -348,6 +364,9 @@ async def wsfe_debug(cuit: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
+
+
 
 
 
