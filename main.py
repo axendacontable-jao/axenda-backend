@@ -165,6 +165,31 @@ async def health():
         "cuit_contador": CUIT_CONTADOR,
     }
 
+@app.get("/constancia-debug/{cuit}")
+async def constancia_debug(cuit: str):
+    cuit_limpio = re.sub(r"\D", "", cuit)
+    auth = obtener_token("ws_sr_constancia_inscripcion")
+    soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:con="http://ws.server.constancia.puc.sr/">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <con:getConstanciaInscripcion>
+      <token>{auth["token"]}</token>
+      <sign>{auth["sign"]}</sign>
+      <cuitRepresentada>{CUIT_CONTADOR}</cuitRepresentada>
+      <idPersona>{cuit_limpio}</idPersona>
+    </con:getConstanciaInscripcion>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+    r = requests.post(
+        "https://aws.afip.gov.ar/sr-padron/webservices/personaServiceA5",
+        data=soap_body.encode("utf-8"),
+        headers={"Content-Type": "text/xml; charset=UTF-8", "SOAPAction": ""},
+        timeout=30
+    )
+    return {"raw": r.text}
+
 @app.get("/constancia/{cuit}")
 async def consultar_constancia(cuit: str):
     cuit_limpio = re.sub(r"\\D", "", cuit)
@@ -288,6 +313,7 @@ async def datos_portal(slug: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
 
 
 
