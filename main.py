@@ -135,7 +135,7 @@ def consultar_padron_a13(cuit: str) -> dict:
     if r.status_code != 200:
         raise Exception(f"Padron A13 error {r.status_code}: {r.text[:500]}")
     root = etree.fromstring(r.content)
-    persona = root.find(".//{http://a13.soap.wsServicioConsultaPersona.afip.gov.ar/}persona")
+    persona = root.find(".//persona")
     if persona is None:
         raise Exception(f"CUIT no encontrado. Respuesta: {r.text[:300]}")
     def get(tag):
@@ -248,5 +248,7 @@ async def datos_portal(slug: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
+
 
 
