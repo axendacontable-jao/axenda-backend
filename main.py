@@ -356,7 +356,7 @@ async def wsfe_debug(cuit: str):
     r = requests_legacy().post(
         "https://servicios1.afip.gov.ar/wsfev1/service.asmx",
         data=soap_body.encode("utf-8"),
-        headers={"Content-Type": "text/xml; charset=UTF-8", "SOAPAction": ""},
+        headers={"Content-Type": "text/xml; charset=UTF-8", "SOAPAction": "http://ar.gov.afip.dif.FEV1/FECompUltimoAutorizado"},
         timeout=30
     )
     return {"status": r.status_code, "raw": r.text[:3000]}
@@ -364,6 +364,8 @@ async def wsfe_debug(cuit: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
+
 
 
 
