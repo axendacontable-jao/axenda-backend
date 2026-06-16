@@ -119,7 +119,7 @@ def consultar_padron_a13(cuit: str) -> dict:
     auth = obtener_token("ws_sr_padron_a13")
     soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-                  xmlns:a13="http://a13.soap.wsServicioConsultaPersona.afip.gov.ar/">
+                  xmlns:a13="http://a13.soap.ws.server.puc.sr/">
   <soapenv:Header/>
   <soapenv:Body>
     <a13:getPersona>
@@ -248,4 +248,5 @@ async def datos_portal(slug: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
 
