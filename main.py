@@ -337,7 +337,7 @@ async def wscdc_debug(cuit: str):
 @app.get("/wsfe-debug/{cuit}")
 async def wsfe_debug(cuit: str):
     cuit_limpio = re.sub(r"\D", "", cuit)
-    auth = obtener_token("wsfe", cuit_limpio)
+    auth = obtener_token("wsfev1", cuit_limpio)
     soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
                   xmlns:ar="http://ar.gov.afip.dif.FEV1/">
@@ -365,6 +365,8 @@ async def wsfe_debug(cuit: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
+
 
 
 
