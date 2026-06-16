@@ -100,7 +100,7 @@ def obtener_token(servicio: str, cuit_rep: str = None) -> dict:
     cached = _token_cache.get(cache_key)
     if cached and cached["expira"] and ahora < cached["expira"]:
         return cached
-    tra = crear_tra(servicio, cuit_rep)
+    tra = crear_tra(servicio)
     cms = firmar_tra(tra)
     soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
@@ -365,6 +365,7 @@ async def wsfe_debug(cuit: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
 
 
 
