@@ -58,11 +58,12 @@ _token_cache = {}
 
 WSAA_URL_PROD = "https://wsaa.afip.gov.ar/ws/services/LoginCms"
 
-def crear_tra(servicio: str) -> str:
+def crear_tra(servicio: str, cuit_rep: str = None) -> str:
     ahora = datetime.datetime.now(datetime.timezone.utc)
     desde = (ahora - datetime.timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
     hasta = (ahora + datetime.timedelta(hours=12)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
     unique_id = str(random.randint(1, 2147483647))
+    rep_tag = f"  <cuitRepresentada>{cuit_rep}</cuitRepresentada>" if cuit_rep else ""
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <loginTicketRequest version="1.0">
   <header>
@@ -71,6 +72,7 @@ def crear_tra(servicio: str) -> str:
     <expirationTime>{hasta}</expirationTime>
   </header>
   <service>{servicio}</service>
+{rep_tag}
 </loginTicketRequest>"""
 
 def firmar_tra(tra: str) -> str:
@@ -93,13 +95,14 @@ def firmar_tra(tra: str) -> str:
         if os.path.exists(out_path):
             os.unlink(out_path)
 
-def obtener_token(servicio: str) -> dict:
+def obtener_token(servicio: str, cuit_rep: str = None) -> dict:
     global _token_cache
     ahora = datetime.datetime.now(datetime.timezone.utc)
-    cached = _token_cache.get(servicio)
+    cache_key = f"{servicio}:{cuit_rep}" if cuit_rep else servicio
+    cached = _token_cache.get(cache_key)
     if cached and cached["expira"] and ahora < cached["expira"]:
         return cached
-    tra = crear_tra(servicio)
+    tra = crear_tra(servicio, cuit_rep)
     cms = firmar_tra(tra)
     soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
@@ -123,8 +126,8 @@ def obtener_token(servicio: str) -> dict:
     token = ticket.find(".//token").text
     sign  = ticket.find(".//sign").text
     expira = datetime.datetime.fromisoformat(ticket.find(".//expirationTime").text)
-    _token_cache[servicio] = {"token": token, "sign": sign, "expira": expira}
-    return _token_cache[servicio]
+    _token_cache[cache_key] = {"token": token, "sign": sign, "expira": expira}
+    return _token_cache[cache_key]
 
 def buscar_en_constancia(cuit: str) -> dict:
     """Busca en Padron A5 / constancia inscripcion. Devuelve nombre, apellido y categoria."""
@@ -336,7 +339,7 @@ async def wscdc_debug(cuit: str):
 @app.get("/wsfe-debug/{cuit}")
 async def wsfe_debug(cuit: str):
     cuit_limpio = re.sub(r"\D", "", cuit)
-    auth = obtener_token("wsfe")
+    auth = obtener_token("wsfe", cuit_limpio)
     soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
                   xmlns:ar="http://ar.gov.afip.dif.FEV1/">
@@ -364,6 +367,13 @@ async def wsfe_debug(cuit: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
+
+
+
+
+
+
 
 
 
