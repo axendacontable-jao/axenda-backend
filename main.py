@@ -107,7 +107,7 @@ def obtener_token(servicio: str = "ws_sr_padron_a13") -> dict:
     resultado = root.find(".//{http://wsaa.view.sua.dvadac.desein.afip.gov}loginCmsReturn")
     if resultado is None:
         raise Exception(f"WSAA sin loginCmsReturn. Respuesta: {r.text[:500]}")
-    ticket = etree.fromstring(resultado.text)
+    ticket = etree.fromstring(resultado.text.encode("utf-8"))
     token = ticket.find(".//token").text
     sign  = ticket.find(".//sign").text
     expira_str = ticket.find(".//expirationTime").text
@@ -248,3 +248,4 @@ async def datos_portal(slug: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
