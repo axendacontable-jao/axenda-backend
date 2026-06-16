@@ -220,7 +220,7 @@ async def consultar_constancia(cuit: str):
         def get(tag):
             el = root.find(f".//{tag}")
             return el.text if el is not None else ""
-        categoria = get("categMonotributo") or get("categoria") or ""
+        categoria = get("categoriaMonotributo") or ""
         return {
             "cuit": cuit_limpio,
             "categoria": categoria,
@@ -313,6 +313,7 @@ async def datos_portal(slug: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
 
 
 
