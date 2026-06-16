@@ -317,9 +317,39 @@ async def wscdc_debug(cuit: str):
     )
     return {"status": r.status_code, "raw": r.text[:3000]}
 
+@app.get("/wsfe-debug/{cuit}")
+async def wsfe_debug(cuit: str):
+    cuit_limpio = re.sub(r"\D", "", cuit)
+    auth = obtener_token("wsfe")
+    soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:ar="http://ar.gov.afip.dif.FEV1/">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <ar:FECompUltimoAutorizado>
+      <ar:Auth>
+        <ar:Token>{auth["token"]}</ar:Token>
+        <ar:Sign>{auth["sign"]}</ar:Sign>
+        <ar:Cuit>{cuit_limpio}</ar:Cuit>
+      </ar:Auth>
+      <ar:PtoVta>1</ar:PtoVta>
+      <ar:CbteTipo>11</ar:CbteTipo>
+    </ar:FECompUltimoAutorizado>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+    r = requests.post(
+        "https://servicios1.afip.gov.ar/wsfev1/service.asmx",
+        data=soap_body.encode("utf-8"),
+        headers={"Content-Type": "text/xml; charset=UTF-8", "SOAPAction": ""},
+        timeout=30
+    )
+    return {"status": r.status_code, "raw": r.text[:3000]}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
+
 
 
 
