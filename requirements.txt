@@ -9,3 +9,5 @@ lxml
 
 pandas
 openpyxl
+
+python-multipart
