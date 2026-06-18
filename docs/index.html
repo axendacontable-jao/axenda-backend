@@ -1,0 +1,1158 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Axenda Contable — Panel de Administración</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
+* { margin:0; padding:0; box-sizing:border-box; }
+:root {
+  --bg:#F0F2F7; --card:#FFFFFF; --sidebar:#1B2D4F;
+  --green:#2BAF82; --yellow:#E8A020; --red:#E04545;
+  --blue:#1B2D4F; --text:#1B2D4F; --muted:#6B7A96;
+  --border:#DDE3EE; --light:#EAF0F6;
+}
+body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text); }
+.layout { display:flex; min-height:100vh; }
+
+/* SIDEBAR */
+.sidebar { width:220px; background:var(--sidebar); position:fixed; top:0; left:0; bottom:0; display:flex; flex-direction:column; z-index:100; }
+.sidebar-logo { padding:24px 20px 18px; border-bottom:1px solid #1F3358; }
+.logo-main { font-size:16px; font-weight:700; color:var(--green); letter-spacing:0.04em; }
+.logo-sub { font-size:10px; color:#5D8AB0; letter-spacing:0.14em; text-transform:uppercase; margin-top:2px; }
+.sidebar-nav { padding:16px 12px; flex:1; overflow-y:auto; }
+.nav-section { font-size:10px; color:#4D6A8A; letter-spacing:0.12em; text-transform:uppercase; padding:8px 10px 4px; font-weight:500; }
+.nav-btn { display:flex; align-items:center; gap:9px; padding:9px 10px; border-radius:8px; font-size:13px; color:#8CA0BE; cursor:pointer; transition:0.15s; margin-bottom:2px; border:none; background:none; width:100%; text-align:left; font-family:inherit; }
+.nav-btn:hover { background:#243C65; color:#E8EDF5; }
+.nav-btn.active { background:#1E3A62; color:var(--green); font-weight:600; }
+.sidebar-footer { padding:14px 16px; border-top:1px solid #1F3358; }
+.footer-text { font-size:11px; color:#4D6A8A; text-align:center; }
+
+/* MAIN */
+.main { margin-left:220px; flex:1; }
+.topbar { background:#fff; border-bottom:1px solid var(--border); padding:0 28px; height:58px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:50; box-shadow:0 1px 6px rgba(27,45,79,0.06); }
+.topbar-title { font-size:15px; font-weight:600; }
+.topbar-right { display:flex; align-items:center; gap:12px; }
+.topbar-date { font-size:12px; color:var(--muted); font-family:'DM Mono',monospace; }
+.content { padding:28px; }
+
+/* STAT CARDS */
+.stats-row { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:24px; }
+.stat-card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:18px; box-shadow:0 2px 8px rgba(27,45,79,0.04); }
+.stat-label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.09em; margin-bottom:8px; }
+.stat-val { font-size:30px; font-weight:300; font-family:'DM Mono',monospace; line-height:1; }
+.stat-badge { display:inline-flex; align-items:center; gap:4px; font-size:11px; padding:3px 9px; border-radius:12px; font-weight:500; margin-top:8px; }
+.badge-green { background:#2BAF8215; color:var(--green); }
+.badge-yellow { background:#E8A02015; color:var(--yellow); }
+.badge-red { background:#E0454514; color:var(--red); }
+.badge-blue { background:#1B2D4F12; color:var(--blue); }
+
+/* CLIENTES GRID */
+.clientes-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:16px; }
+.cliente-card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:20px; box-shadow:0 2px 8px rgba(27,45,79,0.04); cursor:pointer; transition:0.15s; position:relative; overflow:hidden; }
+.cliente-card:hover { border-color:var(--green); transform:translateY(-1px); box-shadow:0 4px 16px rgba(27,45,79,0.1); }
+.cliente-card.inactivo { opacity:0.55; }
+.cliente-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
+.cliente-avatar { width:38px; height:38px; border-radius:50%; background:linear-gradient(135deg,#2BAF82,#1B2D4F); display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:700; color:#fff; flex-shrink:0; }
+.cliente-nombre { font-size:14px; font-weight:600; }
+.cliente-cat { font-size:12px; color:var(--muted); margin-top:1px; }
+.semaforo-pill { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:600; padding:4px 10px; border-radius:20px; letter-spacing:0.04em; }
+.pill-verde { background:#2BAF8218; color:var(--green); border:1px solid #2BAF8230; }
+.pill-amarillo { background:#E8A02018; color:var(--yellow); border:1px solid #E8A02030; }
+.pill-rojo { background:#E0454514; color:var(--red); border:1px solid #E0454528; }
+.pill-gris { background:#6B7A9614; color:var(--muted); border:1px solid #6B7A9628; }
+.bar-track { height:5px; background:var(--light); border-radius:5px; overflow:hidden; }
+.bar-fill { height:100%; border-radius:5px; transition:width 0.8s cubic-bezier(0.22,1,0.36,1); }
+.fill-verde { background:linear-gradient(90deg,#2BAF82,#1E8F68); }
+.fill-amarillo { background:linear-gradient(90deg,#E8A020,#F5C842); }
+.fill-rojo { background:linear-gradient(90deg,#E04545,#C83030); }
+.cliente-bar-wrap { margin:12px 0 8px; }
+.cliente-bar-label { display:flex; justify-content:space-between; font-size:11px; color:var(--muted); margin-bottom:4px; }
+.cliente-footer { display:flex; justify-content:space-between; align-items:center; margin-top:10px; }
+.cliente-cuota { font-size:13px; font-family:'DM Mono',monospace; font-weight:500; }
+.cliente-dias { font-size:11px; color:var(--muted); }
+.cliente-link { font-size:11px; color:var(--green); font-weight:500; text-decoration:none; display:flex; align-items:center; gap:4px; }
+.inactivo-badge { position:absolute; top:12px; right:12px; background:#6B7A9614; color:var(--muted); font-size:10px; font-weight:600; padding:2px 8px; border-radius:10px; letter-spacing:0.06em; text-transform:uppercase; }
+
+/* MODAL */
+.modal-overlay { position:fixed; inset:0; background:rgba(27,45,79,0.45); display:flex; align-items:center; justify-content:center; z-index:200; backdrop-filter:blur(4px); padding:20px; }
+.modal { background:#fff; border-radius:18px; padding:28px 32px; width:100%; max-width:480px; box-shadow:0 24px 60px rgba(27,45,79,0.2); max-height:90vh; overflow-y:auto; }
+.modal-title { font-size:18px; font-weight:700; margin-bottom:6px; }
+.modal-sub { font-size:13px; color:var(--muted); margin-bottom:22px; }
+.form-group { margin-bottom:14px; }
+.form-label { font-size:12px; font-weight:600; color:var(--blue); margin-bottom:5px; display:block; letter-spacing:0.04em; }
+.form-input { width:100%; padding:10px 14px; border:1.5px solid var(--border); border-radius:9px; font-size:14px; font-family:inherit; color:var(--text); outline:none; transition:0.15s; background:#fff; }
+.form-input:focus { border-color:var(--green); box-shadow:0 0 0 3px #2BAF8215; }
+.form-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.arca-result { background:var(--light); border-radius:9px; padding:12px 14px; margin-top:8px; border:1px solid #2BAF8228; }
+.arca-result-label { font-size:10px; color:var(--green); font-weight:600; text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px; }
+.arca-result-val { font-size:14px; font-weight:600; }
+.modal-actions { display:flex; gap:10px; margin-top:20px; }
+.btn-primary { flex:1; padding:12px; background:var(--green); color:#fff; border:none; border-radius:10px; font-size:14px; font-weight:600; cursor:pointer; transition:0.15s; font-family:inherit; }
+.btn-primary:hover { background:#1E8F68; }
+.btn-primary:disabled { background:#9DCFBC; cursor:not-allowed; }
+.btn-secondary { padding:12px 20px; background:var(--light); color:var(--muted); border:none; border-radius:10px; font-size:14px; font-weight:500; cursor:pointer; transition:0.15s; font-family:inherit; }
+.btn-secondary:hover { background:var(--border); }
+
+/* SEARCH */
+.search-bar { display:flex; align-items:center; gap:12px; margin-bottom:20px; flex-wrap:wrap; }
+.search-input { flex:1; min-width:180px; padding:10px 16px; border:1.5px solid var(--border); border-radius:10px; font-size:14px; font-family:inherit; outline:none; transition:0.15s; background:#fff; }
+.search-input:focus { border-color:var(--green); }
+.filter-btn { padding:10px 16px; border:1.5px solid var(--border); border-radius:10px; font-size:13px; font-weight:500; cursor:pointer; background:#fff; color:var(--muted); transition:0.15s; font-family:inherit; }
+.filter-btn.active { border-color:var(--green); color:var(--green); background:#2BAF8210; }
+.add-btn { padding:10px 18px; background:var(--green); color:#fff; border:none; border-radius:10px; font-size:13px; font-weight:600; cursor:pointer; transition:0.15s; font-family:inherit; display:flex; align-items:center; gap:6px; white-space:nowrap; }
+.add-btn:hover { background:#1E8F68; }
+
+/* EMPTY / LOADING */
+.empty-state { text-align:center; padding:48px 20px; color:var(--muted); }
+.empty-icon { font-size:44px; margin-bottom:10px; }
+.empty-title { font-size:15px; font-weight:600; color:var(--blue); margin-bottom:6px; }
+.empty-desc { font-size:13px; line-height:1.6; }
+.skeleton { background:linear-gradient(90deg,#EAF0F6 25%,#DDE3EE 50%,#EAF0F6 75%); background-size:200% 100%; animation:shimmer 1.4s infinite; border-radius:8px; }
+@keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+
+/* TOAST */
+.toast { position:fixed; bottom:24px; right:24px; background:var(--blue); color:#fff; padding:14px 20px; border-radius:12px; font-size:14px; font-weight:500; box-shadow:0 8px 24px rgba(27,45,79,0.3); z-index:999; animation:slide-up 0.3s ease; max-width:360px; }
+@keyframes slide-up { from{transform:translateY(20px);opacity:0} to{transform:translateY(0);opacity:1} }
+
+/* TABLA */
+.table-wrap { background:var(--card); border:1px solid var(--border); border-radius:14px; overflow:hidden; }
+.data-table { width:100%; border-collapse:collapse; }
+.data-table th { font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.09em; padding:12px 16px; text-align:left; border-bottom:1px solid var(--border); background:#FAFBFD; }
+.data-table td { padding:13px 16px; font-size:13px; border-bottom:1px solid #F2F4F8; vertical-align:middle; }
+.data-table tr:last-child td { border-bottom:none; }
+.data-table tbody tr:hover td { background:#F8FAFC; }
+.estado-badge { display:inline-flex; align-items:center; gap:4px; font-size:11px; font-weight:600; padding:3px 10px; border-radius:12px; }
+.estado-al-dia { background:#2BAF8215; color:var(--green); }
+.estado-debe { background:#E0454514; color:var(--red); }
+.table-action { background:none; border:1px solid var(--border); border-radius:7px; padding:5px 12px; font-size:12px; font-weight:500; cursor:pointer; font-family:inherit; color:var(--muted); transition:0.15s; white-space:nowrap; }
+.table-action:hover { border-color:var(--green); color:var(--green); }
+.table-action.danger:hover { border-color:var(--red); color:var(--red); }
+
+/* DETALLE CLIENTE */
+.back-btn { display:inline-flex; align-items:center; gap:6px; font-size:13px; color:var(--muted); font-weight:500; background:none; border:none; cursor:pointer; font-family:inherit; padding:0; margin-bottom:20px; transition:0.15s; }
+.back-btn:hover { color:var(--text); }
+.detail-header { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:20px 24px; margin-bottom:20px; }
+.detail-header-top { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; }
+.detail-avatar { width:48px; height:48px; border-radius:50%; background:linear-gradient(135deg,#2BAF82,#1B2D4F); display:flex; align-items:center; justify-content:center; font-size:16px; font-weight:700; color:#fff; flex-shrink:0; }
+.detail-nombre { font-size:18px; font-weight:700; }
+.detail-sub { font-size:13px; color:var(--muted); margin-top:3px; }
+.detail-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:14px; padding-top:14px; border-top:1px solid var(--border); }
+.action-chip { display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border:1.5px solid var(--border); border-radius:9px; font-size:13px; font-weight:500; cursor:pointer; background:#fff; color:var(--text); transition:0.15s; font-family:inherit; text-decoration:none; white-space:nowrap; }
+.action-chip:hover { border-color:var(--green); color:var(--green); background:#2BAF8206; }
+.action-chip.wa { border-color:#25D366; color:#25D366; }
+.action-chip.wa:hover { background:#25D36610; }
+.action-chip:disabled { opacity:0.5; cursor:not-allowed; }
+
+/* TABS */
+.tabs { display:flex; gap:0; border-bottom:2px solid var(--border); margin-bottom:20px; overflow-x:auto; }
+.tab-btn { padding:10px 18px; font-size:13px; font-weight:500; background:none; border:none; cursor:pointer; font-family:inherit; color:var(--muted); transition:0.15s; border-bottom:2px solid transparent; margin-bottom:-2px; white-space:nowrap; }
+.tab-btn:hover { color:var(--text); }
+.tab-btn.active { color:var(--green); border-bottom-color:var(--green); font-weight:600; }
+
+/* FACTURACION TAB */
+.detail-section { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:22px; margin-bottom:16px; }
+.section-title { font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:16px; }
+.month-row { display:flex; align-items:center; gap:12px; padding:9px 0; border-bottom:1px solid #F0F2F7; }
+.month-row:last-child { border-bottom:none; }
+.month-label { font-size:13px; font-weight:500; width:80px; flex-shrink:0; }
+.month-bar-wrap { flex:1; }
+.month-bar-track { height:6px; background:var(--light); border-radius:6px; overflow:hidden; }
+.month-bar-fill { height:100%; border-radius:6px; background:linear-gradient(90deg,#2BAF82,#1E8F68); transition:width 0.6s ease; }
+.month-amount { font-size:12px; font-family:'DM Mono',monospace; font-weight:500; text-align:right; width:86px; flex-shrink:0; }
+.info-row { display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-bottom:1px solid #F0F2F7; }
+.info-row:last-child { border-bottom:none; }
+.info-key { font-size:12px; color:var(--muted); }
+.info-val { font-size:13px; font-weight:600; }
+
+/* PLAN CARD */
+.plan-card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:18px; margin-bottom:12px; }
+.plan-card.cancelado { opacity:0.6; }
+.plan-card-top { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px; }
+.plan-num { font-size:15px; font-weight:700; font-family:'DM Mono',monospace; }
+.plan-org-badge { font-size:11px; font-weight:600; padding:3px 9px; border-radius:10px; background:var(--light); color:var(--blue); }
+.plan-meta { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:10px; }
+.plan-meta-item { font-size:12px; color:var(--muted); }
+.plan-meta-item strong { color:var(--text); font-weight:600; }
+.plan-progress-label { display:flex; justify-content:space-between; font-size:11px; color:var(--muted); margin-bottom:4px; }
+.plan-progress-track { height:5px; background:var(--light); border-radius:5px; overflow:hidden; margin-bottom:10px; }
+.plan-progress-fill { height:100%; border-radius:5px; background:linear-gradient(90deg,#2BAF82,#1E8F68); }
+.plan-actions { display:flex; gap:8px; flex-wrap:wrap; }
+
+/* ALERTAS */
+.alert-item { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; padding:11px 14px; border-radius:10px; margin-bottom:8px; border-left:3px solid var(--border); background:var(--light); }
+.alert-item.vencimiento { background:#E8A02006; border-left-color:var(--yellow); }
+.alert-item.recategorizacion { background:#1B2D4F06; border-left-color:var(--blue); }
+.alert-item.deuda { background:#E0454506; border-left-color:var(--red); }
+.alert-item.manual { background:#2BAF8206; border-left-color:var(--green); }
+.alert-left { display:flex; align-items:flex-start; gap:9px; }
+.alert-icon { font-size:15px; flex-shrink:0; margin-top:1px; }
+.alert-text { font-size:13px; line-height:1.5; }
+.alert-tipo-badge { font-size:10px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.08em; }
+.alert-del { background:none; border:none; cursor:pointer; font-size:16px; color:var(--muted); padding:0; line-height:1; transition:0.15s; flex-shrink:0; }
+.alert-del:hover { color:var(--red); }
+.alert-form { background:var(--light); border:1px solid var(--border); border-radius:12px; padding:16px; margin-top:16px; }
+
+/* DOCUMENTOS */
+.doc-row { display:flex; align-items:center; justify-content:space-between; padding:11px 0; border-bottom:1px solid #F0F2F7; }
+.doc-row:last-child { border-bottom:none; }
+.doc-info { flex:1; }
+.doc-nombre { font-size:13px; font-weight:600; }
+.doc-meta { font-size:11px; color:var(--muted); margin-top:2px; }
+.doc-link { font-size:12px; color:var(--green); font-weight:500; text-decoration:none; display:flex; align-items:center; gap:4px; }
+
+/* TOPES (Configuración) */
+.tope-input { padding:7px 10px; border:1.5px solid var(--border); border-radius:7px; font-size:13px; font-family:'DM Mono',monospace; width:130px; outline:none; transition:0.15s; background:#fff; }
+.tope-input:focus { border-color:var(--green); }
+
+/* TOPES CARDS */
+.topes-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:12px; }
+.tope-card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:20px; text-align:center; }
+.tope-cat { font-size:32px; font-weight:300; font-family:'DM Mono',monospace; color:var(--blue); line-height:1; }
+.tope-val { font-size:14px; font-weight:600; margin-top:6px; }
+.tope-sub { font-size:11px; color:var(--muted); margin-top:2px; }
+
+/* PLACEHOLDER */
+.placeholder-view { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:80px 20px; color:var(--muted); text-align:center; }
+.placeholder-icon { font-size:52px; margin-bottom:16px; opacity:0.35; }
+.placeholder-title { font-size:16px; font-weight:600; color:var(--blue); margin-bottom:8px; }
+.placeholder-desc { font-size:13px; line-height:1.6; max-width:320px; }
+
+/* CUOTAS */
+.cuotas-header { display:flex; align-items:flex-end; justify-content:space-between; margin-bottom:20px; flex-wrap:wrap; gap:12px; }
+
+@media(max-width:900px) {
+  .sidebar { display:none; }
+  .main { margin-left:0; }
+  .stats-row { grid-template-columns:1fr 1fr; }
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { createClient } = supabase;
+const { useState, useEffect, useRef } = React;
+
+const BACKEND_URL  = "https://axenda-backend-production.up.railway.app";
+const SUPABASE_URL = "https://mfzkcangoekzyadylaxi.supabase.co";
+const SUPABASE_KEY = "sb_publishable_XpIFC8TNibuit_o1LOtPbw_iPoyONEu";
+const PORTAL_URL   = "https://benevolent-taffy-8b3761.netlify.app";
+const db = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const MESES      = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+const MESES_FULL = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+const ORGANISMOS = ["ARCA","ART","ARERN","Otro"];
+const TIPOS_ALERTA = ["vencimiento","recategorizacion","deuda","manual"];
+const ICONO_ALERTA = { vencimiento:"⏰", recategorizacion:"📊", deuda:"💸", manual:"📌" };
+
+function $$(n) {
+  if (!n && n !== 0) return "$—";
+  return "$" + Math.round(n).toLocaleString("es-AR");
+}
+function diasAlCorte() {
+  const hoy = new Date();
+  const año = hoy.getFullYear();
+  const julio = new Date(año, 6, 1);
+  const enero = new Date(año + 1, 0, 1);
+  return Math.ceil(((hoy < julio ? julio : enero) - hoy) / (1000*60*60*24));
+}
+function semaforoInfo(pct) {
+  if (!pct || pct === 0) return { label:"SIN DATOS", clase:"pill-gris",    fillClass:"fill-verde",    color:"#6B7A96" };
+  if (pct < 0.6)         return { label:"EN ORDEN",  clase:"pill-verde",    fillClass:"fill-verde",    color:"#2BAF82" };
+  if (pct < 0.85)        return { label:"ATENCIÓN",  clase:"pill-amarillo", fillClass:"fill-amarillo", color:"#E8A020" };
+  return                        { label:"AL LÍMITE", clase:"pill-rojo",     fillClass:"fill-rojo",     color:"#E04545" };
+}
+function initials(n, a) { return ((n?.[0]||"")+(a?.[0]||"")).toUpperCase(); }
+function parseArgDate(s) {
+  if (!s || !s.trim()) return null;
+  const p = s.trim().split("/");
+  if (p.length !== 3 || p[2].length !== 4) return null;
+  return `${p[2]}-${p[1].padStart(2,"0")}-${p[0].padStart(2,"0")}`;
+}
+function formatArgDate(iso) {
+  if (!iso) return "—";
+  try { const [y,m,d]=iso.split("T")[0].split("-"); return `${d}/${m}/${y}`; } catch { return iso; }
+}
+
+// ── Modal nuevo cliente ──
+function ModalNuevoCliente({ onClose, onGuardado, topes }) {
+  const [cuit,setCuit]=useState(""); const [nombre,setNombre]=useState(""); const [apellido,setApellido]=useState("");
+  const [whatsapp,setWhatsapp]=useState(""); const [categoria,setCategoria]=useState(""); const [cuota,setCuota]=useState("");
+  const [buscando,setBuscando]=useState(false); const [padronOk,setPadronOk]=useState(false); const [guardando,setGuardando]=useState(false);
+
+  async function buscarEnArca() {
+    if (cuit.replace(/\D/g,"").length<11) return;
+    setBuscando(true);
+    try {
+      const res=await fetch(`${BACKEND_URL}/padron/${cuit.replace(/\D/g,"")}`);
+      if (!res.ok){alert("CUIT no encontrado en ARCA");setBuscando(false);return;}
+      const d=await res.json();
+      setNombre(d.nombre||""); setApellido(d.apellido||""); setPadronOk(true);
+      const cat=(d.categoria||"").trim().charAt(0).toUpperCase();
+      if (/^[A-K]$/.test(cat)) setCategoria(cat);
+    } catch(e){alert("Error consultando ARCA: "+e.message);}
+    setBuscando(false);
+  }
+  function slug(){const a=apellido.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/\s+/g,"-");return `${a}-${cuit.replace(/\D/g,"")}`;}
+  async function guardar(){
+    if (!cuit||!nombre||!apellido) return;
+    setGuardando(true);
+    try {
+      const res=await fetch(`${BACKEND_URL}/clientes`,{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({nombre,apellido,cuit:cuit.replace(/\D/g,""),whatsapp,categoria:categoria.toUpperCase()||null,cuota:cuota?parseFloat(cuota):null})});
+      const d=await res.json();
+      if(d.ok){onGuardado(d.slug);onClose();}else alert("Error: "+JSON.stringify(d));
+    }catch(e){alert("Error: "+e.message);}
+    setGuardando(false);
+  }
+  return (
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="modal">
+        <div className="modal-title">Nuevo cliente</div>
+        <div className="modal-sub">Ingresá el CUIT para buscar en ARCA automáticamente.</div>
+        <div className="form-group">
+          <label className="form-label">CUIT</label>
+          <div style={{display:"flex",gap:"8px"}}>
+            <input className="form-input" placeholder="20-12345678-9" value={cuit} onChange={e=>{setCuit(e.target.value);setPadronOk(false);}} style={{flex:1}}/>
+            <button className="btn-primary" style={{flex:"0 0 auto",padding:"10px 16px",fontSize:"13px"}} onClick={buscarEnArca} disabled={buscando||cuit.replace(/\D/g,"").length<11}>{buscando?"...":"Buscar"}</button>
+          </div>
+          {padronOk&&<div className="arca-result"><div className="arca-result-label">✓ Encontrado en ARCA</div><div className="arca-result-val">{nombre} {apellido}</div></div>}
+        </div>
+        <div className="form-row">
+          <div className="form-group"><label className="form-label">Nombre</label><input className="form-input" value={nombre} onChange={e=>setNombre(e.target.value)} placeholder="Ignacio"/></div>
+          <div className="form-group"><label className="form-label">Apellido</label><input className="form-input" value={apellido} onChange={e=>setApellido(e.target.value)} placeholder="Celedon"/></div>
+        </div>
+        <div className="form-row">
+          <div className="form-group">
+            <label className="form-label">Categoría</label>
+            <select className="form-input" value={categoria} onChange={e=>setCategoria(e.target.value)}>
+              <option value="">— elegir —</option>
+              {topes.map(t=><option key={t.categoria} value={t.categoria}>Cat. {t.categoria} — {$$(t.tope_anual)}/año</option>)}
+            </select>
+          </div>
+          <div className="form-group"><label className="form-label">Cuota mensual</label><input className="form-input" value={cuota} onChange={e=>setCuota(e.target.value)} placeholder="28400" type="number"/></div>
+        </div>
+        <div className="form-group"><label className="form-label">WhatsApp</label><input className="form-input" value={whatsapp} onChange={e=>setWhatsapp(e.target.value)} placeholder="2944123456"/></div>
+        <div style={{background:"#EAF0F6",borderRadius:"9px",padding:"10px 14px",fontSize:"12px",color:"#6B7A96",marginBottom:"4px"}}>
+          <strong style={{color:"#1B2D4F"}}>Link del portal:</strong> {slug()?`${PORTAL_URL}/?cliente=${slug()}`:"—"}
+        </div>
+        <div className="modal-actions">
+          <button className="btn-secondary" onClick={onClose}>Cancelar</button>
+          <button className="btn-primary" onClick={guardar} disabled={!cuit||!nombre||!apellido||guardando}>{guardando?"Guardando...":"Guardar cliente"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Modal resultado importacion ──
+function ModalImportResult({ result, onClose }) {
+  return (
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="modal" style={{maxWidth:"440px"}}>
+        <div className="modal-title">Comprobantes importados</div>
+        <div className="modal-sub">{result.meses} {result.meses===1?"mes importado":"meses importados"} para <strong>{result.slug}</strong>.</div>
+        <div style={{display:"flex",flexDirection:"column",gap:"6px",marginBottom:"20px"}}>
+          {(result.detalle||[]).map((r,i)=>(
+            <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"9px 14px",background:"var(--light)",borderRadius:"9px"}}>
+              <span style={{fontSize:"13px",fontWeight:"500"}}>{MESES_FULL[r.mes-1]} {r.anio}</span>
+              <span style={{fontSize:"13px",fontFamily:"'DM Mono',monospace",color:"var(--green)",fontWeight:"600"}}>{$$(r.monto)}</span>
+            </div>
+          ))}
+        </div>
+        <button className="btn-primary" onClick={onClose}>Listo</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Modal nuevo plan de pago ──
+function ModalNuevoPlan({ slug, onClose, onGuardado }) {
+  const [form, setForm] = useState({ numero_plan:"", organismo:"ARCA", fecha_consolidacion:"", proximo_venc:"", cuotas_pagas:"0", total_cuotas:"", monto_primer_venc:"", monto_segundo_venc:"", url_pdf:"" });
+  const [guardando, setGuardando] = useState(false);
+  const set = (k,v) => setForm(p=>({...p,[k]:v}));
+
+  async function guardar() {
+    if (!form.numero_plan) return;
+    setGuardando(true);
+    try {
+      const payload = {
+        numero_plan: form.numero_plan,
+        organismo: form.organismo,
+        fecha_consolidacion: parseArgDate(form.fecha_consolidacion),
+        proximo_venc: parseArgDate(form.proximo_venc),
+        total_cuotas: form.total_cuotas ? parseInt(form.total_cuotas) : null,
+        cuotas_pagas: form.cuotas_pagas ? parseInt(form.cuotas_pagas) : 0,
+        monto_primer_venc: form.monto_primer_venc ? parseFloat(form.monto_primer_venc) : null,
+        monto_segundo_venc: form.monto_segundo_venc ? parseFloat(form.monto_segundo_venc) : null,
+        url_pdf: form.url_pdf || null,
+      };
+      const res = await fetch(`${BACKEND_URL}/planes/${slug}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+      const d = await res.json();
+      if (d.ok) { onGuardado(); onClose(); } else alert("Error: "+JSON.stringify(d));
+    } catch(e) { alert("Error: "+e.message); }
+    setGuardando(false);
+  }
+  return (
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="modal" style={{maxWidth:"520px"}}>
+        <div className="modal-title">Nuevo plan de pago</div>
+        <div className="modal-sub">Cargá los datos del plan consolidado en ARCA u otro organismo.</div>
+        <div className="form-row">
+          <div className="form-group"><label className="form-label">Nro. de plan</label><input className="form-input" value={form.numero_plan} onChange={e=>set("numero_plan",e.target.value)} placeholder="V601877"/></div>
+          <div className="form-group">
+            <label className="form-label">Organismo</label>
+            <select className="form-input" value={form.organismo} onChange={e=>set("organismo",e.target.value)}>
+              {ORGANISMOS.map(o=><option key={o} value={o}>{o}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="form-row">
+          <div className="form-group"><label className="form-label">Fecha consolidación</label><input className="form-input" value={form.fecha_consolidacion} onChange={e=>set("fecha_consolidacion",e.target.value)} placeholder="20/01/2026"/></div>
+          <div className="form-group"><label className="form-label">Próximo vencimiento</label><input className="form-input" value={form.proximo_venc} onChange={e=>set("proximo_venc",e.target.value)} placeholder="16/06/2026"/></div>
+        </div>
+        <div className="form-row">
+          <div className="form-group"><label className="form-label">Cuotas pagas</label><input className="form-input" type="number" value={form.cuotas_pagas} onChange={e=>set("cuotas_pagas",e.target.value)} placeholder="2"/></div>
+          <div className="form-group"><label className="form-label">Total cuotas</label><input className="form-input" type="number" value={form.total_cuotas} onChange={e=>set("total_cuotas",e.target.value)} placeholder="12"/></div>
+        </div>
+        <div className="form-row">
+          <div className="form-group"><label className="form-label">Monto 1ra cuota</label><input className="form-input" type="number" value={form.monto_primer_venc} onChange={e=>set("monto_primer_venc",e.target.value)} placeholder="90440.13"/></div>
+          <div className="form-group"><label className="form-label">Monto 2da cuota</label><input className="form-input" type="number" value={form.monto_segundo_venc} onChange={e=>set("monto_segundo_venc",e.target.value)} placeholder="91269.16"/></div>
+        </div>
+        <div className="form-group"><label className="form-label">URL del PDF (opcional)</label><input className="form-input" value={form.url_pdf} onChange={e=>set("url_pdf",e.target.value)} placeholder="https://drive.google.com/..."/></div>
+        <div className="modal-actions">
+          <button className="btn-secondary" onClick={onClose}>Cancelar</button>
+          <button className="btn-primary" onClick={guardar} disabled={!form.numero_plan||guardando}>{guardando?"Guardando...":"Guardar plan"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Vista detalle cliente ──
+function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importando }) {
+  const [tab, setTab]             = useState("facturacion");
+  const [planes, setPlanes]       = useState(null);
+  const [alertas, setAlertas]     = useState(null);
+  const [docs, setDocs]           = useState(null);
+  const [modalPlan, setModalPlan] = useState(false);
+  const [nuevaAlerta, setNuevaAlerta] = useState({ tipo:"vencimiento", mensaje:"" });
+  const [cargandoTab, setCargandoTab] = useState(false);
+  const dias = diasAlCorte();
+
+  useEffect(() => {
+    if (!cliente) return;
+    if (tab === "planes" && planes === null) {
+      setCargandoTab(true);
+      fetch(`${BACKEND_URL}/planes/${cliente.slug}`)
+        .then(r=>r.json()).then(d=>{ setPlanes(Array.isArray(d)?d:[]); setCargandoTab(false); })
+        .catch(()=>{ setPlanes([]); setCargandoTab(false); });
+    }
+    if (tab === "alertas" && alertas === null) {
+      setCargandoTab(true);
+      fetch(`${BACKEND_URL}/alertas/${cliente.slug}`)
+        .then(r=>r.json()).then(d=>{ setAlertas(Array.isArray(d)?d:[]); setCargandoTab(false); })
+        .catch(()=>{ setAlertas([]); setCargandoTab(false); });
+    }
+    if (tab === "documentos" && docs === null) {
+      setCargandoTab(true);
+      db.from("documentos").select("*").eq("cliente_id", cliente.id).order("created_at",{ascending:false})
+        .then(r=>{ setDocs(r.data||[]); setCargandoTab(false); })
+        .catch(()=>{ setDocs([]); setCargandoTab(false); });
+    }
+  }, [tab, cliente]);
+
+  async function recargarPlanes() {
+    const res = await fetch(`${BACKEND_URL}/planes/${cliente.slug}`);
+    const d = await res.json();
+    setPlanes(Array.isArray(d)?d:[]);
+  }
+
+  async function marcarCuotaPagada(planId) {
+    const res = await fetch(`${BACKEND_URL}/planes/${planId}/pagar`,{method:"PATCH"});
+    const d = await res.json();
+    if (d.ok) setPlanes(prev=>prev.map(p=>p.id===planId?{...p,cuotas_pagas:d.cuotas_pagas,estado:d.estado}:p));
+  }
+
+  async function crearAlerta() {
+    if (!nuevaAlerta.mensaje.trim()) return;
+    await fetch(`${BACKEND_URL}/alertas/${cliente.slug}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(nuevaAlerta)});
+    setNuevaAlerta({tipo:"vencimiento",mensaje:""});
+    const res = await fetch(`${BACKEND_URL}/alertas/${cliente.slug}`);
+    setAlertas(await res.json());
+  }
+
+  async function eliminarAlerta(id) {
+    await fetch(`${BACKEND_URL}/alertas/${id}`,{method:"DELETE"});
+    setAlertas(prev=>prev.filter(a=>a.id!==id));
+  }
+
+  if (!cliente) return (<div><button className="back-btn" onClick={onBack}>← Volver</button><div className="empty-state"><div className="empty-title">Cliente no encontrado</div></div></div>);
+
+  const topeObj   = topes.find(t=>t.categoria===cliente.categoria);
+  const tope_anual = topeObj?.tope_anual || 0;
+  const total_fac  = movs.reduce((a,b)=>a+(b.monto||0),0);
+  const pct        = tope_anual>0 ? Math.min(total_fac/tope_anual,1.05) : 0;
+  const sem        = semaforoInfo(pct);
+  const historial  = [...movs].filter(f=>f.monto>0).sort((a,b)=>a.anio===b.anio?a.mes-b.mes:a.anio-b.anio);
+  const maxMonto   = Math.max(...historial.map(f=>f.monto),1);
+
+  return (
+    <div>
+      <button className="back-btn" onClick={onBack}>← Volver al listado</button>
+
+      {/* Header */}
+      <div className="detail-header">
+        <div className="detail-header-top">
+          <div style={{display:"flex",alignItems:"center",gap:"14px"}}>
+            <div className="detail-avatar">{initials(cliente.nombre,cliente.apellido)}</div>
+            <div>
+              <div className="detail-nombre">{cliente.nombre} {cliente.apellido}</div>
+              <div className="detail-sub">{cliente.categoria?`Categoría ${cliente.categoria}`:"Sin categoría"}{cliente.cuit?` · ${cliente.cuit}`:""}</div>
+            </div>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:"8px",flexWrap:"wrap"}}>
+            <div className={`semaforo-pill ${sem.clase}`}>
+              <span style={{width:"6px",height:"6px",borderRadius:"50%",background:"currentColor",display:"inline-block"}}/>
+              {sem.label}
+            </div>
+            {!cliente.activo&&<span style={{fontSize:"11px",background:"#6B7A9614",color:"var(--muted)",padding:"4px 10px",borderRadius:"20px",fontWeight:"600"}}>INACTIVO</span>}
+          </div>
+        </div>
+        <div className="detail-actions">
+          {cliente.whatsapp&&(
+            <button className="action-chip wa" onClick={()=>{const msg=encodeURIComponent(`Hola ${cliente.nombre}, te escribo desde Axenda Contable.`);window.open(`https://wa.me/549${cliente.whatsapp}?text=${msg}`,"_blank");}}>
+              💬 WhatsApp
+            </button>
+          )}
+          <button className="action-chip" onClick={()=>onImportar(cliente.slug)} disabled={importando===cliente.slug}>
+            ↑ {importando===cliente.slug?"Importando...":"Importar ARCA"}
+          </button>
+          <a className="action-chip" href={`${PORTAL_URL}/?cliente=${cliente.slug}`} target="_blank" rel="noopener">↗ Ver portal</a>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="tabs">
+        {["facturacion","planes","documentos","alertas"].map(t=>(
+          <button key={t} className={`tab-btn ${tab===t?"active":""}`} onClick={()=>setTab(t)}>
+            {t==="facturacion"?"Facturación":t==="planes"?"Planes de pago":t==="documentos"?"Documentos":"Alertas"}
+            {t==="planes"&&planes&&planes.filter(p=>p.estado==="activo").length>0&&(
+              <span style={{marginLeft:"6px",background:"var(--blue)",color:"#fff",borderRadius:"10px",fontSize:"10px",fontWeight:"700",padding:"1px 7px"}}>{planes.filter(p=>p.estado==="activo").length}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab: Facturación */}
+      {tab==="facturacion"&&(
+        <div>
+          {tope_anual>0&&(
+            <div className="detail-section">
+              <div className="section-title">Facturación anual</div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:"10px"}}>
+                <div>
+                  <div style={{fontSize:"26px",fontWeight:"300",fontFamily:"'DM Mono',monospace",lineHeight:1}}>{$$(total_fac)}</div>
+                  <div style={{fontSize:"12px",color:"var(--muted)",marginTop:"4px"}}>de {$$(tope_anual)} anuales</div>
+                </div>
+                <div style={{fontSize:"24px",fontWeight:"600",fontFamily:"'DM Mono',monospace",color:sem.color}}>{Math.round(pct*100)}%</div>
+              </div>
+              <div className="bar-track" style={{height:"8px"}}>
+                <div className={`bar-fill ${sem.fillClass}`} style={{width:`${Math.min(pct*100,100)}%`}}/>
+              </div>
+              <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"6px",textAlign:"right"}}>{dias} días al próximo corte</div>
+            </div>
+          )}
+          <div className="detail-section">
+            <div className="section-title">Historial mes a mes</div>
+            {historial.length===0 ? (
+              <div style={{textAlign:"center",padding:"24px",color:"var(--muted)",fontSize:"13px"}}>Sin datos. Importá los comprobantes desde ARCA.</div>
+            ) : historial.map((f,i)=>(
+              <div key={i} className="month-row">
+                <div className="month-label">{MESES[f.mes-1]} {f.anio}</div>
+                <div className="month-bar-wrap"><div className="month-bar-track"><div className="month-bar-fill" style={{width:`${Math.round((f.monto/maxMonto)*100)}%`}}/></div></div>
+                <div className="month-amount">{$$(f.monto)}</div>
+              </div>
+            ))}
+          </div>
+          <div className="detail-section">
+            <div className="section-title">Datos del cliente</div>
+            <div className="info-row"><div className="info-key">CUIT</div><div className="info-val" style={{fontFamily:"'DM Mono',monospace"}}>{cliente.cuit||"—"}</div></div>
+            <div className="info-row"><div className="info-key">Categoría</div><div className="info-val">{cliente.categoria?`Categoría ${cliente.categoria}`:"—"}</div></div>
+            <div className="info-row"><div className="info-key">Cuota mensual</div><div className="info-val">{cliente.cuota?$$(cliente.cuota):"—"}</div></div>
+            <div className="info-row"><div className="info-key">WhatsApp</div><div className="info-val">{cliente.whatsapp||"—"}</div></div>
+            {cliente.email&&<div className="info-row"><div className="info-key">Email</div><div className="info-val" style={{fontSize:"12px"}}>{cliente.email}</div></div>}
+          </div>
+        </div>
+      )}
+
+      {/* Tab: Planes */}
+      {tab==="planes"&&(
+        <div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"16px"}}>
+            <div style={{fontSize:"14px",fontWeight:"600"}}>Planes de {cliente.nombre}</div>
+            <button className="add-btn" onClick={()=>setModalPlan(true)}>+ Nuevo plan</button>
+          </div>
+          {cargandoTab ? (
+            <div style={{display:"grid",gap:"10px"}}>{[1,2].map(i=><div key={i} style={{height:"120px",borderRadius:"12px"}} className="skeleton"/>)}</div>
+          ) : !planes||planes.length===0 ? (
+            <div className="empty-state" style={{padding:"36px 20px"}}>
+              <div className="empty-icon">📋</div>
+              <div className="empty-title">Sin planes de pago</div>
+              <div className="empty-desc">Cargá el primer plan consolidado.</div>
+            </div>
+          ) : (
+            <div>
+              {planes.filter(p=>p.estado==="activo").map(p=>{
+                const pct = p.total_cuotas>0 ? Math.min((p.cuotas_pagas||0)/p.total_cuotas,1) : 0;
+                return (
+                  <div key={p.id} className="plan-card">
+                    <div className="plan-card-top">
+                      <div>
+                        <div className="plan-num">{p.numero_plan||"—"}</div>
+                        <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"2px"}}>Consolidado: {formatArgDate(p.fecha_consolidacion)}</div>
+                      </div>
+                      <span className="plan-org-badge">{p.organismo||"ARCA"}</span>
+                    </div>
+                    <div className="plan-meta">
+                      <div className="plan-meta-item">Cuotas pagas: <strong>{p.cuotas_pagas||0}/{p.total_cuotas||"?"}</strong></div>
+                      <div className="plan-meta-item">Próx. venc.: <strong>{formatArgDate(p.proximo_venc)}</strong></div>
+                      {p.monto_primer_venc&&<div className="plan-meta-item">1ra cuota: <strong>{$$(p.monto_primer_venc)}</strong></div>}
+                      {p.monto_segundo_venc&&<div className="plan-meta-item">2da cuota: <strong>{$$(p.monto_segundo_venc)}</strong></div>}
+                    </div>
+                    {p.total_cuotas>0&&(
+                      <div>
+                        <div className="plan-progress-label"><span>{Math.round(pct*100)}% pagado</span><span>{p.cuotas_pagas||0} de {p.total_cuotas}</span></div>
+                        <div className="plan-progress-track"><div className="plan-progress-fill" style={{width:`${pct*100}%`}}/></div>
+                      </div>
+                    )}
+                    <div className="plan-actions">
+                      <button className="table-action" onClick={()=>marcarCuotaPagada(p.id)}>✓ Marcar cuota pagada</button>
+                      {p.url_pdf&&<a className="table-action" href={p.url_pdf} target="_blank" rel="noopener" style={{textDecoration:"none"}}>↗ Ver PDF</a>}
+                    </div>
+                  </div>
+                );
+              })}
+              {planes.filter(p=>p.estado!=="activo").length>0&&(
+                <div>
+                  <div style={{fontSize:"11px",color:"var(--muted)",fontWeight:"600",textTransform:"uppercase",letterSpacing:"0.08em",margin:"16px 0 10px"}}>Cancelados</div>
+                  {planes.filter(p=>p.estado!=="activo").map(p=>(
+                    <div key={p.id} className="plan-card cancelado">
+                      <div className="plan-card-top">
+                        <div><div className="plan-num">{p.numero_plan||"—"}</div></div>
+                        <span className="plan-org-badge">{p.organismo||"ARCA"}</span>
+                      </div>
+                      <div className="plan-meta">
+                        <div className="plan-meta-item">Cuotas: <strong>{p.cuotas_pagas||0}/{p.total_cuotas||"?"}</strong></div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {modalPlan&&<ModalNuevoPlan slug={cliente.slug} onClose={()=>setModalPlan(false)} onGuardado={recargarPlanes}/>}
+        </div>
+      )}
+
+      {/* Tab: Documentos */}
+      {tab==="documentos"&&(
+        <div className="detail-section">
+          <div className="section-title">Documentos</div>
+          {cargandoTab ? (
+            <div style={{height:"80px",borderRadius:"8px"}} className="skeleton"/>
+          ) : !docs||docs.length===0 ? (
+            <div style={{textAlign:"center",padding:"28px",color:"var(--muted)",fontSize:"13px"}}>
+              Sin documentos cargados para este cliente.
+            </div>
+          ) : docs.map((d,i)=>(
+            <div key={i} className="doc-row">
+              <div className="doc-info">
+                <div className="doc-nombre">{d.nombre||d.url||"Documento"}</div>
+                <div className="doc-meta">{d.tipo||""} {d.created_at?`· ${new Date(d.created_at).toLocaleDateString("es-AR")}`:""}</div>
+              </div>
+              {d.url&&<a className="doc-link" href={d.url} target="_blank" rel="noopener">↗ Abrir</a>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Tab: Alertas */}
+      {tab==="alertas"&&(
+        <div>
+          <div className="detail-section" style={{marginBottom:"16px"}}>
+            <div className="section-title">Alertas activas</div>
+            {cargandoTab ? (
+              <div style={{height:"60px",borderRadius:"8px"}} className="skeleton"/>
+            ) : !alertas||alertas.filter(a=>!a.leida).length===0 ? (
+              <div style={{textAlign:"center",padding:"24px",color:"var(--muted)",fontSize:"13px"}}>Sin alertas activas.</div>
+            ) : alertas.filter(a=>!a.leida).map(a=>(
+              <div key={a.id} className={`alert-item ${a.tipo||"manual"}`}>
+                <div className="alert-left">
+                  <div className="alert-icon">{ICONO_ALERTA[a.tipo]||"📌"}</div>
+                  <div>
+                    <div className="alert-tipo-badge">{a.tipo||"manual"}</div>
+                    <div className="alert-text">{a.mensaje}</div>
+                  </div>
+                </div>
+                <button className="alert-del" onClick={()=>eliminarAlerta(a.id)}>×</button>
+              </div>
+            ))}
+          </div>
+          <div className="alert-form">
+            <div style={{fontSize:"13px",fontWeight:"600",marginBottom:"12px"}}>Crear alerta</div>
+            <div className="form-row" style={{marginBottom:"10px"}}>
+              <select className="form-input" style={{fontSize:"13px"}} value={nuevaAlerta.tipo} onChange={e=>setNuevaAlerta(p=>({...p,tipo:e.target.value}))}>
+                {TIPOS_ALERTA.map(t=><option key={t} value={t}>{ICONO_ALERTA[t]} {t.charAt(0).toUpperCase()+t.slice(1)}</option>)}
+              </select>
+              <input className="form-input" style={{fontSize:"13px"}} value={nuevaAlerta.mensaje} onChange={e=>setNuevaAlerta(p=>({...p,mensaje:e.target.value}))} placeholder="Detalle de la alerta..." onKeyDown={e=>e.key==="Enter"&&crearAlerta()}/>
+            </div>
+            <button className="btn-primary" style={{padding:"10px"}} onClick={crearAlerta} disabled={!nuevaAlerta.mensaje.trim()}>Crear alerta</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Vista planes (global) ──
+function ViewPlanes({ clientes }) {
+  const [planes, setPlanes]   = useState([]);
+  const [loading, setLoading] = useState(true);
+  const clienteMap = Object.fromEntries(clientes.map(c=>[c.id,c]));
+
+  useEffect(()=>{
+    fetch(`${BACKEND_URL}/planes`)
+      .then(r=>r.json()).then(d=>{setPlanes(Array.isArray(d)?d:[]);setLoading(false);})
+      .catch(()=>setLoading(false));
+  },[]);
+
+  async function marcarPagado(planId) {
+    const res = await fetch(`${BACKEND_URL}/planes/${planId}/pagar`,{method:"PATCH"});
+    const d = await res.json();
+    if (d.ok) setPlanes(prev=>prev.map(p=>p.id===planId?{...p,cuotas_pagas:d.cuotas_pagas,estado:d.estado}:p));
+  }
+
+  const activos = planes.filter(p=>p.estado==="activo"||!p.estado);
+
+  return (
+    <div>
+      <div style={{marginBottom:"20px"}}>
+        <div style={{fontSize:"13px",color:"var(--muted)"}}>Vencimientos</div>
+        <div style={{fontSize:"20px",fontWeight:"700",marginTop:"2px"}}>Planes de pago activos</div>
+      </div>
+      {loading ? (
+        <div style={{display:"grid",gap:"8px"}}>{[1,2,3].map(i=><div key={i} style={{height:"52px",borderRadius:"10px"}} className="skeleton"/>)}</div>
+      ) : activos.length===0 ? (
+        <div className="empty-state">
+          <div className="empty-icon">📋</div>
+          <div className="empty-title">Sin planes activos</div>
+          <div className="empty-desc">Los planes se cargan desde el detalle de cada cliente.</div>
+        </div>
+      ) : (
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Cliente</th>
+                <th>Nro. plan</th>
+                <th>Organismo</th>
+                <th>Cuotas</th>
+                <th>Próx. vencimiento</th>
+                <th>1ra cuota</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {activos.map(p=>{
+                const c = clienteMap[p.cliente_id];
+                const pct = p.total_cuotas>0 ? (p.cuotas_pagas||0)/p.total_cuotas : 0;
+                return (
+                  <tr key={p.id}>
+                    <td>
+                      {c ? (
+                        <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+                          <div style={{width:"28px",height:"28px",borderRadius:"50%",background:"linear-gradient(135deg,#2BAF82,#1B2D4F)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"11px",fontWeight:"700",color:"#fff",flexShrink:0}}>{initials(c.nombre,c.apellido)}</div>
+                          <div style={{fontWeight:"600"}}>{c.nombre} {c.apellido}</div>
+                        </div>
+                      ) : "—"}
+                    </td>
+                    <td style={{fontFamily:"'DM Mono',monospace",fontWeight:"600"}}>{p.numero_plan||"—"}</td>
+                    <td><span className="plan-org-badge">{p.organismo||"ARCA"}</span></td>
+                    <td>
+                      <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+                        <span>{p.cuotas_pagas||0}/{p.total_cuotas||"?"}</span>
+                        {p.total_cuotas>0&&<div style={{width:"50px",height:"4px",background:"var(--light)",borderRadius:"4px",overflow:"hidden"}}><div style={{height:"100%",background:"var(--green)",width:`${pct*100}%`,borderRadius:"4px"}}/></div>}
+                      </div>
+                    </td>
+                    <td style={{fontWeight:"500"}}>{formatArgDate(p.proximo_venc)}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace"}}>{$$(p.monto_primer_venc)}</td>
+                    <td><button className="table-action" onClick={()=>marcarPagado(p.id)}>✓ Pagar cuota</button></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Vista cuotas del mes ──
+function ViewCuotas({ clientes, onActualizar }) {
+  const hoy = new Date();
+  const activos = clientes.filter(c=>c.activo&&c.cuota);
+  const pagados = activos.filter(c=>c.estado_pago==="al_dia").length;
+  async function resetear(){if(!confirm("¿Reiniciar todos a PENDIENTE para el nuevo mes?"))return;for(const c of activos)await onActualizar(c,"debe",true);}
+  return (
+    <div>
+      <div className="cuotas-header">
+        <div>
+          <div style={{fontSize:"13px",color:"var(--muted)"}}>Estado de cobro</div>
+          <div style={{fontSize:"20px",fontWeight:"700",marginTop:"2px"}}>{MESES_FULL[hoy.getMonth()]} {hoy.getFullYear()}</div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:"12px"}}>
+          <div style={{fontSize:"13px",color:"var(--muted)"}}>
+            <span style={{color:"var(--green)",fontWeight:"600"}}>{pagados}</span> al día · <span style={{color:"var(--red)",fontWeight:"600"}}>{activos.length-pagados}</span> pendientes
+          </div>
+          <button className="filter-btn" onClick={resetear} style={{fontSize:"12px"}}>↺ Nuevo mes</button>
+        </div>
+      </div>
+      {activos.length===0 ? (
+        <div className="empty-state"><div className="empty-icon">💳</div><div className="empty-title">Sin clientes con cuota</div><div className="empty-desc">Asigná una cuota mensual a tus clientes para verlos aquí.</div></div>
+      ) : (
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead><tr><th>Cliente</th><th>Categoría</th><th>Cuota</th><th>Estado</th><th></th></tr></thead>
+            <tbody>
+              {activos.map(c=>(
+                <tr key={c.id}>
+                  <td>
+                    <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
+                      <div style={{width:"32px",height:"32px",borderRadius:"50%",background:"linear-gradient(135deg,#2BAF82,#1B2D4F)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",fontWeight:"700",color:"#fff",flexShrink:0}}>{initials(c.nombre,c.apellido)}</div>
+                      <div><div style={{fontWeight:"600"}}>{c.nombre} {c.apellido}</div><div style={{fontSize:"11px",color:"var(--muted)",fontFamily:"'DM Mono',monospace"}}>{c.cuit}</div></div>
+                    </div>
+                  </td>
+                  <td style={{color:"var(--muted)"}}>{c.categoria?`Cat. ${c.categoria}`:"—"}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",fontWeight:"500"}}>{$$(c.cuota)}</td>
+                  <td><span className={`estado-badge ${c.estado_pago==="al_dia"?"estado-al-dia":"estado-debe"}`}>{c.estado_pago==="al_dia"?"✓ Al día":"✗ Pendiente"}</span></td>
+                  <td><button className="table-action" onClick={()=>onActualizar(c,c.estado_pago==="al_dia"?"debe":"al_dia")}>{c.estado_pago==="al_dia"?"Marcar pendiente":"Marcar pagado"}</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Vista topes (lectura) ──
+function ViewTopes({ topes }) {
+  return (
+    <div>
+      <div style={{marginBottom:"20px"}}>
+        <div style={{fontSize:"13px",color:"var(--muted)"}}>Monotributo</div>
+        <div style={{fontSize:"20px",fontWeight:"700",marginTop:"2px"}}>Topes de categoría</div>
+      </div>
+      <div className="topes-grid">
+        {topes.map(t=>(
+          <div key={t.categoria} className="tope-card">
+            <div className="tope-cat">{t.categoria}</div>
+            <div className="tope-val">{$$(t.tope_anual)}</div>
+            <div className="tope-sub">tope anual</div>
+            {t.cuota_servicios&&<div style={{fontSize:"11px",color:"var(--muted)",marginTop:"6px",borderTop:"1px solid var(--border)",paddingTop:"6px"}}>Serv: {$$(t.cuota_servicios)}<br/>Bienes: {$$(t.cuota_bienes)}</div>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Vista configuración (editar topes) ──
+function ViewConfig({ topes, onRefresh }) {
+  const [editando, setEditando] = useState({});
+  const [guardando, setGuardando] = useState(null);
+  const [ok, setOk] = useState(null);
+
+  function handleEdit(cat, field, val) {
+    setEditando(prev=>({...prev,[cat]:{...(prev[cat]||{}),[field]:val}}));
+  }
+  function getVal(cat, field) {
+    if (editando[cat]&&editando[cat][field]!==undefined) return editando[cat][field];
+    const t = topes.find(t=>t.categoria===cat);
+    return t&&t[field]!=null ? t[field] : "";
+  }
+  async function guardar(cat) {
+    const data = editando[cat]; if (!data) return;
+    setGuardando(cat);
+    const payload={};
+    if (data.tope_anual!==undefined&&data.tope_anual!=="") payload.tope_anual=parseFloat(data.tope_anual);
+    if (data.cuota_servicios!==undefined&&data.cuota_servicios!=="") payload.cuota_servicios=parseFloat(data.cuota_servicios)||null;
+    if (data.cuota_bienes!==undefined&&data.cuota_bienes!=="") payload.cuota_bienes=parseFloat(data.cuota_bienes)||null;
+    await fetch(`${BACKEND_URL}/topes/${cat}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+    setEditando(prev=>{const n={...prev};delete n[cat];return n;});
+    setGuardando(null);
+    setOk(cat); setTimeout(()=>setOk(null),2000);
+    onRefresh();
+  }
+  return (
+    <div>
+      <div style={{marginBottom:"20px"}}>
+        <div style={{fontSize:"13px",color:"var(--muted)"}}>Sistema</div>
+        <div style={{fontSize:"20px",fontWeight:"700",marginTop:"2px"}}>Configuración de topes</div>
+      </div>
+      <div className="table-wrap">
+        <table className="data-table">
+          <thead><tr><th>Cat.</th><th>Tope anual</th><th>Cuota servicios</th><th>Cuota bienes</th><th></th></tr></thead>
+          <tbody>
+            {topes.map(t=>(
+              <tr key={t.categoria}>
+                <td style={{fontWeight:"700",fontFamily:"'DM Mono',monospace",fontSize:"17px",color:"var(--blue)",paddingLeft:"20px"}}>{t.categoria}</td>
+                <td><input type="number" className="tope-input" value={getVal(t.categoria,"tope_anual")} onChange={e=>handleEdit(t.categoria,"tope_anual",e.target.value)}/></td>
+                <td><input type="number" className="tope-input" placeholder="—" value={getVal(t.categoria,"cuota_servicios")} onChange={e=>handleEdit(t.categoria,"cuota_servicios",e.target.value)}/></td>
+                <td><input type="number" className="tope-input" placeholder="—" value={getVal(t.categoria,"cuota_bienes")} onChange={e=>handleEdit(t.categoria,"cuota_bienes",e.target.value)}/></td>
+                <td>
+                  {ok===t.categoria&&<span style={{fontSize:"12px",color:"var(--green)",fontWeight:"600"}}>✓ Guardado</span>}
+                  {editando[t.categoria]&&ok!==t.categoria&&(
+                    <button className="table-action" style={{borderColor:"var(--green)",color:"var(--green)"}} onClick={()=>guardar(t.categoria)} disabled={guardando===t.categoria}>
+                      {guardando===t.categoria?"...":"Guardar"}
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{marginTop:"14px",fontSize:"12px",color:"var(--muted)",paddingLeft:"4px"}}>Los cambios se aplican a todos los portales automáticamente.</div>
+    </div>
+  );
+}
+
+// ── App ──
+function App() {
+  const [clientes,setClientes]   = useState([]);
+  const [factura,setFactura]     = useState({});
+  const [topes,setTopes]         = useState([]);
+  const [loading,setLoading]     = useState(true);
+  const [filtro,setFiltro]       = useState("todos");
+  const [busqueda,setBusqueda]   = useState("");
+  const [modal,setModal]         = useState(false);
+  const [toast,setToast]         = useState(null);
+  const [importando,setImportando] = useState(null);
+  const [importResult,setImportResult] = useState(null);
+  const [seccion,setSeccion]     = useState("dashboard");
+  const [clienteDetalle,setClienteDetalle] = useState(null);
+  const fileInputRef  = useRef(null);
+  const importSlugRef = useRef(null);
+  const dias = diasAlCorte();
+
+  async function cargarDatos(){
+    setLoading(true);
+    try {
+      const [clsRes,facRes,topRes]=await Promise.all([
+        fetch(`${BACKEND_URL}/clientes`).then(r=>r.json()),
+        db.from("facturacion").select("*").then(r=>r.data),
+        db.from("topes_categoria").select("*").order("categoria").then(r=>r.data),
+      ]);
+      setClientes(clsRes||[]);
+      setTopes(topRes||[]);
+      const map={};
+      (facRes||[]).forEach(f=>{if(!map[f.cliente_id])map[f.cliente_id]=[];map[f.cliente_id].push(f);});
+      setFactura(map);
+    }catch(e){console.error(e);}
+    setLoading(false);
+  }
+  useEffect(()=>{cargarDatos();},[]);
+  function mostrarToast(msg){setToast(msg);setTimeout(()=>setToast(null),3500);}
+
+  async function toggleActivo(c){
+    await fetch(`${BACKEND_URL}/clientes/${c.slug}/toggle`,{method:"PATCH"});
+    setClientes(prev=>prev.map(x=>x.id===c.id?{...x,activo:!x.activo}:x));
+    mostrarToast(`${c.nombre} ${c.apellido} → ${!c.activo?"activo":"inactivo"}`);
+  }
+  async function actualizarEstadoPago(c,nuevoEstado,silencioso=false){
+    await db.from("clientes").update({estado_pago:nuevoEstado}).eq("id",c.id);
+    setClientes(prev=>prev.map(x=>x.id===c.id?{...x,estado_pago:nuevoEstado}:x));
+    if(!silencioso) mostrarToast(`${c.nombre} → ${nuevoEstado==="al_dia"?"pagado ✓":"pendiente"}`);
+  }
+  function abrirImport(slug){importSlugRef.current=slug;fileInputRef.current.value="";fileInputRef.current.click();}
+  async function handleImportFile(e){
+    const file=e.target.files[0]; if(!file) return;
+    const slug=importSlugRef.current;
+    setImportando(slug);
+    try {
+      const fd=new FormData(); fd.append("file",file);
+      const res=await fetch(`${BACKEND_URL}/importar-comprobantes/${slug}`,{method:"POST",body:fd});
+      const d=await res.json();
+      if(d.ok){setImportResult({slug,meses:d.meses_importados,detalle:d.detalle});cargarDatos();}
+      else alert("Error al importar: "+JSON.stringify(d));
+    }catch(err){alert("Error al importar: "+err.message);}
+    setImportando(null);
+  }
+
+  function calcPct(c){
+    const total=(factura[c.id]||[]).reduce((a,b)=>a+(b.monto||0),0);
+    const t=topes.find(t=>t.categoria===c.categoria);
+    if(!t||!total) return 0;
+    return Math.min(total/t.tope_anual,1.05);
+  }
+  const topeMapa  = Object.fromEntries(topes.map(t=>[t.categoria,t.tope_anual]));
+  const activos   = clientes.filter(c=>c.activo);
+  const enOrden   = activos.filter(c=>calcPct(c)<0.6).length;
+  const atencion  = activos.filter(c=>{const p=calcPct(c);return p>=0.6&&p<0.85;}).length;
+  const limite    = activos.filter(c=>calcPct(c)>=0.85).length;
+  const filtrados = clientes
+    .filter(c=>filtro==="todos"?true:filtro==="activos"?c.activo:!c.activo)
+    .filter(c=>{if(!busqueda)return true;const q=busqueda.toLowerCase();return `${c.nombre} ${c.apellido} ${c.cuit}`.toLowerCase().includes(q);});
+  const hoy=new Date();
+  const titulos={dashboard:"Dashboard general",clientes:"Clientes",cuotas:"Cuotas del mes",planes:"Planes de pago",topes:"Topes de categoría",config:"Configuración"};
+  function irSeccion(s){setSeccion(s);setClienteDetalle(null);setBusqueda("");}
+  const clienteSeleccionado = clienteDetalle ? clientes.find(c=>c.slug===clienteDetalle) : null;
+
+  return (
+    <div className="layout">
+      <aside className="sidebar">
+        <div className="sidebar-logo">
+          <div className="logo-main">AXENDA</div>
+          <div className="logo-sub">Panel de administración</div>
+        </div>
+        <nav className="sidebar-nav">
+          <div className="nav-section">Principal</div>
+          <button className={`nav-btn ${seccion==="dashboard"&&!clienteDetalle?"active":""}`} onClick={()=>irSeccion("dashboard")}>◉ &nbsp;Dashboard</button>
+          <button className={`nav-btn ${seccion==="clientes"&&!clienteDetalle?"active":""}`} onClick={()=>irSeccion("clientes")}>👥 &nbsp;Clientes</button>
+          <div className="nav-section" style={{marginTop:"12px"}}>Vencimientos</div>
+          <button className={`nav-btn ${seccion==="cuotas"?"active":""}`} onClick={()=>irSeccion("cuotas")}>💳 &nbsp;Cuotas del mes</button>
+          <button className={`nav-btn ${seccion==="planes"?"active":""}`} onClick={()=>irSeccion("planes")}>📋 &nbsp;Planes de pago</button>
+          <div className="nav-section" style={{marginTop:"12px"}}>Sistema</div>
+          <button className={`nav-btn ${seccion==="topes"?"active":""}`} onClick={()=>irSeccion("topes")}>📊 &nbsp;Topes de categoría</button>
+          <button className={`nav-btn ${seccion==="config"?"active":""}`} onClick={()=>irSeccion("config")}>⚙️ &nbsp;Configuración</button>
+        </nav>
+        <div className="sidebar-footer">
+          <div className="footer-text">axendacontable@gmail.com</div>
+        </div>
+      </aside>
+
+      <main className="main">
+        <div className="topbar">
+          <div className="topbar-title">
+            {clienteDetalle
+              ? (clienteSeleccionado?`${clienteSeleccionado.nombre} ${clienteSeleccionado.apellido}`:"Detalle")
+              : titulos[seccion]||"Dashboard"}
+          </div>
+          <div className="topbar-right">
+            <div style={{fontSize:"12px",color:"#E8A020",fontWeight:"500"}}>⏱ {dias} días al corte</div>
+            <div className="topbar-date">{MESES[hoy.getMonth()]} {hoy.getFullYear()}</div>
+          </div>
+        </div>
+
+        <div className="content">
+          {clienteDetalle ? (
+            <ViewClienteDetalle
+              cliente={clienteSeleccionado}
+              movs={factura[clienteSeleccionado?.id]||[]}
+              topes={topes}
+              onBack={()=>setClienteDetalle(null)}
+              onImportar={abrirImport}
+              importando={importando}
+            />
+          ) : seccion==="cuotas" ? (
+            <ViewCuotas clientes={clientes} onActualizar={actualizarEstadoPago}/>
+          ) : seccion==="planes" ? (
+            <ViewPlanes clientes={clientes}/>
+          ) : seccion==="topes" ? (
+            <ViewTopes topes={topes}/>
+          ) : seccion==="config" ? (
+            <ViewConfig topes={topes} onRefresh={cargarDatos}/>
+          ) : (
+            <div>
+              {seccion==="dashboard"&&(
+                <div className="stats-row">
+                  <div className="stat-card"><div className="stat-label">Clientes activos</div><div className="stat-val" style={{color:"#1B2D4F"}}>{activos.length}</div><div className="stat-badge badge-blue">Total: {clientes.length}</div></div>
+                  <div className="stat-card"><div className="stat-label">En orden</div><div className="stat-val" style={{color:"#2BAF82"}}>{enOrden}</div><div className="stat-badge badge-green">✓ Sin alertas</div></div>
+                  <div className="stat-card"><div className="stat-label">Con atención</div><div className="stat-val" style={{color:"#E8A020"}}>{atencion}</div><div className="stat-badge badge-yellow">⚠ 60–85% del tope</div></div>
+                  <div className="stat-card"><div className="stat-label">Al límite</div><div className="stat-val" style={{color:"#E04545"}}>{limite}</div><div className="stat-badge badge-red">🔴 +85% del tope</div></div>
+                </div>
+              )}
+              <div className="search-bar">
+                <input className="search-input" placeholder="Buscar por nombre, apellido o CUIT..." value={busqueda} onChange={e=>setBusqueda(e.target.value)}/>
+                {["todos","activos","inactivos"].map(f=>(
+                  <button key={f} className={`filter-btn ${filtro===f?"active":""}`} onClick={()=>setFiltro(f)}>{f.charAt(0).toUpperCase()+f.slice(1)}</button>
+                ))}
+                <button className="add-btn" onClick={()=>setModal(true)}>+ Nuevo cliente</button>
+              </div>
+              {loading ? (
+                <div className="clientes-grid">{[1,2,3,4].map(i=><div key={i} style={{height:"160px",borderRadius:"14px"}} className="skeleton"/>)}</div>
+              ) : filtrados.length===0 ? (
+                <div className="empty-state"><div className="empty-icon">👥</div><div className="empty-title">No hay clientes</div><div className="empty-desc">{busqueda?"Sin resultados.":"Agregá tu primer cliente."}</div></div>
+              ) : (
+                <div className="clientes-grid">
+                  {filtrados.map(c=>{
+                    const pct=calcPct(c);
+                    const total=(factura[c.id]||[]).reduce((a,b)=>a+(b.monto||0),0);
+                    const sem=semaforoInfo(pct);
+                    const tope=topeMapa[c.categoria]||0;
+                    return (
+                      <div key={c.id} className={`cliente-card ${!c.activo?"inactivo":""}`} onClick={()=>setClienteDetalle(c.slug)}>
+                        {!c.activo&&<div className="inactivo-badge">Inactivo</div>}
+                        <div className="cliente-header">
+                          <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
+                            <div className="cliente-avatar">{initials(c.nombre,c.apellido)}</div>
+                            <div>
+                              <div className="cliente-nombre">{c.nombre} {c.apellido}</div>
+                              <div className="cliente-cat">{c.categoria?`Categoría ${c.categoria}`:"Sin categoría"}{c.cuit?` · ${c.cuit}`:""}</div>
+                            </div>
+                          </div>
+                          <div className={`semaforo-pill ${sem.clase}`}>
+                            <span style={{width:"6px",height:"6px",borderRadius:"50%",background:"currentColor",display:"inline-block"}}/>
+                            {sem.label}
+                          </div>
+                        </div>
+                        {tope>0&&(
+                          <div className="cliente-bar-wrap">
+                            <div className="cliente-bar-label"><span>Facturado: {$$(total)}</span><span>{Math.round(pct*100)}% de {$$(tope)}</span></div>
+                            <div className="bar-track"><div className={`bar-fill ${sem.fillClass}`} style={{width:`${Math.min(pct*100,100)}%`}}/></div>
+                          </div>
+                        )}
+                        <div className="cliente-footer">
+                          <div>
+                            <div className="cliente-cuota">{c.cuota?$$(c.cuota)+"/mes":"Cuota —"}</div>
+                            <div className="cliente-dias">{dias} días al corte</div>
+                          </div>
+                          <div style={{display:"flex",flexDirection:"column",gap:"6px",alignItems:"flex-end"}} onClick={e=>e.stopPropagation()}>
+                            <a className="cliente-link" href={`${PORTAL_URL}/?cliente=${c.slug}`} target="_blank" rel="noopener" onClick={e=>e.stopPropagation()}>Ver portal ↗</a>
+                            <button onClick={e=>{e.stopPropagation();abrirImport(c.slug);}} disabled={importando===c.slug} style={{fontSize:"11px",background:"none",border:"1px solid var(--border)",borderRadius:"6px",cursor:"pointer",fontFamily:"inherit",fontWeight:"500",color:"var(--muted)",padding:"3px 8px",opacity:importando===c.slug?0.6:1}}>{importando===c.slug?"Importando...":"↑ ARCA"}</button>
+                            <button onClick={e=>{e.stopPropagation();toggleActivo(c);}} style={{fontSize:"11px",background:"none",border:"none",cursor:"pointer",fontFamily:"inherit",fontWeight:"500",color:c.activo?"#E04545":"#2BAF82"}}>{c.activo?"Desactivar":"Activar"}</button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </main>
+
+      {modal&&<ModalNuevoCliente onClose={()=>setModal(false)} topes={topes} onGuardado={slug=>{cargarDatos();mostrarToast(`Cliente agregado.`);}}/>}
+      {importResult&&<ModalImportResult result={importResult} onClose={()=>setImportResult(null)}/>}
+      <input ref={fileInputRef} type="file" accept=".xlsx" style={{display:"none"}} onChange={handleImportFile}/>
+      {toast&&<div className="toast">{toast}</div>}
+    </div>
+  );
+}
+
+ReactDOM.render(<App/>, document.getElementById("root"));
+</script>
+</body>
+</html>
