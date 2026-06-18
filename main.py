@@ -342,6 +342,107 @@ async def importar_comprobantes(slug: str, file: UploadFile):
         db.from_("facturacion").upsert(r, on_conflict="cliente_id,anio,mes").execute()
     return {"ok": True, "meses_importados": len(registros), "detalle": registros}
 
+# ─── Planes de pago ──────────────────────────────────────────────────────────
+
+@app.get("/planes")
+async def listar_todos_planes():
+    result = db.from_("planes_pago").select("*").eq("estado", "activo").order("proximo_venc").execute()
+    return result.data or []
+
+@app.get("/planes/{slug}")
+async def planes_cliente(slug: str):
+    cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    if not cliente.data:
+        raise HTTPException(404, "Cliente no encontrado")
+    result = db.from_("planes_pago").select("*").eq("cliente_id", cliente.data["id"]).order("created_at", desc=True).execute()
+    return result.data or []
+
+@app.post("/planes/{slug}")
+async def crear_plan(slug: str, data: dict):
+    cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    if not cliente.data:
+        raise HTTPException(404, "Cliente no encontrado")
+    total = data.get("total_cuotas")
+    pagas = data.get("cuotas_pagas", 0)
+    impagas = (int(total) - int(pagas)) if total is not None else data.get("cuotas_impagas")
+    plan = {
+        "cliente_id": cliente.data["id"],
+        "numero_plan":       data.get("numero_plan"),
+        "organismo":         data.get("organismo", "ARCA"),
+        "fecha_consolidacion": data.get("fecha_consolidacion") or None,
+        "total_cuotas":      total,
+        "cuotas_pagas":      pagas,
+        "cuotas_impagas":    impagas,
+        "monto_primer_venc": data.get("monto_primer_venc"),
+        "monto_segundo_venc":data.get("monto_segundo_venc"),
+        "monto":             data.get("monto_primer_venc"),
+        "proximo_venc":      data.get("proximo_venc") or None,
+        "url_pdf":           data.get("url_pdf"),
+        "estado":            "activo",
+    }
+    result = db.from_("planes_pago").insert(plan).execute()
+    return {"ok": True, "data": result.data}
+
+@app.patch("/planes/{plan_id}/pagar")
+async def marcar_cuota_pagada(plan_id: str):
+    res = db.from_("planes_pago").select("*").eq("id", plan_id).single().execute()
+    if not res.data:
+        raise HTTPException(404, "Plan no encontrado")
+    p = res.data
+    nuevas_pagas = (p.get("cuotas_pagas") or 0) + 1
+    total        = p.get("total_cuotas") or 0
+    impagas      = max(0, (p.get("cuotas_impagas") or 0) - 1)
+    nuevo_estado = "cancelado" if total > 0 and nuevas_pagas >= total else "activo"
+    db.from_("planes_pago").update({
+        "cuotas_pagas": nuevas_pagas, "cuotas_impagas": impagas, "estado": nuevo_estado,
+    }).eq("id", plan_id).execute()
+    return {"ok": True, "cuotas_pagas": nuevas_pagas, "estado": nuevo_estado}
+
+@app.delete("/planes/{plan_id}")
+async def eliminar_plan(plan_id: str):
+    db.from_("planes_pago").update({"estado": "inactivo"}).eq("id", plan_id).execute()
+    return {"ok": True}
+
+# ─── Topes ───────────────────────────────────────────────────────────────────
+
+@app.patch("/topes/{categoria}")
+async def actualizar_tope(categoria: str, data: dict):
+    campos = {"tope_anual", "cuota_servicios", "cuota_bienes", "vigente_desde"}
+    update = {k: v for k, v in data.items() if k in campos}
+    if not update:
+        raise HTTPException(400, "Sin campos válidos")
+    db.from_("topes_categoria").update(update).eq("categoria", categoria.upper()).execute()
+    return {"ok": True}
+
+# ─── Alertas ─────────────────────────────────────────────────────────────────
+
+@app.get("/alertas/{slug}")
+async def alertas_cliente(slug: str):
+    cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    if not cliente.data:
+        raise HTTPException(404, "Cliente no encontrado")
+    result = db.from_("alertas").select("*").eq("cliente_id", cliente.data["id"]).order("created_at", desc=True).execute()
+    return result.data or []
+
+@app.post("/alertas/{slug}")
+async def crear_alerta(slug: str, data: dict):
+    cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    if not cliente.data:
+        raise HTTPException(404, "Cliente no encontrado")
+    alerta = {
+        "cliente_id": cliente.data["id"],
+        "tipo":    data.get("tipo", "manual"),
+        "mensaje": data.get("mensaje", ""),
+        "leida":   False,
+    }
+    result = db.from_("alertas").insert(alerta).execute()
+    return {"ok": True, "data": result.data}
+
+@app.delete("/alertas/{alerta_id}")
+async def eliminar_alerta(alerta_id: str):
+    db.from_("alertas").delete().eq("id", alerta_id).execute()
+    return {"ok": True}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
