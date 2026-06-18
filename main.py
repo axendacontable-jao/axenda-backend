@@ -405,6 +405,22 @@ async def eliminar_plan(plan_id: str):
 
 # ─── Topes ───────────────────────────────────────────────────────────────────
 
+def parse_ar_number(s) -> float | None:
+    """Parse Argentine number format: 7.400.000 or 7.400.000,50"""
+    if s is None:
+        return None
+    s = str(s).strip().replace("$", "").replace(" ", "").replace("\xa0", "")
+    if not s or s in ("-", "—", ""):
+        return None
+    if "," in s:
+        s = s.replace(".", "").replace(",", ".")
+    else:
+        s = s.replace(".", "")
+    try:
+        return float(s)
+    except Exception:
+        return None
+
 @app.patch("/topes/{categoria}")
 async def actualizar_tope(categoria: str, data: dict):
     campos = {"tope_anual", "cuota_servicios", "cuota_bienes", "vigente_desde"}
@@ -412,6 +428,131 @@ async def actualizar_tope(categoria: str, data: dict):
     if not update:
         raise HTTPException(400, "Sin campos válidos")
     db.from_("topes_categoria").update(update).eq("categoria", categoria.upper()).execute()
+    return {"ok": True}
+
+@app.post("/topes/importar")
+async def importar_topes(file: UploadFile):
+    nombre = (file.filename or "").lower()
+    contenido = await file.read()
+    resultados = []
+    CATS = set("ABCDEFGHIJK")
+
+    if nombre.endswith(".pdf"):
+        try:
+            import pdfplumber
+        except ImportError:
+            raise HTTPException(500, "pdfplumber no instalado")
+        with pdfplumber.open(io.BytesIO(contenido)) as pdf:
+            for page in pdf.pages:
+                for table in (page.extract_tables() or []):
+                    if not table or len(table) < 2:
+                        continue
+                    col_cat = col_tope = col_serv = col_bienes = None
+                    header_idx = None
+                    for i, row in enumerate(table):
+                        if not row:
+                            continue
+                        row_l = [str(c or "").lower() for c in row]
+                        if any("categor" in c for c in row_l):
+                            header_idx = i
+                            for j, h in enumerate(row_l):
+                                if "categor" in h:
+                                    col_cat = j
+                                elif "ingreso" in h:
+                                    col_tope = j
+                                elif "locacion" in h or "servicio" in h:
+                                    col_serv = j
+                                elif "mueble" in h or "bienes" in h:
+                                    col_bienes = j
+                            break
+                    if header_idx is None or col_cat is None:
+                        continue
+                    for row in table[header_idx + 1:]:
+                        if not row or len(row) <= col_cat:
+                            continue
+                        cat = str(row[col_cat] or "").strip().upper().split("\n")[0].strip()
+                        if len(cat) != 1 or cat not in CATS:
+                            continue
+                        def get_cell(col):
+                            return str(row[col]) if col is not None and len(row) > col else None
+                        resultados.append({
+                            "categoria": cat,
+                            "tope_anual": parse_ar_number(get_cell(col_tope)),
+                            "cuota_servicios": parse_ar_number(get_cell(col_serv)),
+                            "cuota_bienes": parse_ar_number(get_cell(col_bienes)),
+                        })
+
+    elif nombre.endswith((".xlsx", ".xls")):
+        df = pd.read_excel(io.BytesIO(contenido))
+        df.columns = [str(c).strip() for c in df.columns]
+        col_cat = col_tope = col_serv = col_bienes = None
+        for col in df.columns:
+            cl = col.lower()
+            if "categor" in cl:   col_cat = col
+            elif "ingreso" in cl: col_tope = col
+            elif "locacion" in cl or "servicio" in cl: col_serv = col
+            elif "mueble" in cl or "bienes" in cl:     col_bienes = col
+        if col_cat is None:
+            for col in df.columns:
+                vals = df[col].astype(str).str.strip().str.upper()
+                if sum(v in CATS and len(v) == 1 for v in vals) >= 5:
+                    col_cat = col
+                    break
+            if col_cat:
+                num_cols = [c for c in df.columns if c != col_cat and pd.to_numeric(df[c], errors="coerce").notna().sum() >= 5]
+                if len(num_cols) >= 1: col_tope = num_cols[0]
+                if len(num_cols) >= 2: col_serv  = num_cols[1]
+                if len(num_cols) >= 3: col_bienes = num_cols[2]
+        if col_cat is None:
+            raise HTTPException(400, "No se encontró columna de categorías A-K en el Excel")
+        for _, row in df.iterrows():
+            cat = str(row[col_cat]).strip().upper()
+            if len(cat) != 1 or cat not in CATS:
+                continue
+            def get_num(col):
+                if col is None: return None
+                v = pd.to_numeric(row.get(col), errors="coerce")
+                return float(v) if not pd.isna(v) else None
+            resultados.append({
+                "categoria": cat,
+                "tope_anual": get_num(col_tope),
+                "cuota_servicios": get_num(col_serv),
+                "cuota_bienes": get_num(col_bienes),
+            })
+    else:
+        raise HTTPException(400, "Formato no soportado. Subí un PDF o Excel (.xlsx)")
+
+    if not resultados:
+        raise HTTPException(400, "No se encontraron categorías A-K en el archivo")
+
+    seen: dict = {}
+    for r in resultados:
+        if r["categoria"] not in seen:
+            seen[r["categoria"]] = r
+
+    actualizados = 0
+    for cat, r in seen.items():
+        update = {k: r[k] for k in ("tope_anual", "cuota_servicios", "cuota_bienes") if r[k] is not None}
+        if update:
+            db.from_("topes_categoria").update(update).eq("categoria", cat).execute()
+            actualizados += 1
+
+    return {"ok": True, "actualizados": actualizados, "categorias": list(seen.keys()), "detalle": list(seen.values())}
+
+# ─── Configuración ───────────────────────────────────────────────────────────
+
+@app.get("/configuracion")
+async def obtener_configuracion():
+    result = db.from_("configuracion").select("clave,valor").execute()
+    return {r["clave"]: r["valor"] for r in (result.data or [])}
+
+@app.post("/configuracion")
+async def guardar_configuracion(data: dict):
+    for clave, valor in data.items():
+        db.from_("configuracion").upsert(
+            {"clave": clave, "valor": str(valor) if valor is not None else ""},
+            on_conflict="clave"
+        ).execute()
     return {"ok": True}
 
 # ─── Alertas ─────────────────────────────────────────────────────────────────

@@ -210,6 +210,10 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 .tope-input { padding:7px 10px; border:1.5px solid var(--border); border-radius:7px; font-size:13px; font-family:'DM Mono',monospace; width:130px; outline:none; transition:0.15s; background:#fff; }
 .tope-input:focus { border-color:var(--green); }
 
+/* VAR CHIPS (plantillas WA) */
+.var-chip { font-size:11px; padding:3px 10px; border:1.5px solid var(--border); border-radius:20px; background:#fff; cursor:pointer; font-family:'DM Mono',monospace; color:var(--blue); font-weight:500; transition:0.15s; }
+.var-chip:hover { border-color:var(--green); color:var(--green); background:#2BAF8208; }
+
 /* TOPES CARDS */
 .topes-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:12px; }
 .tope-card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:20px; text-align:center; }
@@ -251,6 +255,16 @@ const MESES_FULL = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Ag
 const ORGANISMOS = ["ARCA","ART","ARERN","Otro"];
 const TIPOS_ALERTA = ["vencimiento","recategorizacion","deuda","manual"];
 const ICONO_ALERTA = { vencimiento:"⏰", recategorizacion:"📊", deuda:"💸", manual:"📌" };
+const TPL_VARS = {
+  tpl_vencimiento_cuota: ["{nombre}", "{monto}", "{mes}", "{link_portal}"],
+  tpl_alerta_limite:     ["{nombre}", "{porcentaje}", "{margen}", "{fecha_corte}", "{link_portal}"],
+  tpl_vencimiento_plan:  ["{nombre}", "{numero_cuota}", "{nombre_plan}", "{fecha_venc}", "{monto}", "{link_portal}"],
+};
+const TPL_DEFAULTS = {
+  tpl_vencimiento_cuota: "Hola {nombre}, te recordamos que tu cuota de monotributo ({monto}) vence el 20 de {mes}. Podés ver tu portal acá: {link_portal}",
+  tpl_alerta_limite:     "Hola {nombre}, llevás el {porcentaje}% de tu límite de facturación. Te quedan {margen} para el corte de {fecha_corte}. Consultá tu portal: {link_portal}",
+  tpl_vencimiento_plan:  "Hola {nombre}, tu cuota N° {numero_cuota} del plan {nombre_plan} vence el {fecha_venc} por {monto}. Consultá tu portal: {link_portal}",
+};
 
 function $$(n) {
   if (!n && n !== 0) return "$—";
@@ -281,6 +295,27 @@ function formatArgDate(iso) {
   try { const [y,m,d]=iso.split("T")[0].split("-"); return `${d}/${m}/${y}`; } catch { return iso; }
 }
 
+// ── Template editor (WhatsApp) ──
+function TemplateEditor({ value, onChange, vars }) {
+  const ref = useRef(null);
+  function insertVar(v) {
+    const el = ref.current;
+    if (!el) { onChange(value + v); return; }
+    const s = el.selectionStart, e = el.selectionEnd;
+    onChange(value.substring(0, s) + v + value.substring(e));
+    setTimeout(() => { el.selectionStart = el.selectionEnd = s + v.length; el.focus(); }, 0);
+  }
+  return (
+    <div>
+      <textarea ref={ref} className="form-input" style={{minHeight:"78px",resize:"vertical",lineHeight:"1.55"}} value={value} onChange={e=>onChange(e.target.value)}/>
+      <div style={{display:"flex",flexWrap:"wrap",gap:"6px",marginTop:"8px",alignItems:"center"}}>
+        <span style={{fontSize:"11px",color:"var(--muted)",fontWeight:"500"}}>Insertar:</span>
+        {vars.map(v=><button key={v} className="var-chip" onClick={()=>insertVar(v)}>{v}</button>)}
+      </div>
+    </div>
+  );
+}
+
 // ── Modal nuevo cliente ──
 function ModalNuevoCliente({ onClose, onGuardado, topes }) {
   const [cuit,setCuit]=useState(""); const [nombre,setNombre]=useState(""); const [apellido,setApellido]=useState("");
@@ -296,7 +331,11 @@ function ModalNuevoCliente({ onClose, onGuardado, topes }) {
       const d=await res.json();
       setNombre(d.nombre||""); setApellido(d.apellido||""); setPadronOk(true);
       const cat=(d.categoria||"").trim().charAt(0).toUpperCase();
-      if (/^[A-K]$/.test(cat)) setCategoria(cat);
+      if (/^[A-K]$/.test(cat)) {
+        setCategoria(cat);
+        const topeObj=topes.find(t=>t.categoria===cat);
+        if (topeObj?.cuota_servicios) setCuota(String(Math.round(topeObj.cuota_servicios)));
+      }
     } catch(e){alert("Error consultando ARCA: "+e.message);}
     setBuscando(false);
   }
@@ -877,63 +916,177 @@ function ViewTopes({ topes }) {
   );
 }
 
-// ── Vista configuración (editar topes) ──
+// ── Vista configuración ──
 function ViewConfig({ topes, onRefresh }) {
-  const [editando, setEditando] = useState({});
-  const [guardando, setGuardando] = useState(null);
-  const [ok, setOk] = useState(null);
+  const [tab, setTab]           = useState("topes");
+  const [cfg, setCfg]           = useState(null);
+  const [guardandoKey, setGKey] = useState(null);
+  const [okKey, setOkKey]       = useState(null);
+  const [importando, setImp]    = useState(false);
+  const [importResult, setIR]   = useState(null);
+  const fileImpRef = useRef(null);
 
-  function handleEdit(cat, field, val) {
-    setEditando(prev=>({...prev,[cat]:{...(prev[cat]||{}),[field]:val}}));
-  }
-  function getVal(cat, field) {
-    if (editando[cat]&&editando[cat][field]!==undefined) return editando[cat][field];
-    const t = topes.find(t=>t.categoria===cat);
-    return t&&t[field]!=null ? t[field] : "";
-  }
-  async function guardar(cat) {
-    const data = editando[cat]; if (!data) return;
-    setGuardando(cat);
+  const DEFAULTS = {
+    nombre_estudio:"Axenda Contable", whatsapp_estudio:"", email_estudio:"axendacontable@gmail.com",
+    dias_alerta_amarilla:"10", ciclo_activo:"Julio",
+    ...TPL_DEFAULTS,
+  };
+
+  useEffect(()=>{
+    fetch(`${BACKEND_URL}/configuracion`).then(r=>r.json())
+      .then(d=>setCfg({...DEFAULTS,...d}))
+      .catch(()=>setCfg(DEFAULTS));
+  },[]);
+
+  function setVal(k,v){ setCfg(prev=>({...prev,[k]:v})); }
+
+  async function guardar(claves, sKey) {
+    setGKey(sKey);
     const payload={};
-    if (data.tope_anual!==undefined&&data.tope_anual!=="") payload.tope_anual=parseFloat(data.tope_anual);
-    if (data.cuota_servicios!==undefined&&data.cuota_servicios!=="") payload.cuota_servicios=parseFloat(data.cuota_servicios)||null;
-    if (data.cuota_bienes!==undefined&&data.cuota_bienes!=="") payload.cuota_bienes=parseFloat(data.cuota_bienes)||null;
-    await fetch(`${BACKEND_URL}/topes/${cat}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
-    setEditando(prev=>{const n={...prev};delete n[cat];return n;});
-    setGuardando(null);
-    setOk(cat); setTimeout(()=>setOk(null),2000);
-    onRefresh();
+    claves.forEach(k=>{ payload[k]=cfg[k]??""; });
+    try {
+      await fetch(`${BACKEND_URL}/configuracion`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+      setOkKey(sKey); setTimeout(()=>setOkKey(null),2500);
+    } catch(e){ alert("Error al guardar: "+e.message); }
+    setGKey(null);
   }
+
+  async function importarTopes(e) {
+    const file=e.target.files[0]; if(!file) return;
+    setImp(true);
+    try {
+      const fd=new FormData(); fd.append("file",file);
+      const res=await fetch(`${BACKEND_URL}/topes/importar`,{method:"POST",body:fd});
+      const d=await res.json();
+      if(d.ok){ setIR(d); onRefresh(); }
+      else alert("Error al importar: "+JSON.stringify(d));
+    } catch(e){ alert("Error: "+e.message); }
+    setImp(false);
+    fileImpRef.current.value="";
+  }
+
+  if (!cfg) return <div style={{padding:"40px",textAlign:"center",color:"var(--muted)"}}>Cargando configuración...</div>;
+
+  const SaveRow = ({claves, sKey}) => (
+    <div style={{display:"flex",alignItems:"center",gap:"12px",marginTop:"6px"}}>
+      <button className="btn-primary" style={{maxWidth:"140px"}} onClick={()=>guardar(claves,sKey)} disabled={guardandoKey===sKey}>
+        {guardandoKey===sKey?"Guardando...":"Guardar"}
+      </button>
+      {okKey===sKey&&<span style={{fontSize:"12px",color:"var(--green)",fontWeight:"600"}}>✓ Guardado</span>}
+    </div>
+  );
+
   return (
     <div>
       <div style={{marginBottom:"20px"}}>
         <div style={{fontSize:"13px",color:"var(--muted)"}}>Sistema</div>
-        <div style={{fontSize:"20px",fontWeight:"700",marginTop:"2px"}}>Configuración de topes</div>
+        <div style={{fontSize:"20px",fontWeight:"700",marginTop:"2px"}}>Configuración</div>
       </div>
-      <div className="table-wrap">
-        <table className="data-table">
-          <thead><tr><th>Cat.</th><th>Tope anual</th><th>Cuota servicios</th><th>Cuota bienes</th><th></th></tr></thead>
-          <tbody>
-            {topes.map(t=>(
-              <tr key={t.categoria}>
-                <td style={{fontWeight:"700",fontFamily:"'DM Mono',monospace",fontSize:"17px",color:"var(--blue)",paddingLeft:"20px"}}>{t.categoria}</td>
-                <td><input type="number" className="tope-input" value={getVal(t.categoria,"tope_anual")} onChange={e=>handleEdit(t.categoria,"tope_anual",e.target.value)}/></td>
-                <td><input type="number" className="tope-input" placeholder="—" value={getVal(t.categoria,"cuota_servicios")} onChange={e=>handleEdit(t.categoria,"cuota_servicios",e.target.value)}/></td>
-                <td><input type="number" className="tope-input" placeholder="—" value={getVal(t.categoria,"cuota_bienes")} onChange={e=>handleEdit(t.categoria,"cuota_bienes",e.target.value)}/></td>
-                <td>
-                  {ok===t.categoria&&<span style={{fontSize:"12px",color:"var(--green)",fontWeight:"600"}}>✓ Guardado</span>}
-                  {editando[t.categoria]&&ok!==t.categoria&&(
-                    <button className="table-action" style={{borderColor:"var(--green)",color:"var(--green)"}} onClick={()=>guardar(t.categoria)} disabled={guardando===t.categoria}>
-                      {guardando===t.categoria?"...":"Guardar"}
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+
+      <div className="tabs" style={{marginBottom:"24px"}}>
+        {[["topes","Topes"],["estudio","Datos del estudio"],["whatsapp","Mensajes WhatsApp"],["sistema","Parámetros"]].map(([k,l])=>(
+          <button key={k} className={`tab-btn ${tab===k?"active":""}`} onClick={()=>setTab(k)}>{l}</button>
+        ))}
       </div>
-      <div style={{marginTop:"14px",fontSize:"12px",color:"var(--muted)",paddingLeft:"4px"}}>Los cambios se aplican a todos los portales automáticamente.</div>
+
+      {/* ── Tab Topes ── */}
+      {tab==="topes"&&(
+        <div>
+          <div className="detail-section" style={{marginBottom:"16px"}}>
+            <div className="section-title">Actualizar topes desde archivo</div>
+            <p style={{fontSize:"13px",color:"var(--muted)",lineHeight:"1.6",marginBottom:"16px"}}>
+              Subí el PDF o Excel de ARCA. El sistema extrae las columnas <em>Ingresos Brutos</em>, <em>Cuota Locaciones/Servicios</em> y <em>Cuota Bienes</em> para las categorías A–K y actualiza Supabase automáticamente.
+            </p>
+            <div style={{display:"flex",gap:"10px",alignItems:"center",flexWrap:"wrap"}}>
+              <input ref={fileImpRef} type="file" accept=".pdf,.xlsx" style={{display:"none"}} onChange={importarTopes}/>
+              <button className="btn-primary" style={{maxWidth:"220px"}} onClick={()=>fileImpRef.current.click()} disabled={importando}>
+                {importando?"Procesando...":"↑ Subir PDF o Excel"}
+              </button>
+              {importResult&&(
+                <span style={{fontSize:"12px",color:"var(--green)",fontWeight:"600"}}>
+                  ✓ {importResult.actualizados} categorías actualizadas: {(importResult.categorias||[]).join(", ")}
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="table-wrap">
+            <div style={{padding:"12px 16px",borderBottom:"1px solid var(--border)",fontSize:"11px",fontWeight:"600",color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.09em",background:"#FAFBFD"}}>
+              Valores actuales
+            </div>
+            <table className="data-table">
+              <thead><tr><th>Cat.</th><th>Tope anual</th><th>Cuota servicios</th><th>Cuota bienes</th></tr></thead>
+              <tbody>
+                {topes.map(t=>(
+                  <tr key={t.categoria}>
+                    <td style={{fontWeight:"700",fontFamily:"'DM Mono',monospace",fontSize:"17px",color:"var(--blue)",paddingLeft:"20px"}}>{t.categoria}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace"}}>{$$(t.tope_anual)}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace"}}>{t.cuota_servicios?$$(t.cuota_servicios):"—"}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace"}}>{t.cuota_bienes?$$(t.cuota_bienes):"—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ── Tab Estudio ── */}
+      {tab==="estudio"&&(
+        <div className="detail-section" style={{maxWidth:"480px"}}>
+          <div className="section-title">Datos del estudio contable</div>
+          <div className="form-group">
+            <label className="form-label">Nombre del estudio</label>
+            <input className="form-input" value={cfg.nombre_estudio||""} onChange={e=>setVal("nombre_estudio",e.target.value)} placeholder="Axenda Contable"/>
+          </div>
+          <div className="form-group">
+            <label className="form-label">WhatsApp del estudio</label>
+            <input className="form-input" value={cfg.whatsapp_estudio||""} onChange={e=>setVal("whatsapp_estudio",e.target.value)} placeholder="2944xxxxxx"/>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Email</label>
+            <input className="form-input" type="email" value={cfg.email_estudio||""} onChange={e=>setVal("email_estudio",e.target.value)} placeholder="axendacontable@gmail.com"/>
+          </div>
+          <SaveRow claves={["nombre_estudio","whatsapp_estudio","email_estudio"]} sKey="estudio"/>
+        </div>
+      )}
+
+      {/* ── Tab WhatsApp ── */}
+      {tab==="whatsapp"&&(
+        <div>
+          {[
+            {k:"tpl_vencimiento_cuota", label:"Vencimiento de cuota"},
+            {k:"tpl_alerta_limite",     label:"Alerta de límite de facturación"},
+            {k:"tpl_vencimiento_plan",  label:"Vencimiento de plan de pago"},
+          ].map(({k,label})=>(
+            <div key={k} className="detail-section" style={{marginBottom:"14px"}}>
+              <div className="section-title">{label}</div>
+              <TemplateEditor value={cfg[k]||""} onChange={v=>setVal(k,v)} vars={TPL_VARS[k]}/>
+              <SaveRow claves={[k]} sKey={"tpl_"+k}/>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Tab Sistema ── */}
+      {tab==="sistema"&&(
+        <div className="detail-section" style={{maxWidth:"440px"}}>
+          <div className="section-title">Parámetros del sistema</div>
+          <div className="form-group">
+            <label className="form-label">Días para alerta amarilla</label>
+            <input className="form-input" type="number" min="1" value={cfg.dias_alerta_amarilla||""} onChange={e=>setVal("dias_alerta_amarilla",e.target.value)} placeholder="10" style={{maxWidth:"120px"}}/>
+            <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"4px"}}>Días antes del vencimiento para mostrar la alerta amarilla en el portal.</div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Ciclo activo de recategorización</label>
+            <select className="form-input" value={cfg.ciclo_activo||"Julio"} onChange={e=>setVal("ciclo_activo",e.target.value)} style={{maxWidth:"160px"}}>
+              <option>Enero</option>
+              <option>Julio</option>
+            </select>
+            <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"4px"}}>Próximo corte de recategorización.</div>
+          </div>
+          <SaveRow claves={["dias_alerta_amarilla","ciclo_activo"]} sKey="sistema"/>
+        </div>
+      )}
     </div>
   );
 }
