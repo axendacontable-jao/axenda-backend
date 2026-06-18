@@ -6,3 +6,6 @@ cryptography
 python-dotenv 
 requests 
 lxml 
+
+pandas
+openpyxl
