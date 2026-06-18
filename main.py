@@ -2,7 +2,9 @@
 from pathlib import Path
 from dotenv import load_dotenv
 from lxml import etree
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile
+import pandas as pd
+import io
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client
 import requests
@@ -362,9 +364,51 @@ async def wsfe_debug(cuit: str):
     )
     return {"status": r.status_code, "raw": r.text[:3000]}
 
+@app.post("/importar-comprobantes/{slug}")
+async def importar_comprobantes(slug: str, file: bytes = None):
+
+    pass
+
+@app.post("/importar-comprobantes/{slug}")
+async def importar_comprobantes(slug: str, file: UploadFile):
+    # Leer cliente
+    cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    if not cliente.data:
+        raise HTTPException(404, "Cliente no encontrado")
+    cliente_id = cliente.data["id"]
+    # Leer Excel
+    contenido = await file.read()
+    df = pd.read_excel(io.BytesIO(contenido), header=1)
+    df = df[df["Fecha"].notna()].copy()
+    df["Fecha"] = pd.to_datetime(df["Fecha"], dayfirst=True, errors="coerce")
+    df = df[df["Fecha"].notna()]
+    df["Imp. Total"] = pd.to_numeric(df["Imp. Total"], errors="coerce").fillna(0)
+    df["mes"] = df["Fecha"].dt.month
+    df["anio"] = df["Fecha"].dt.year
+    # Sumar por mes
+    totales = df.groupby(["anio", "mes"])["Imp. Total"].sum().reset_index()
+    # Upsert en Supabase
+    registros = []
+    for _, row in totales.iterrows():
+        registros.append({
+            "cliente_id": cliente_id,
+            "anio": int(row["anio"]),
+            "mes": int(row["mes"]),
+            "monto": float(row["Imp. Total"]),
+            "fuente": "arca_excel"
+        })
+    for r in registros:
+        db.from_("facturacion").upsert(r, on_conflict="cliente_id,anio,mes").execute()
+    return {"ok": True, "meses_importados": len(registros), "detalle": registros}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
+
+
+
+
 
 
 
