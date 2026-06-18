@@ -306,68 +306,6 @@ async def datos_portal(slug: str):
         "documentos": docs_res.data or [], "alertas": alertas_res.data or [],
     }
 
-@app.get("/wscdc-debug/{cuit}")
-async def wscdc_debug(cuit: str):
-    cuit_limpio = re.sub(r"\D", "", cuit)
-    auth = obtener_token("wscdc")
-    soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-                  xmlns:wsc="http://ar.gov.afip.dif.wscdc/">
-  <soapenv:Header/>
-  <soapenv:Body>
-    <wsc:consultarComprobantes>
-      <wsc:authRequest>
-        <token>{auth["token"]}</token>
-        <sign>{auth["sign"]}</sign>
-        <cuitRepresentada>{cuit_limpio}</cuitRepresentada>
-      </wsc:authRequest>
-      <wsc:consultaRequest>
-        <fechaDesde>20250701</fechaDesde>
-        <fechaHasta>20260616</fechaHasta>
-      </wsc:consultaRequest>
-    </wsc:consultarComprobantes>
-  </soapenv:Body>
-</soapenv:Envelope>"""
-    r = requests_legacy().post(
-        "https://aws.afip.gov.ar/wscdc/services/WSDCService",
-        data=soap_body.encode("utf-8"),
-        headers={"Content-Type": "text/xml; charset=UTF-8", "SOAPAction": ""},
-        timeout=30
-    )
-    return {"status": r.status_code, "raw": r.text[:3000]}
-
-@app.get("/wsfe-debug/{cuit}")
-async def wsfe_debug(cuit: str):
-    cuit_limpio = re.sub(r"\D", "", cuit)
-    auth = obtener_token("wsfe", cuit_limpio)
-    soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-                  xmlns:ar="http://ar.gov.afip.dif.FEV1/">
-  <soapenv:Header/>
-  <soapenv:Body>
-    <ar:FECompUltimoAutorizado>
-      <ar:Auth>
-        <ar:Token>{auth["token"]}</ar:Token>
-        <ar:Sign>{auth["sign"]}</ar:Sign>
-        <ar:Cuit>{cuit_limpio}</ar:Cuit>
-      </ar:Auth>
-      <ar:PtoVta>1</ar:PtoVta>
-      <ar:CbteTipo>11</ar:CbteTipo>
-    </ar:FECompUltimoAutorizado>
-  </soapenv:Body>
-</soapenv:Envelope>"""
-    r = requests_legacy().post(
-        "https://servicios1.afip.gov.ar/wsfev1/service.asmx",
-        data=soap_body.encode("utf-8"),
-        headers={"Content-Type": "text/xml; charset=UTF-8", "SOAPAction": "http://ar.gov.afip.dif.FEV1/FECompUltimoAutorizado"},
-        timeout=30
-    )
-    return {"status": r.status_code, "raw": r.text[:3000]}
-
-@app.post("/importar-comprobantes/{slug}")
-async def importar_comprobantes(slug: str, file: bytes = None):
-
-    pass
 
 @app.post("/importar-comprobantes/{slug}")
 async def importar_comprobantes(slug: str, file: UploadFile):
@@ -383,6 +321,9 @@ async def importar_comprobantes(slug: str, file: UploadFile):
     df["Fecha"] = pd.to_datetime(df["Fecha"], dayfirst=True, errors="coerce")
     df = df[df["Fecha"].notna()]
     df["Imp. Total"] = pd.to_numeric(df["Imp. Total"], errors="coerce").fillna(0)
+    if "Tipo" in df.columns:
+        es_nc = df["Tipo"].astype(str).str.contains("Nota de Cr", case=False, na=False)
+        df.loc[es_nc, "Imp. Total"] = -df.loc[es_nc, "Imp. Total"]
     df["mes"] = df["Fecha"].dt.month
     df["anio"] = df["Fecha"].dt.year
     # Sumar por mes
