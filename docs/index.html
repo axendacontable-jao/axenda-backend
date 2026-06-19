@@ -316,6 +316,8 @@ const db = createClient(SUPABASE_URL, SUPABASE_KEY);
 const MESES      = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 const MESES_FULL = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 const ORGANISMOS = ["ARCA","ART","ARERN","Otro"];
+// Componente provincial ART Río Negro por categoría — vigente desde 01/02/2026
+const ART_RIO_NEGRO_2026 = {"A":17773.24,"B":26330.15,"C":35038.48,"D":52992.43,"E":70657.51,"F":88097.78,"G":105032.36,"H":170242.95,"I":197256.01,"J":231453.81,"K":261120.28};
 const TIPOS_ALERTA = ["vencimiento","recategorizacion","deuda","manual"];
 const ICONO_ALERTA = { vencimiento:"⏰", recategorizacion:"📊", deuda:"💸", manual:"📌" };
 const TPL_VARS = {
@@ -737,7 +739,7 @@ function ModalNuevoPlan({ slug, onClose, onGuardado, initialData }) {
 }
 
 // ── Vista detalle cliente ──
-function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importando, onActualizarEstado, onPlanGuardado }) {
+function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importando, onActualizarEstado, onPlanGuardado, onActualizarCuota }) {
   const [tab, setTab]             = useState("facturacion");
   const [planes, setPlanes]       = useState(null);
   const [alertas, setAlertas]     = useState(null);
@@ -748,6 +750,8 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
   const [nuevaAlerta, setNuevaAlerta] = useState({ tipo:"vencimiento", mensaje:"" });
   const [cargandoTab, setCargandoTab] = useState(false);
   const [parsandoPlan, setParsandoPlan] = useState(false);
+  const [editandoCuota, setEditandoCuota] = useState(false);
+  const [cuotaInput, setCuotaInput]       = useState("");
   const pdfPlanRef = useRef(null);
   const dias = diasAlCorte();
 
@@ -763,6 +767,16 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
     } catch(e) { alert("Error: "+e.message); }
     setParsandoPlan(false);
     pdfPlanRef.current.value = "";
+  }
+
+  async function guardarCuota() {
+    const val = parseFloat(cuotaInput.replace(/\./g,"").replace(",","."));
+    if (isNaN(val) || val <= 0) { alert("Cuota inválida"); return; }
+    await fetch(`${BACKEND_URL}/clientes/${cliente.slug}/cuota`, {
+      method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify({cuota:val})
+    }).catch(()=>{});
+    onActualizarCuota && onActualizarCuota(cliente, val);
+    setEditandoCuota(false);
   }
 
   useEffect(() => {
@@ -923,14 +937,39 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
             <div className="section-title">Datos del cliente</div>
             <div className="info-row"><div className="info-key">CUIT</div><div className="info-val" style={{fontFamily:"'DM Mono',monospace"}}>{cliente.cuit||"—"}</div></div>
             <div className="info-row"><div className="info-key">Categoría</div><div className="info-val">{cliente.categoria?`Categoría ${cliente.categoria}`:"—"}</div></div>
-            <div className="info-row"><div className="info-key">Cuota mensual</div><div className="info-val">{cliente.cuota?$$(cliente.cuota):"—"}</div></div>
+            <div className="info-row">
+              <div className="info-key">Cuota mensual</div>
+              <div className="info-val" style={{display:"flex",alignItems:"center",gap:"8px"}}>
+                {editandoCuota ? (
+                  <>
+                    <input
+                      className="form-input"
+                      style={{width:"120px",padding:"3px 8px",fontSize:"13px",height:"28px"}}
+                      value={cuotaInput}
+                      onChange={e=>setCuotaInput(e.target.value)}
+                      onKeyDown={e=>{if(e.key==="Enter")guardarCuota();if(e.key==="Escape")setEditandoCuota(false);}}
+                      autoFocus
+                      placeholder="ej: 95000"
+                      type="number"
+                    />
+                    <button className="table-action success" style={{padding:"3px 10px",fontSize:"12px"}} onClick={guardarCuota}>Guardar</button>
+                    <button className="table-action" style={{padding:"3px 10px",fontSize:"12px"}} onClick={()=>setEditandoCuota(false)}>Cancelar</button>
+                  </>
+                ) : (
+                  <>
+                    <span>{cliente.cuota?$$(cliente.cuota):"—"}</span>
+                    <button className="table-action" style={{padding:"2px 8px",fontSize:"11px"}} onClick={()=>{setCuotaInput(cliente.cuota?String(cliente.cuota):"");setEditandoCuota(true);}}>✏ Editar</button>
+                  </>
+                )}
+              </div>
+            </div>
             <div className="info-row"><div className="info-key">WhatsApp</div><div className="info-val">{cliente.whatsapp||"—"}</div></div>
             {cliente.email&&<div className="info-row"><div className="info-key">Email</div><div className="info-val" style={{fontSize:"12px"}}>{cliente.email}</div></div>}
           </div>
           {cliente.cuota&&(
             <div className="detail-section">
               <div className="section-title">Historial de cuotas mensuales</div>
-              <HistorialCuotas slug={cliente.slug} cuota={cliente.cuota} onToggleMesActual={(pagado)=>onActualizarEstado&&onActualizarEstado(cliente,pagado?"al_dia":"debe",true)}/>
+              <HistorialCuotas slug={cliente.slug} cuota={cliente.cuota} categoria={cliente.categoria} onToggleMesActual={(pagado)=>onActualizarEstado&&onActualizarEstado(cliente,pagado?"al_dia":"debe",true)}/>
             </div>
           )}
         </div>
@@ -1281,7 +1320,7 @@ function ViewPlanes({ clientes }) {
 }
 
 // ── Historial cuotas mensuales ──
-function HistorialCuotas({ slug, cuota, onToggleMesActual }) {
+function HistorialCuotas({ slug, cuota, categoria, onToggleMesActual }) {
   const [historial, setHistorial] = useState([]);
   const [cargando, setCargando]   = useState(true);
   const hoy = new Date();
@@ -1300,16 +1339,35 @@ function HistorialCuotas({ slug, cuota, onToggleMesActual }) {
   }
   if (cargando) return <div style={{color:"var(--muted)",fontSize:"13px",padding:"8px 0"}}>Cargando historial...</div>;
   const mesesPendientes = historial.filter(h=>!h.pagado);
-  const deudaTotal = mesesPendientes.length * (cuota||0);
+  const artPorMes = (ART_RIO_NEGRO_2026[categoria] || 0);
+  const hoyDia = hoy.getDate();
+  // Meses vencidos: pasados, o mes actual si hoy > 20
+  const mesesVencidos = mesesPendientes.filter(h=>{
+    const esMesActual = h.año===hoy.getFullYear()&&h.mes===hoy.getMonth()+1;
+    return !esMesActual || hoyDia>20;
+  });
+  const mesesSinVencer = mesesPendientes.filter(h=>{
+    const esMesActual = h.año===hoy.getFullYear()&&h.mes===hoy.getMonth()+1;
+    return esMesActual && hoyDia<=20;
+  });
+  const deudaART  = mesesVencidos.length * artPorMes;
+  const deudaARCA = mesesVencidos.length*((cuota||0)-artPorMes) + mesesSinVencer.length*(cuota||0);
+  const deudaTotal = deudaART + deudaARCA;
   return (
     <div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px"}}>
         <div style={{fontSize:"11px",fontWeight:"600",color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.05em"}}>Últimos 6 meses · Cuota {$$(cuota)}</div>
         {deudaTotal>0 ? (
-          <div style={{background:"#E0454510",border:"1px solid var(--red)",borderRadius:"8px",padding:"4px 12px",display:"flex",gap:"8px",alignItems:"center"}}>
-            <span style={{fontSize:"11px",color:"var(--red)",fontWeight:"600"}}>Deuda estimada</span>
-            <span style={{fontFamily:"'DM Mono',monospace",fontWeight:"700",color:"var(--red)",fontSize:"14px"}}>{$$(deudaTotal)}</span>
-            <span style={{fontSize:"11px",color:"var(--red)"}}>({mesesPendientes.length} {mesesPendientes.length===1?"mes":"meses"})</span>
+          <div style={{background:"#E0454510",border:"1px solid var(--red)",borderRadius:"8px",padding:"6px 12px"}}>
+            <div style={{display:"flex",gap:"8px",alignItems:"center",marginBottom:deudaART>0?"4px":"0"}}>
+              <span style={{fontSize:"11px",color:"var(--red)",fontWeight:"600"}}>Deuda estimada</span>
+              <span style={{fontFamily:"'DM Mono',monospace",fontWeight:"700",color:"var(--red)",fontSize:"14px"}}>{$$(deudaTotal)}</span>
+              <span style={{fontSize:"11px",color:"var(--red)"}}>({mesesPendientes.length} {mesesPendientes.length===1?"mes":"meses"})</span>
+            </div>
+            {deudaART>0&&<div style={{display:"flex",gap:"14px",fontSize:"11px",color:"var(--muted)"}}>
+              <span>ART Río Negro: <b style={{color:"var(--red)"}}>{$$(deudaART)}</b></span>
+              <span>ARCA: <b style={{color:"var(--red)"}}>{$$(deudaARCA)}</b></span>
+            </div>}
           </div>
         ) : (
           <div style={{background:"#2BAF8210",border:"1px solid var(--green)",borderRadius:"8px",padding:"4px 12px"}}>
@@ -1405,7 +1463,7 @@ function ViewCuotas({ clientes, onActualizar }) {
                       <tr>
                         <td colSpan="5" style={{padding:"0",background:"var(--light)"}}>
                           <div style={{padding:"14px 20px",borderBottom:"1px solid var(--border)"}} onClick={e=>e.stopPropagation()}>
-                            <HistorialCuotas slug={c.slug} cuota={c.cuota} onToggleMesActual={(pagado)=>onActualizar(c,pagado?"al_dia":"debe",true)}/>
+                            <HistorialCuotas slug={c.slug} cuota={c.cuota} categoria={c.categoria} onToggleMesActual={(pagado)=>onActualizar(c,pagado?"al_dia":"debe",true)}/>
                           </div>
                         </td>
                       </tr>
@@ -1994,6 +2052,9 @@ function App() {
               onPlanGuardado={async()=>{
                 const planRes=await fetch(`${BACKEND_URL}/planes`).then(r=>r.json()).catch(()=>[]);
                 setPlanes(Array.isArray(planRes)?planRes:[]);
+              }}
+              onActualizarCuota={(c, nuevaCuota)=>{
+                setClientes(prev=>prev.map(x=>x.id===c.id?{...x,cuota:nuevaCuota}:x));
               }}
             />
           ) : seccion==="dashboard" ? (

@@ -298,6 +298,20 @@ async def actualizar_estado_pago(slug: str, data: dict):
         log_actividad(res.data["id"], f"Cuota marcada al día — {nombre}")
     return {"ok": True, "estado_pago": nuevo}
 
+@app.patch("/clientes/{slug}/cuota")
+async def actualizar_cuota(slug: str, data: dict):
+    nueva_cuota = data.get("cuota")
+    if nueva_cuota is None or not isinstance(nueva_cuota, (int, float)) or nueva_cuota < 0:
+        raise HTTPException(400, "Cuota inválida")
+    try:
+        res = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    except Exception:
+        raise HTTPException(404, "Cliente no encontrado")
+    if not res.data:
+        raise HTTPException(404, "Cliente no encontrado")
+    db.from_("clientes").update({"cuota": nueva_cuota}).eq("slug", slug).execute()
+    return {"ok": True, "cuota": nueva_cuota}
+
 @app.get("/clientes/{slug}/historial-cuotas")
 async def get_historial_cuotas(slug: str, meses: int = 6):
     try:
