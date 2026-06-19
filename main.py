@@ -264,7 +264,7 @@ async def toggle_activo(slug: str):
     db.from_("clientes").update({"activo": nuevo}).eq("slug", slug).execute()
     return {"ok": True, "activo": nuevo}
 
-def log_actividad(cliente_id: str | None, mensaje: str):
+def log_actividad(cliente_id, mensaje: str):
     try:
         db.from_("alertas").insert({
             "cliente_id": cliente_id, "tipo": "actividad",
