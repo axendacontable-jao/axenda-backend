@@ -467,19 +467,19 @@ async def crear_plan(slug: str, data: dict):
     impagas = (int(total) - int(pagas)) if total is not None else data.get("cuotas_impagas")
     plan = {
         "cliente_id": cliente.data["id"],
-        "numero_plan":       data.get("numero_plan"),
-        "organismo":         data.get("organismo", "ARCA"),
+        "numero_plan":        data.get("numero_plan"),
+        "organismo":          data.get("organismo", "ARCA"),
         "fecha_consolidacion": data.get("fecha_consolidacion") or None,
-        "total_cuotas":      total,
-        "cuotas_pagas":      pagas,
-        "cuotas_impagas":    impagas,
-        "monto_primer_venc": data.get("monto_primer_venc"),
-        "monto_segundo_venc":data.get("monto_segundo_venc"),
-        "monto":             data.get("monto_primer_venc"),
-        "proximo_venc":      data.get("proximo_venc") or None,
-        "url_pdf":           data.get("url_pdf"),
-        "estado":            "activo",
+        "total_cuotas":       total,
+        "cuotas_pagas":       pagas,
+        "cuotas_impagas":     impagas,
+        "monto_primer_venc":  data.get("monto_primer_venc"),
+        "monto_segundo_venc": data.get("monto_segundo_venc"),
+        "proximo_venc":       data.get("proximo_venc") or None,
+        "url_pdf":            data.get("url_pdf"),
+        "estado":             "activo",
     }
+    plan = {k: v for k, v in plan.items() if v is not None}
     try:
         result = db.from_("planes_pago").insert(plan).execute()
     except Exception as e:
