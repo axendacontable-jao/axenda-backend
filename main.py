@@ -394,6 +394,11 @@ async def datos_portal(slug: str):
                      if n.get("para_todos") or str(n.get("cliente_id")) == str(cliente["id"])]
     except Exception:
         novedades = []
+    try:
+        cfg_res = db.from_("configuracion").select("clave,valor").in_("clave", ["whatsapp"]).execute()
+        cfg = {r["clave"]: r["valor"] for r in (cfg_res.data or [])}
+    except Exception:
+        cfg = {}
     facturacion = fac_res.data or []
     montos = [f["monto"] for f in facturacion if f["monto"] > 0]
     total_fac = sum(montos)
@@ -404,7 +409,7 @@ async def datos_portal(slug: str):
         "total_fac": total_fac, "promedio": total_fac / meses_cargados,
         "pct": pct, "planes": planes_res.data or [],
         "documentos": docs_res.data or [], "alertas": alertas_res.data or [],
-        "novedades": novedades,
+        "novedades": novedades, "whatsapp": cfg.get("whatsapp"),
     }
 
 
