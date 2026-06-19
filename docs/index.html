@@ -260,7 +260,8 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 .cal-day.hoy .cal-day-num { color:var(--blue); font-weight:700; }
 .cal-event { font-size:9px; font-weight:600; padding:1px 4px; border-radius:3px; line-height:1.5; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
 .cal-event.cuota { background:#2BAF8222; color:var(--green); }
-.cal-event.plan { background:#E8A02022; color:var(--yellow); }
+.cal-event.plan  { background:#2BAF8218; color:var(--green); }
+.cal-event.tarea { background:#E8A02022; color:var(--yellow); }
 .cal-event.corte { background:#E0454516; color:var(--red); }
 
 /* FEED */
@@ -326,9 +327,19 @@ const TPL_DEFAULTS = {
   tpl_vencimiento_plan:  "Hola {nombre}, tu cuota N° {numero_cuota} del plan {nombre_plan} vence el {fecha_venc} por {monto}. Consultá tu portal: {link_portal}",
 };
 const TAREAS_DEFAULT = [
-  "Emitir cuotas del mes","Controlar vencimientos de planes","Revisar clientes cerca del tope",
-  "Enviar recordatorios WhatsApp","Verificar recategorizaciones pendientes",
+  {label:"Emitir cuotas del mes",           dia:20},
+  {label:"Controlar vencimientos de planes", dia:null},
+  {label:"Revisar clientes cerca del tope",  dia:null},
+  {label:"Enviar recordatorios WhatsApp",    dia:18},
+  {label:"Verificar recategorizaciones pendientes", dia:null},
 ];
+function parseTareasArr(raw){
+  try{
+    const arr=JSON.parse(raw||"null");
+    if(!arr||!arr.length)return TAREAS_DEFAULT;
+    return arr.map(t=>typeof t==="string"?{label:t,dia:null}:t);
+  }catch{return TAREAS_DEFAULT;}
+}
 const TIPOS_DOC = ["constancia","comprobante","vep","exencion","plan_pago"];
 
 function $$(n) {
@@ -640,7 +651,7 @@ function ModalNuevoPlan({ slug, onClose, onGuardado, initialData }) {
 }
 
 // ── Vista detalle cliente ──
-function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importando, onActualizarEstado }) {
+function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importando, onActualizarEstado, onPlanGuardado }) {
   const [tab, setTab]             = useState("facturacion");
   const [planes, setPlanes]       = useState(null);
   const [alertas, setAlertas]     = useState(null);
@@ -694,6 +705,7 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
     const res = await fetch(`${BACKEND_URL}/planes/${cliente.slug}`);
     const d = await res.json();
     setPlanes(Array.isArray(d)?d:[]);
+    if (onPlanGuardado) onPlanGuardado();
   }
 
   async function marcarCuotaPagada(planId) {
@@ -1116,14 +1128,17 @@ function ViewTopes({ topes }) {
 }
 
 // ── Calendario vencimientos ──
-function CalendarioVencimientos({ planes, clientes }) {
+function CalendarioVencimientos({ planes, clientes, tareas }) {
   const hoy=new Date(), año=hoy.getFullYear(), mes=hoy.getMonth();
   const clienteMap=Object.fromEntries(clientes.map(c=>[c.id,c]));
   const eventos={};
   function add(dia,ev){if(!eventos[dia])eventos[dia]=[];eventos[dia].push(ev);}
+  // Cuota monotributo — verde
   add(20,{tipo:"cuota",label:"Cuota"});
+  // Cortes recategorización — rojo
   if(mes===0)add(1,{tipo:"corte",label:"Corte recat."});
   if(mes===6)add(1,{tipo:"corte",label:"Corte recat."});
+  // Planes de pago del mes — verde
   planes.filter(p=>p.proximo_venc&&p.estado==="activo").forEach(p=>{
     try{
       const d=new Date(p.proximo_venc);
@@ -1132,6 +1147,11 @@ function CalendarioVencimientos({ planes, clientes }) {
         add(d.getDate(),{tipo:"plan",label:c?c.apellido:p.numero_plan||"Plan"});
       }
     }catch{}
+  });
+  // Tareas con fecha — amarillo
+  (tareas||[]).filter(t=>t&&t.dia).forEach(t=>{
+    const d=parseInt(t.dia);
+    if(d>=1&&d<=31) add(d,{tipo:"tarea",label:t.label});
   });
   const diasEnMes=new Date(año,mes+1,0).getDate();
   let primerDia=new Date(año,mes,1).getDay();
@@ -1144,14 +1164,21 @@ function CalendarioVencimientos({ planes, clientes }) {
   const DIAS=["Lu","Ma","Mi","Ju","Vi","Sá","Do"];
   return (
     <div>
-      <div style={{fontSize:"12px",fontWeight:"600",marginBottom:"10px",color:"var(--blue)"}}>{MESES_FULL[mes]} {año}</div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px"}}>
+        <div style={{fontSize:"12px",fontWeight:"600",color:"var(--blue)"}}>{MESES_FULL[mes]} {año}</div>
+        <div style={{display:"flex",gap:"8px"}}>
+          <span style={{fontSize:"10px",color:"var(--green)",fontWeight:"600"}}>● Clientes</span>
+          <span style={{fontSize:"10px",color:"var(--yellow)",fontWeight:"600"}}>● Tareas</span>
+          <span style={{fontSize:"10px",color:"var(--red)",fontWeight:"600"}}>● Cortes</span>
+        </div>
+      </div>
       <div className="cal-grid">
         {DIAS.map(d=><div key={d} className="cal-head">{d}</div>)}
         {celdas.map((dia,i)=>(
           <div key={i} className={`cal-day${dia===hoy.getDate()?" hoy":""}`} style={!dia?{background:"transparent"}:{}}>
             {dia&&<div className="cal-day-num">{dia}</div>}
             {dia&&(eventos[dia]||[]).map((ev,ei)=>(
-              <div key={ei} className={`cal-event ${ev.tipo}`}>{ev.label}</div>
+              <div key={ei} className={`cal-event ${ev.tipo}`} title={ev.label}>{ev.label}</div>
             ))}
           </div>
         ))}
@@ -1230,33 +1257,38 @@ function ActividadFeed() {
 }
 
 // ── Feed pendientes del mes ──
-function PendientesFeed() {
-  const [tareas,setTareas]=useState(null);
+function PendientesFeed({ tareas }) {
   const hoy=new Date();
   const storageKey=`axenda_done_${hoy.getFullYear()}_${hoy.getMonth()+1}`;
   const [done,setDone]=useState(()=>{try{return JSON.parse(localStorage.getItem(storageKey)||"[]");}catch{return [];}});
-  useEffect(()=>{
-    fetch(`${BACKEND_URL}/configuracion`).then(r=>r.json())
-      .then(d=>{try{const arr=JSON.parse(d.tareas_mensuales||"null");setTareas(arr&&arr.length?arr:TAREAS_DEFAULT);}catch{setTareas(TAREAS_DEFAULT);}})
-      .catch(()=>setTareas(TAREAS_DEFAULT));
-  },[]);
-  function toggle(t){const nd=done.includes(t)?done.filter(x=>x!==t):[...done,t];setDone(nd);localStorage.setItem(storageKey,JSON.stringify(nd));}
+  function toggle(label){const nd=done.includes(label)?done.filter(x=>x!==label):[...done,label];setDone(nd);localStorage.setItem(storageKey,JSON.stringify(nd));}
   if(!tareas)return <div style={{height:"80px",borderRadius:"8px"}} className="skeleton"/>;
+  const sorted=[...tareas].sort((a,b)=>{
+    if(a.dia&&!b.dia)return -1; if(!a.dia&&b.dia)return 1;
+    if(a.dia&&b.dia)return a.dia-b.dia; return 0;
+  });
   return (
     <div>
-      {tareas.map((t,i)=>(
+      {sorted.map((t,i)=>(
         <div key={i} className="tarea-item">
-          <div className={`tarea-check ${done.includes(t)?"done":""}`} onClick={()=>toggle(t)}>{done.includes(t)&&"✓"}</div>
-          <div className={`tarea-label ${done.includes(t)?"done":""}`}>{t}</div>
+          <div className={`tarea-check ${done.includes(t.label)?"done":""}`} onClick={()=>toggle(t.label)}>{done.includes(t.label)&&"✓"}</div>
+          {t.dia&&<div style={{fontSize:"10px",fontFamily:"'DM Mono',monospace",color:"var(--yellow)",fontWeight:"600",flexShrink:0,minWidth:"36px"}}>día {t.dia}</div>}
+          <div className={`tarea-label ${done.includes(t.label)?"done":""}`}>{t.label}</div>
         </div>
       ))}
-      <div style={{marginTop:"10px",fontSize:"11px",color:"var(--muted)"}}>{done.length}/{tareas.length} completadas · reset automático el 1/{hoy.getMonth()+2>12?1:hoy.getMonth()+2}</div>
+      <div style={{marginTop:"10px",fontSize:"11px",color:"var(--muted)"}}>{done.length}/{tareas.length} completadas · reset el 1/{hoy.getMonth()+2>12?1:hoy.getMonth()+2}</div>
     </div>
   );
 }
 
 // ── Dashboard principal ──
 function ViewDashboard({ clientes, planes, factura, topes, onNavigate }) {
+  const [tareas,setTareas]=useState(null);
+  useEffect(()=>{
+    fetch(`${BACKEND_URL}/configuracion`).then(r=>r.json())
+      .then(d=>setTareas(parseTareasArr(d.tareas_mensuales)))
+      .catch(()=>setTareas(TAREAS_DEFAULT));
+  },[]);
   const activos=clientes.filter(c=>c.activo);
   const topeMapa=Object.fromEntries(topes.map(t=>[t.categoria,t.tope_anual]));
   function calcPct(c){const tot=(factura[c.id]||[]).reduce((a,b)=>a+(b.monto||0),0);const t=topeMapa[c.categoria]||0;return t>0?tot/t:0;}
@@ -1285,7 +1317,7 @@ function ViewDashboard({ clientes, planes, factura, topes, onNavigate }) {
       <div className="dash-row">
         <div className="dash-card">
           <div className="dash-card-title">Vencimientos del mes</div>
-          <CalendarioVencimientos planes={planes} clientes={clientes}/>
+          <CalendarioVencimientos planes={planes} clientes={clientes} tareas={tareas||[]}/>
         </div>
         <div className="dash-card">
           <div className="dash-card-title">Resumen del mes</div>
@@ -1299,7 +1331,7 @@ function ViewDashboard({ clientes, planes, factura, topes, onNavigate }) {
         </div>
         <div className="dash-card">
           <div className="dash-card-title">Pendientes del mes</div>
-          <PendientesFeed/>
+          <PendientesFeed tareas={tareas}/>
         </div>
       </div>
     </div>
@@ -1480,23 +1512,31 @@ function ViewConfig({ topes, onRefresh }) {
 
       {/* ── Tab Tareas ── */}
       {tab==="tareas"&&(()=>{
-        let tareasArr;
-        try { tareasArr=JSON.parse(cfg.tareas_mensuales||"null")||TAREAS_DEFAULT; } catch { tareasArr=TAREAS_DEFAULT; }
-        function updateTareas(arr){ setVal("tareas_mensuales",JSON.stringify(arr.filter(t=>t.trim()))); }
+        const tareasArr=parseTareasArr(cfg.tareas_mensuales);
+        function updateTareas(arr){ setVal("tareas_mensuales",JSON.stringify(arr.filter(t=>t.label&&t.label.trim()))); }
         return (
-          <div className="detail-section" style={{maxWidth:"520px"}}>
+          <div className="detail-section" style={{maxWidth:"560px"}}>
             <div className="section-title">Tareas mensuales del Dashboard</div>
-            <p style={{fontSize:"13px",color:"var(--muted)",lineHeight:"1.6",marginBottom:"16px"}}>
-              Estas tareas aparecen en el Dashboard cada mes y se resetean automáticamente al inicio de cada período.
+            <p style={{fontSize:"13px",color:"var(--muted)",lineHeight:"1.6",marginBottom:"4px"}}>
+              Estas tareas aparecen en el Dashboard y se resetean al inicio de cada mes. El campo <strong>Día</strong> las muestra en el calendario (amarillo) y ordena la lista.
             </p>
+            <div style={{display:"flex",gap:"8px",marginBottom:"12px",marginTop:"10px"}}>
+              <div style={{flex:1,fontSize:"11px",fontWeight:"600",color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.06em"}}>Tarea</div>
+              <div style={{width:"72px",fontSize:"11px",fontWeight:"600",color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.06em",textAlign:"center"}}>Día del mes</div>
+              <div style={{width:"32px"}}/>
+            </div>
             {tareasArr.map((t,i)=>(
-              <div key={i} style={{display:"flex",gap:"8px",marginBottom:"8px"}}>
-                <input className="form-input" style={{fontSize:"13px"}} value={t}
-                  onChange={e=>{const arr=[...tareasArr];arr[i]=e.target.value;updateTareas(arr);}}/>
+              <div key={i} style={{display:"flex",gap:"8px",marginBottom:"8px",alignItems:"center"}}>
+                <input className="form-input" style={{fontSize:"13px",flex:1}} value={t.label}
+                  onChange={e=>{const arr=[...tareasArr];arr[i]={...arr[i],label:e.target.value};updateTareas(arr);}}/>
+                <input className="form-input" type="number" min="1" max="31" placeholder="—"
+                  style={{width:"72px",fontSize:"13px",textAlign:"center"}}
+                  value={t.dia||""}
+                  onChange={e=>{const arr=[...tareasArr];arr[i]={...arr[i],dia:e.target.value?parseInt(e.target.value):null};updateTareas(arr);}}/>
                 <button className="table-action danger" style={{flexShrink:0}} onClick={()=>{const arr=[...tareasArr];arr.splice(i,1);updateTareas(arr);}}>×</button>
               </div>
             ))}
-            <button className="filter-btn" style={{marginBottom:"16px",fontSize:"12px"}} onClick={()=>updateTareas([...tareasArr,"Nueva tarea"])}>+ Agregar tarea</button>
+            <button className="filter-btn" style={{marginBottom:"16px",fontSize:"12px"}} onClick={()=>updateTareas([...tareasArr,{label:"Nueva tarea",dia:null}])}>+ Agregar tarea</button>
             <SaveRow claves={["tareas_mensuales"]} sKey="tareas"/>
           </div>
         );
@@ -1635,6 +1675,10 @@ function App() {
               onImportar={abrirImport}
               importando={importando}
               onActualizarEstado={actualizarEstadoPago}
+              onPlanGuardado={async()=>{
+                const planRes=await fetch(`${BACKEND_URL}/planes`).then(r=>r.json()).catch(()=>[]);
+                setPlanes(Array.isArray(planRes)?planRes:[]);
+              }}
             />
           ) : seccion==="dashboard" ? (
             <ViewDashboard clientes={clientes} planes={planes} factura={factura} topes={topes} onNavigate={irSeccion}/>
