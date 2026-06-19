@@ -420,37 +420,85 @@ async def parsear_pdf_plan(file: UploadFile):
 
     result: dict = {"organismo": "ARCA"}
 
-    m = re.search(r"N[uú]mero de Plan[:\s]+([A-Z0-9\-]+)", texto, re.IGNORECASE)
-    if m: result["numero_plan"] = m.group(1).strip()
+    # Número de plan — tolerante a encoding (ú puede extraerse como char de reemplazo)
+    m = re.search(r"N.{0,4}mero\s+de\s+Plan[:\s]+([A-Z0-9\-]+)", texto, re.IGNORECASE)
+    if m:
+        result["numero_plan"] = m.group(1).strip()
 
-    m = re.search(r"F[hH]\.?\s*de Consolidaci[oó]n[:\s]+(\d{2}/\d{2}/\d{4})", texto, re.IGNORECASE)
-    if not m:
-        m = re.search(r"Consolidaci[oó]n[:\s]+(\d{2}/\d{2}/\d{4})", texto, re.IGNORECASE)
-    if m: result["fecha_consolidacion"] = m.group(1).strip()
-
-    cuotas_canceladas = len(re.findall(r"Cuota Cancelada", texto, re.IGNORECASE))
-    result["cuotas_pagas"] = cuotas_canceladas
-
-    total_cuotas = len(re.findall(r"Cuota\s+(?:Cancelada|a\s+Vencer)", texto, re.IGNORECASE))
-    if total_cuotas > 0: result["total_cuotas"] = total_cuotas
+    # Fecha de consolidación
+    m = re.search(r"[Ff]h?\.?\s*de\s+Consolidaci.{0,4}n[:\s]+(\d{2}/\d{2}/\d{4})", texto)
+    if m:
+        result["fecha_consolidacion"] = m.group(1).strip()
 
     hoy = datetime.date.today()
-    vencimientos = []
-    for m in re.finditer(r"(\d{2}/\d{2}/\d{4})\s+([\d.,]+)\s+([\d.,]+)\s+Cuota a Vencer", texto, re.IGNORECASE):
+
+    # ── Formato "Mis Facilidades" — filas numeradas con doble vencimiento ──
+    # 1er vencimiento: "N  capital  interesF  -  total  dd/mm/yyyy"
+    primeros = []
+    for match in re.finditer(
+        r"^(\d{1,3})\s+([\d.,]+)\s+([\d.,]+)\s+[-–]\s+([\d.,]+)\s+(\d{2}/\d{2}/\d{4})",
+        texto, re.MULTILINE
+    ):
         try:
-            d, mo, y = m.group(1).split("/")
+            num = int(match.group(1))
+            total = parse_ar_number(match.group(4))
+            d, mo, y = match.group(5).split("/")
             fecha = datetime.date(int(y), int(mo), int(d))
-            monto = parse_ar_number(m.group(3))
-            if fecha >= hoy:
-                vencimientos.append((fecha, monto))
+            primeros.append({"num": num, "total": total, "fecha": fecha})
         except Exception:
             pass
-    vencimientos.sort(key=lambda x: x[0])
-    if vencimientos:
-        result["proximo_venc"] = vencimientos[0][0].strftime("%d/%m/%Y")
-        result["monto_primer_venc"] = vencimientos[0][1]
-        if len(vencimientos) > 1:
-            result["monto_segundo_venc"] = vencimientos[1][1]
+
+    # 2do vencimiento: "interesF  interesR  total  dd/mm/yyyy" (sin número al inicio)
+    segundos = []
+    for match in re.finditer(
+        r"^([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+(\d{2}/\d{2}/\d{4})",
+        texto, re.MULTILINE
+    ):
+        try:
+            total = parse_ar_number(match.group(3))
+            d, mo, y = match.group(4).split("/")
+            fecha = datetime.date(int(y), int(mo), int(d))
+            segundos.append({"total": total, "fecha": fecha})
+        except Exception:
+            pass
+
+    if primeros:
+        result["total_cuotas"] = max(r["num"] for r in primeros)
+        # Cuotas con 1er vencimiento ya pasado → estimadas como pagas
+        result["cuotas_pagas"] = sum(1 for r in primeros if r["fecha"] < hoy)
+        # Próximo vencimiento: el más cercano entre 1eros y 2dos futuros
+        all_upcoming = [(r["fecha"], r["total"]) for r in primeros if r["fecha"] >= hoy]
+        all_upcoming += [(r["fecha"], r["total"]) for r in segundos if r["fecha"] >= hoy]
+        all_upcoming.sort(key=lambda x: x[0])
+        if all_upcoming:
+            result["proximo_venc"] = all_upcoming[0][0].strftime("%d/%m/%Y")
+        # Montos fijos del plan (iguales para todas las cuotas)
+        result["monto_primer_venc"] = primeros[0]["total"]
+        if segundos:
+            result["monto_segundo_venc"] = segundos[0]["total"]
+    else:
+        # ── Formato alternativo: con "Cuota Cancelada" / "Cuota a Vencer" ──
+        cuotas_canceladas = len(re.findall(r"Cuota\s+Cancelada", texto, re.IGNORECASE))
+        result["cuotas_pagas"] = cuotas_canceladas
+        total_cuotas = len(re.findall(r"Cuota\s+(?:Cancelada|a\s+Vencer)", texto, re.IGNORECASE))
+        if total_cuotas > 0:
+            result["total_cuotas"] = total_cuotas
+        vencimientos = []
+        for m in re.finditer(r"(\d{2}/\d{2}/\d{4})\s+([\d.,]+)\s+([\d.,]+)\s+Cuota a Vencer", texto, re.IGNORECASE):
+            try:
+                d, mo, y = m.group(1).split("/")
+                fecha = datetime.date(int(y), int(mo), int(d))
+                monto = parse_ar_number(m.group(3))
+                if fecha >= hoy:
+                    vencimientos.append((fecha, monto))
+            except Exception:
+                pass
+        vencimientos.sort(key=lambda x: x[0])
+        if vencimientos:
+            result["proximo_venc"] = vencimientos[0][0].strftime("%d/%m/%Y")
+            result["monto_primer_venc"] = vencimientos[0][1]
+            if len(vencimientos) > 1:
+                result["monto_segundo_venc"] = vencimientos[1][1]
 
     return {"ok": True, **result}
 
