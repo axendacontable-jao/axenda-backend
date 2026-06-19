@@ -252,14 +252,22 @@ async def crear_cliente(data: dict):
         "categoria": (data.get("categoria") or "").upper() or None,
         "cuota": data.get("cuota") or None, "activo": True,
     }
-    result = db.from_("clientes").insert(cliente).execute()
+    try:
+        result = db.from_("clientes").insert(cliente).execute()
+    except Exception as e:
+        raise HTTPException(500, f"Error al guardar cliente: {str(e)}")
     cliente_id = result.data[0]["id"] if result.data else None
     log_actividad(cliente_id, f"Alta de cliente — {data.get('nombre','')} {data.get('apellido','')}")
     return {"ok": True, "slug": slug, "data": result.data}
 
 @app.patch("/clientes/{slug}/toggle")
 async def toggle_activo(slug: str):
-    cliente = db.from_("clientes").select("activo").eq("slug", slug).single().execute()
+    try:
+        cliente = db.from_("clientes").select("activo").eq("slug", slug).single().execute()
+    except Exception:
+        raise HTTPException(404, "Cliente no encontrado")
+    if not cliente.data:
+        raise HTTPException(404, "Cliente no encontrado")
     nuevo = not cliente.data["activo"]
     db.from_("clientes").update({"activo": nuevo}).eq("slug", slug).execute()
     return {"ok": True, "activo": nuevo}
@@ -278,7 +286,10 @@ async def actualizar_estado_pago(slug: str, data: dict):
     nuevo = data.get("estado_pago")
     if nuevo not in ("al_dia", "debe", "vencida"):
         raise HTTPException(400, "Estado inválido: debe ser al_dia, debe o vencida")
-    res = db.from_("clientes").select("id,nombre,apellido").eq("slug", slug).single().execute()
+    try:
+        res = db.from_("clientes").select("id,nombre,apellido").eq("slug", slug).single().execute()
+    except Exception:
+        raise HTTPException(404, "Cliente no encontrado")
     if not res.data:
         raise HTTPException(404, "Cliente no encontrado")
     db.from_("clientes").update({"estado_pago": nuevo}).eq("slug", slug).execute()
@@ -289,7 +300,10 @@ async def actualizar_estado_pago(slug: str, data: dict):
 
 @app.get("/facturacion/{slug}")
 async def obtener_facturacion(slug: str):
-    cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    try:
+        cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    except Exception:
+        raise HTTPException(404, "Cliente no encontrado")
     if not cliente.data:
         raise HTTPException(404, "Cliente no encontrado")
     result = db.from_("facturacion").select("*").eq("cliente_id", cliente.data["id"]).order("anio").order("mes").execute()
@@ -297,7 +311,10 @@ async def obtener_facturacion(slug: str):
 
 @app.post("/facturacion/{slug}")
 async def cargar_facturacion(slug: str, data: dict):
-    cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    try:
+        cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    except Exception:
+        raise HTTPException(404, "Cliente no encontrado")
     if not cliente.data:
         raise HTTPException(404, "Cliente no encontrado")
     registro = {
@@ -335,7 +352,10 @@ async def datos_portal(slug: str):
 @app.post("/importar-comprobantes/{slug}")
 async def importar_comprobantes(slug: str, file: UploadFile):
     # Leer cliente
-    cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    try:
+        cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    except Exception:
+        raise HTTPException(404, "Cliente no encontrado")
     if not cliente.data:
         raise HTTPException(404, "Cliente no encontrado")
     cliente_id = cliente.data["id"]
@@ -378,7 +398,10 @@ async def listar_todos_planes():
 
 @app.get("/planes/{slug}")
 async def planes_cliente(slug: str):
-    cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    try:
+        cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    except Exception:
+        raise HTTPException(404, "Cliente no encontrado")
     if not cliente.data:
         raise HTTPException(404, "Cliente no encontrado")
     result = db.from_("planes_pago").select("*").eq("cliente_id", cliente.data["id"]).order("created_at", desc=True).execute()
@@ -433,7 +456,10 @@ async def parsear_pdf_plan(file: UploadFile):
 
 @app.post("/planes/{slug}")
 async def crear_plan(slug: str, data: dict):
-    cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    try:
+        cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    except Exception:
+        raise HTTPException(404, "Cliente no encontrado")
     if not cliente.data:
         raise HTTPException(404, "Cliente no encontrado")
     total = data.get("total_cuotas")
@@ -454,12 +480,18 @@ async def crear_plan(slug: str, data: dict):
         "url_pdf":           data.get("url_pdf"),
         "estado":            "activo",
     }
-    result = db.from_("planes_pago").insert(plan).execute()
+    try:
+        result = db.from_("planes_pago").insert(plan).execute()
+    except Exception as e:
+        raise HTTPException(500, f"Error al guardar plan: {str(e)}")
     return {"ok": True, "data": result.data}
 
 @app.patch("/planes/{plan_id}/pagar")
 async def marcar_cuota_pagada(plan_id: str):
-    res = db.from_("planes_pago").select("*").eq("id", plan_id).single().execute()
+    try:
+        res = db.from_("planes_pago").select("*").eq("id", plan_id).single().execute()
+    except Exception:
+        raise HTTPException(404, "Plan no encontrado")
     if not res.data:
         raise HTTPException(404, "Plan no encontrado")
     p = res.data
@@ -490,7 +522,7 @@ async def eliminar_plan(plan_id: str):
 
 # ─── Topes ───────────────────────────────────────────────────────────────────
 
-def parse_ar_number(s) -> float | None:
+def parse_ar_number(s):
     """Parse Argentine number format: 7.400.000 or 7.400.000,50"""
     if s is None:
         return None
@@ -644,7 +676,10 @@ async def guardar_configuracion(data: dict):
 
 @app.get("/alertas/{slug}")
 async def alertas_cliente(slug: str):
-    cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    try:
+        cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    except Exception:
+        raise HTTPException(404, "Cliente no encontrado")
     if not cliente.data:
         raise HTTPException(404, "Cliente no encontrado")
     result = db.from_("alertas").select("*").eq("cliente_id", cliente.data["id"]).order("created_at", desc=True).execute()
@@ -652,7 +687,10 @@ async def alertas_cliente(slug: str):
 
 @app.post("/alertas/{slug}")
 async def crear_alerta(slug: str, data: dict):
-    cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    try:
+        cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    except Exception:
+        raise HTTPException(404, "Cliente no encontrado")
     if not cliente.data:
         raise HTTPException(404, "Cliente no encontrado")
     alerta = {
@@ -661,7 +699,10 @@ async def crear_alerta(slug: str, data: dict):
         "mensaje": data.get("mensaje", ""),
         "leida":   False,
     }
-    result = db.from_("alertas").insert(alerta).execute()
+    try:
+        result = db.from_("alertas").insert(alerta).execute()
+    except Exception as e:
+        raise HTTPException(500, f"Error al crear alerta: {str(e)}")
     return {"ok": True, "data": result.data}
 
 @app.delete("/alertas/{alerta_id}")
@@ -673,7 +714,10 @@ async def eliminar_alerta(alerta_id: str):
 
 @app.post("/documentos/{slug}")
 async def crear_documento(slug: str, data: dict):
-    cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    try:
+        cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    except Exception:
+        raise HTTPException(404, "Cliente no encontrado")
     if not cliente.data:
         raise HTTPException(404, "Cliente no encontrado")
     doc = {
@@ -683,7 +727,10 @@ async def crear_documento(slug: str, data: dict):
         "fecha":   data.get("fecha"),
         "url":     data.get("url"),
     }
-    result = db.from_("documentos").insert({k: v for k, v in doc.items() if v is not None}).execute()
+    try:
+        result = db.from_("documentos").insert({k: v for k, v in doc.items() if v is not None}).execute()
+    except Exception as e:
+        raise HTTPException(500, f"Error al guardar documento: {str(e)}")
     return {"ok": True, "data": result.data}
 
 if __name__ == "__main__":
