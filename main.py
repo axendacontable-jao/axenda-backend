@@ -253,6 +253,8 @@ async def crear_cliente(data: dict):
         "cuota": data.get("cuota") or None, "activo": True,
     }
     result = db.from_("clientes").insert(cliente).execute()
+    cliente_id = result.data[0]["id"] if result.data else None
+    log_actividad(cliente_id, f"Alta de cliente — {data.get('nombre','')} {data.get('apellido','')}")
     return {"ok": True, "slug": slug, "data": result.data}
 
 @app.patch("/clientes/{slug}/toggle")
@@ -261,6 +263,29 @@ async def toggle_activo(slug: str):
     nuevo = not cliente.data["activo"]
     db.from_("clientes").update({"activo": nuevo}).eq("slug", slug).execute()
     return {"ok": True, "activo": nuevo}
+
+def log_actividad(cliente_id: str | None, mensaje: str):
+    try:
+        db.from_("alertas").insert({
+            "cliente_id": cliente_id, "tipo": "actividad",
+            "mensaje": mensaje, "leida": True,
+        }).execute()
+    except Exception:
+        pass
+
+@app.patch("/clientes/{slug}/estado-pago")
+async def actualizar_estado_pago(slug: str, data: dict):
+    nuevo = data.get("estado_pago")
+    if nuevo not in ("al_dia", "debe", "vencida"):
+        raise HTTPException(400, "Estado inválido: debe ser al_dia, debe o vencida")
+    res = db.from_("clientes").select("id,nombre,apellido").eq("slug", slug).single().execute()
+    if not res.data:
+        raise HTTPException(404, "Cliente no encontrado")
+    db.from_("clientes").update({"estado_pago": nuevo}).eq("slug", slug).execute()
+    if nuevo == "al_dia":
+        nombre = f"{res.data.get('nombre','')} {res.data.get('apellido','')}".strip()
+        log_actividad(res.data["id"], f"Cuota marcada al día — {nombre}")
+    return {"ok": True, "estado_pago": nuevo}
 
 @app.get("/facturacion/{slug}")
 async def obtener_facturacion(slug: str):
@@ -340,6 +365,8 @@ async def importar_comprobantes(slug: str, file: UploadFile):
         })
     for r in registros:
         db.from_("facturacion").upsert(r, on_conflict="cliente_id,anio,mes").execute()
+    if registros:
+        log_actividad(cliente_id, f"Importación ARCA — {slug} — {len(registros)} meses")
     return {"ok": True, "meses_importados": len(registros), "detalle": registros}
 
 # ─── Planes de pago ──────────────────────────────────────────────────────────
@@ -356,6 +383,53 @@ async def planes_cliente(slug: str):
         raise HTTPException(404, "Cliente no encontrado")
     result = db.from_("planes_pago").select("*").eq("cliente_id", cliente.data["id"]).order("created_at", desc=True).execute()
     return result.data or []
+
+@app.post("/planes/parsear-pdf")
+async def parsear_pdf_plan(file: UploadFile):
+    """Parsea PDF de Mis Facilidades ARCA y devuelve datos estructurados del plan."""
+    try:
+        import pdfplumber
+    except ImportError:
+        raise HTTPException(500, "pdfplumber no instalado")
+    contenido = await file.read()
+    with pdfplumber.open(io.BytesIO(contenido)) as pdf:
+        texto = "\n".join(page.extract_text() or "" for page in pdf.pages)
+
+    result: dict = {"organismo": "ARCA"}
+
+    m = re.search(r"N[uú]mero de Plan[:\s]+([A-Z0-9\-]+)", texto, re.IGNORECASE)
+    if m: result["numero_plan"] = m.group(1).strip()
+
+    m = re.search(r"F[hH]\.?\s*de Consolidaci[oó]n[:\s]+(\d{2}/\d{2}/\d{4})", texto, re.IGNORECASE)
+    if not m:
+        m = re.search(r"Consolidaci[oó]n[:\s]+(\d{2}/\d{2}/\d{4})", texto, re.IGNORECASE)
+    if m: result["fecha_consolidacion"] = m.group(1).strip()
+
+    cuotas_canceladas = len(re.findall(r"Cuota Cancelada", texto, re.IGNORECASE))
+    result["cuotas_pagas"] = cuotas_canceladas
+
+    total_cuotas = len(re.findall(r"Cuota\s+(?:Cancelada|a\s+Vencer)", texto, re.IGNORECASE))
+    if total_cuotas > 0: result["total_cuotas"] = total_cuotas
+
+    hoy = datetime.date.today()
+    vencimientos = []
+    for m in re.finditer(r"(\d{2}/\d{2}/\d{4})\s+([\d.,]+)\s+([\d.,]+)\s+Cuota a Vencer", texto, re.IGNORECASE):
+        try:
+            d, mo, y = m.group(1).split("/")
+            fecha = datetime.date(int(y), int(mo), int(d))
+            monto = parse_ar_number(m.group(3))
+            if fecha >= hoy:
+                vencimientos.append((fecha, monto))
+        except Exception:
+            pass
+    vencimientos.sort(key=lambda x: x[0])
+    if vencimientos:
+        result["proximo_venc"] = vencimientos[0][0].strftime("%d/%m/%Y")
+        result["monto_primer_venc"] = vencimientos[0][1]
+        if len(vencimientos) > 1:
+            result["monto_segundo_venc"] = vencimientos[1][1]
+
+    return {"ok": True, **result}
 
 @app.post("/planes/{slug}")
 async def crear_plan(slug: str, data: dict):
@@ -393,10 +467,21 @@ async def marcar_cuota_pagada(plan_id: str):
     total        = p.get("total_cuotas") or 0
     impagas      = max(0, (p.get("cuotas_impagas") or 0) - 1)
     nuevo_estado = "cancelado" if total > 0 and nuevas_pagas >= total else "activo"
-    db.from_("planes_pago").update({
-        "cuotas_pagas": nuevas_pagas, "cuotas_impagas": impagas, "estado": nuevo_estado,
-    }).eq("id", plan_id).execute()
-    return {"ok": True, "cuotas_pagas": nuevas_pagas, "estado": nuevo_estado}
+    update_data = {"cuotas_pagas": nuevas_pagas, "cuotas_impagas": impagas, "estado": nuevo_estado}
+    nuevo_venc = None
+    if p.get("proximo_venc") and nuevo_estado == "activo":
+        try:
+            fecha = datetime.date.fromisoformat(p["proximo_venc"])
+            mes_sig = fecha.month % 12 + 1
+            año_sig = fecha.year + (1 if fecha.month == 12 else 0)
+            import calendar
+            dia = min(fecha.day, calendar.monthrange(año_sig, mes_sig)[1])
+            nuevo_venc = datetime.date(año_sig, mes_sig, dia).isoformat()
+            update_data["proximo_venc"] = nuevo_venc
+        except Exception:
+            pass
+    db.from_("planes_pago").update(update_data).eq("id", plan_id).execute()
+    return {"ok": True, "cuotas_pagas": nuevas_pagas, "estado": nuevo_estado, "proximo_venc": nuevo_venc}
 
 @app.delete("/planes/{plan_id}")
 async def eliminar_plan(plan_id: str):
@@ -583,6 +668,23 @@ async def crear_alerta(slug: str, data: dict):
 async def eliminar_alerta(alerta_id: str):
     db.from_("alertas").delete().eq("id", alerta_id).execute()
     return {"ok": True}
+
+# ─── Documentos ──────────────────────────────────────────────────────────────
+
+@app.post("/documentos/{slug}")
+async def crear_documento(slug: str, data: dict):
+    cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    if not cliente.data:
+        raise HTTPException(404, "Cliente no encontrado")
+    doc = {
+        "cliente_id": cliente.data["id"],
+        "nombre":  data.get("nombre"),
+        "tipo":    data.get("tipo"),
+        "fecha":   data.get("fecha"),
+        "url":     data.get("url"),
+    }
+    result = db.from_("documentos").insert({k: v for k, v in doc.items() if v is not None}).execute()
+    return {"ok": True, "data": result.data}
 
 if __name__ == "__main__":
     import uvicorn
