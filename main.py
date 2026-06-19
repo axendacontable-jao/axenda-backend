@@ -298,6 +298,58 @@ async def actualizar_estado_pago(slug: str, data: dict):
         log_actividad(res.data["id"], f"Cuota marcada al día — {nombre}")
     return {"ok": True, "estado_pago": nuevo}
 
+@app.get("/clientes/{slug}/historial-cuotas")
+async def get_historial_cuotas(slug: str, meses: int = 6):
+    try:
+        cl = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    except Exception:
+        raise HTTPException(404, "Cliente no encontrado")
+    cliente_id = cl.data["id"]
+    hoy = datetime.date.today()
+    meses_lista = []
+    for i in range(meses):
+        m = hoy.month - i
+        y = hoy.year
+        while m <= 0:
+            m += 12
+            y -= 1
+        meses_lista.append((y, m))
+    try:
+        res = db.from_("historial_cuotas").select("*").eq("cliente_id", cliente_id).execute()
+        existentes = {(r["año"], r["mes"]): r for r in (res.data or [])}
+    except Exception:
+        existentes = {}
+    resultado = []
+    for (y, m) in meses_lista:
+        if (y, m) in existentes:
+            resultado.append(existentes[(y, m)])
+        else:
+            resultado.append({"cliente_id": cliente_id, "año": y, "mes": m, "pagado": False, "fecha_pago": None, "id": None})
+    return {"ok": True, "historial": resultado}
+
+
+@app.patch("/clientes/{slug}/historial-cuotas/{año}/{mes}")
+async def toggle_historial_cuota(slug: str, año: int, mes: int, data: dict):
+    try:
+        cl = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    except Exception:
+        raise HTTPException(404, "Cliente no encontrado")
+    cliente_id = cl.data["id"]
+    pagado = data.get("pagado", True)
+    upsert_data = {
+        "cliente_id": cliente_id,
+        "año": año,
+        "mes": mes,
+        "pagado": pagado,
+        "fecha_pago": datetime.datetime.utcnow().isoformat() + "Z" if pagado else None,
+    }
+    try:
+        db.from_("historial_cuotas").upsert(upsert_data, on_conflict="cliente_id,año,mes").execute()
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    return {"ok": True, "pagado": pagado}
+
+
 @app.get("/facturacion/{slug}")
 async def obtener_facturacion(slug: str):
     try:
