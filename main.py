@@ -339,13 +339,7 @@ async def get_historial_cuotas(slug: str, meses: int = 6):
             resultado.append(existentes[(y, m)])
         else:
             resultado.append({"cliente_id": cliente_id, "año": y, "mes": m, "pagado": False, "fecha_pago": None, "id": None})
-    meses_set = set(meses_lista)
-    deuda_anterior = [
-        r for r in existentes.values()
-        if not r["pagado"] and (r["año"], r["mes"]) not in meses_set
-    ]
-    deuda_anterior.sort(key=lambda r: (r["año"], r["mes"]), reverse=True)
-    return {"ok": True, "historial": resultado, "deuda_anterior": deuda_anterior}
+    return {"ok": True, "historial": resultado}
 
 
 @app.patch("/clientes/{slug}/historial-cuotas/{año}/{mes}")
@@ -368,6 +362,51 @@ async def toggle_historial_cuota(slug: str, año: int, mes: int, data: dict):
     except Exception as e:
         raise HTTPException(500, str(e))
     return {"ok": True, "pagado": pagado}
+
+
+@app.get("/clientes/{slug}/deuda-manual")
+async def get_deuda_manual(slug: str):
+    try:
+        cl = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    except Exception:
+        raise HTTPException(404, "Cliente no encontrado")
+    res = db.from_("deuda_manual").select("*").eq("cliente_id", cl.data["id"]).eq("pagado", False).order("created_at").execute()
+    return {"ok": True, "deudas": res.data or []}
+
+@app.post("/clientes/{slug}/deuda-manual")
+async def agregar_deuda_manual(slug: str, data: dict):
+    organismo = data.get("organismo")
+    monto = data.get("monto")
+    descripcion = data.get("descripcion", "")
+    if organismo not in ("ARCA", "ART"):
+        raise HTTPException(400, "Organismo inválido: debe ser ARCA o ART")
+    if not monto or float(monto) <= 0:
+        raise HTTPException(400, "Monto inválido")
+    try:
+        cl = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+    except Exception:
+        raise HTTPException(404, "Cliente no encontrado")
+    res = db.from_("deuda_manual").insert({
+        "cliente_id": cl.data["id"],
+        "organismo": organismo,
+        "monto": float(monto),
+        "descripcion": descripcion,
+        "pagado": False,
+    }).execute()
+    return {"ok": True, "deuda": res.data[0] if res.data else None}
+
+@app.patch("/deuda-manual/{deuda_id}/pagar")
+async def pagar_deuda_manual(deuda_id: str):
+    db.from_("deuda_manual").update({
+        "pagado": True,
+        "fecha_pago": datetime.datetime.utcnow().isoformat() + "Z",
+    }).eq("id", deuda_id).execute()
+    return {"ok": True}
+
+@app.delete("/deuda-manual/{deuda_id}")
+async def eliminar_deuda_manual(deuda_id: str):
+    db.from_("deuda_manual").delete().eq("id", deuda_id).execute()
+    return {"ok": True}
 
 
 @app.get("/facturacion/{slug}")

@@ -1321,27 +1321,36 @@ function ViewPlanes({ clientes }) {
 
 // ── Historial cuotas mensuales ──
 function HistorialCuotas({ slug, cuota, categoria, onToggleMesActual }) {
-  const [historial, setHistorial]         = useState([]);
-  const [deudaAnterior, setDeudaAnterior] = useState([]);
-  const [cargando, setCargando]           = useState(true);
-  const [mostrarForm, setMostrarForm]     = useState(false);
-  const [mostrarAnterior, setMostrarAnterior] = useState(true);
-  const [formAño, setFormAño]             = useState(new Date().getFullYear() - 1);
-  const [formMes, setFormMes]             = useState(1);
-  const [guardando, setGuardando]         = useState(false);
+  const [historial, setHistorial]       = useState([]);
+  const [deudaManual, setDeudaManual]   = useState([]);
+  const [cargando, setCargando]         = useState(true);
+  const [mostrarForm, setMostrarForm]   = useState(false);
+  const [mostrarDeudas, setMostrarDeudas] = useState(true);
+  const [formOrg, setFormOrg]           = useState("ARCA");
+  const [formMonto, setFormMonto]       = useState("");
+  const [formDesc, setFormDesc]         = useState("");
+  const [guardando, setGuardando]       = useState(false);
   const hoy = new Date();
 
-  function cargar() {
-    setCargando(true);
+  function cargarHistorial() {
     fetch(`${BACKEND_URL}/clientes/${slug}/historial-cuotas`)
-      .then(r=>r.json()).then(d=>{
-        setHistorial(d.historial||[]);
-        setDeudaAnterior(d.deuda_anterior||[]);
-        setCargando(false);
-      })
-      .catch(()=>setCargando(false));
+      .then(r=>r.json()).then(d=>setHistorial(d.historial||[])).catch(()=>{});
   }
-  useEffect(()=>{ cargar(); },[slug]);
+  function cargarDeudas() {
+    fetch(`${BACKEND_URL}/clientes/${slug}/deuda-manual`)
+      .then(r=>r.json()).then(d=>setDeudaManual(d.deudas||[])).catch(()=>{});
+  }
+  useEffect(()=>{
+    setCargando(true);
+    Promise.all([
+      fetch(`${BACKEND_URL}/clientes/${slug}/historial-cuotas`).then(r=>r.json()),
+      fetch(`${BACKEND_URL}/clientes/${slug}/deuda-manual`).then(r=>r.json()),
+    ]).then(([hd, dd])=>{
+      setHistorial(hd.historial||[]);
+      setDeudaManual(dd.deudas||[]);
+      setCargando(false);
+    }).catch(()=>setCargando(false));
+  },[slug]);
 
   async function toggleMes(h) {
     const nuevoPagado = !h.pagado;
@@ -1352,53 +1361,59 @@ function HistorialCuotas({ slug, cuota, categoria, onToggleMesActual }) {
     }).catch(()=>{});
   }
 
-  async function toggleMesAnterior(h) {
-    setDeudaAnterior(prev=>prev.filter(x=>!(x.año===h.año&&x.mes===h.mes)));
-    await fetch(`${BACKEND_URL}/clientes/${slug}/historial-cuotas/${h.año}/${h.mes}`,{
-      method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({pagado:true})
-    }).catch(()=>{});
+  async function pagarDeuda(d) {
+    setDeudaManual(prev=>prev.filter(x=>x.id!==d.id));
+    await fetch(`${BACKEND_URL}/deuda-manual/${d.id}/pagar`,{method:"PATCH"}).catch(()=>{});
   }
 
-  async function agregarMes() {
+  async function eliminarDeuda(d) {
+    setDeudaManual(prev=>prev.filter(x=>x.id!==d.id));
+    await fetch(`${BACKEND_URL}/deuda-manual/${d.id}`,{method:"DELETE"}).catch(()=>{});
+  }
+
+  async function agregarDeuda() {
+    const monto = parseFloat(formMonto.replace(/\./g,"").replace(",","."));
+    if (!formMonto||isNaN(monto)||monto<=0) { alert("Ingresá un monto válido"); return; }
     setGuardando(true);
-    await fetch(`${BACKEND_URL}/clientes/${slug}/historial-cuotas/${formAño}/${formMes}`,{
-      method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({pagado:false})
-    }).catch(()=>{});
-    await fetch(`${BACKEND_URL}/clientes/${slug}/historial-cuotas`)
-      .then(r=>r.json()).then(d=>{ setHistorial(d.historial||[]); setDeudaAnterior(d.deuda_anterior||[]); })
-      .catch(()=>{});
-    setMostrarForm(false);
-    setGuardando(false);
+    const res = await fetch(`${BACKEND_URL}/clientes/${slug}/deuda-manual`,{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({organismo:formOrg,monto,descripcion:formDesc})
+    }).then(r=>r.json()).catch(()=>null);
+    if (res?.ok && res.deuda) setDeudaManual(prev=>[...prev, res.deuda]);
+    setFormMonto(""); setFormDesc(""); setMostrarForm(false); setGuardando(false);
   }
 
   if (cargando) return <div style={{color:"var(--muted)",fontSize:"13px",padding:"8px 0"}}>Cargando historial...</div>;
 
-  const artPorMes    = (ART_RIO_NEGRO_2026[categoria] || 0);
-  const hoyDia       = hoy.getDate();
-  const pendientes6  = historial.filter(h=>!h.pagado);
-  const vencidos6    = pendientes6.filter(h=>{ const esActual=h.año===hoy.getFullYear()&&h.mes===hoy.getMonth()+1; return !esActual||hoyDia>20; });
-  const sinVencer    = pendientes6.filter(h=>{ const esActual=h.año===hoy.getFullYear()&&h.mes===hoy.getMonth()+1; return esActual&&hoyDia<=20; });
-  const totalVencidos = vencidos6.length + deudaAnterior.length;
-  const totalPend     = pendientes6.length + deudaAnterior.length;
-  const deudaART  = totalVencidos * artPorMes;
-  const deudaARCA = totalVencidos*((cuota||0)-artPorMes) + sinVencer.length*(cuota||0);
+  const artPorMes = (ART_RIO_NEGRO_2026[categoria] || 0);
+  const hoyDia    = hoy.getDate();
+  const pendientes6 = historial.filter(h=>!h.pagado);
+  const vencidos6   = pendientes6.filter(h=>{ const e=h.año===hoy.getFullYear()&&h.mes===hoy.getMonth()+1; return !e||hoyDia>20; });
+  const sinVencer   = pendientes6.filter(h=>{ const e=h.año===hoy.getFullYear()&&h.mes===hoy.getMonth()+1; return e&&hoyDia<=20; });
+
+  const deudaART_hist  = vencidos6.length * artPorMes;
+  const deudaARCA_hist = vencidos6.length*((cuota||0)-artPorMes) + sinVencer.length*(cuota||0);
+  const deudaART_man   = deudaManual.filter(d=>d.organismo==="ART").reduce((s,d)=>s+d.monto,0);
+  const deudaARCA_man  = deudaManual.filter(d=>d.organismo==="ARCA").reduce((s,d)=>s+d.monto,0);
+  const deudaART   = deudaART_hist + deudaART_man;
+  const deudaARCA  = deudaARCA_hist + deudaARCA_man;
   const deudaTotal = deudaART + deudaARCA;
 
   return (
     <div>
+      {/* Chip de deuda */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px"}}>
         <div style={{fontSize:"11px",fontWeight:"600",color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.05em"}}>Últimos 6 meses · Cuota {$$(cuota)}</div>
         {deudaTotal>0 ? (
           <div style={{background:"#E0454510",border:"1px solid var(--red)",borderRadius:"8px",padding:"6px 12px"}}>
-            <div style={{display:"flex",gap:"8px",alignItems:"center",marginBottom:deudaART>0?"4px":"0"}}>
+            <div style={{display:"flex",gap:"8px",alignItems:"center",marginBottom:"4px"}}>
               <span style={{fontSize:"11px",color:"var(--red)",fontWeight:"600"}}>Deuda estimada</span>
               <span style={{fontFamily:"'DM Mono',monospace",fontWeight:"700",color:"var(--red)",fontSize:"14px"}}>{$$(deudaTotal)}</span>
-              <span style={{fontSize:"11px",color:"var(--red)"}}>({totalPend} {totalPend===1?"mes":"meses"})</span>
             </div>
-            {deudaART>0&&<div style={{display:"flex",gap:"14px",fontSize:"11px",color:"var(--muted)"}}>
-              <span>ART Río Negro: <b style={{color:"var(--red)"}}>{$$(deudaART)}</b></span>
-              <span>ARCA: <b style={{color:"var(--red)"}}>{$$(deudaARCA)}</b></span>
-            </div>}
+            <div style={{display:"flex",gap:"14px",fontSize:"11px",color:"var(--muted)"}}>
+              {deudaART>0&&<span>ART Río Negro: <b style={{color:"var(--red)"}}>{$$(deudaART)}</b></span>}
+              {deudaARCA>0&&<span>ARCA: <b style={{color:"var(--red)"}}>{$$(deudaARCA)}</b></span>}
+            </div>
           </div>
         ) : (
           <div style={{background:"#2BAF8210",border:"1px solid var(--green)",borderRadius:"8px",padding:"4px 12px"}}>
@@ -1407,6 +1422,7 @@ function HistorialCuotas({ slug, cuota, categoria, onToggleMesActual }) {
         )}
       </div>
 
+      {/* Grid 6 meses */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"8px"}}>
         {historial.map(h=>{
           const esMesActual = h.año===hoy.getFullYear()&&h.mes===hoy.getMonth()+1;
@@ -1425,19 +1441,23 @@ function HistorialCuotas({ slug, cuota, categoria, onToggleMesActual }) {
         })}
       </div>
 
-      {deudaAnterior.length>0&&(
+      {/* Deudas manuales */}
+      {deudaManual.length>0&&(
         <div style={{marginTop:"14px"}}>
-          <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"8px",cursor:"pointer",userSelect:"none"}} onClick={()=>setMostrarAnterior(v=>!v)}>
-            <span style={{fontSize:"11px",fontWeight:"600",color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.05em"}}>Deuda anterior · {deudaAnterior.length} {deudaAnterior.length===1?"mes":"meses"}</span>
-            <span style={{fontSize:"11px",color:"var(--muted)"}}>{mostrarAnterior?"▲":"▼"}</span>
+          <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"8px",cursor:"pointer",userSelect:"none"}} onClick={()=>setMostrarDeudas(v=>!v)}>
+            <span style={{fontSize:"11px",fontWeight:"600",color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.05em"}}>Deuda registrada · {deudaManual.length} {deudaManual.length===1?"entrada":"entradas"}</span>
+            <span style={{fontSize:"11px",color:"var(--muted)"}}>{mostrarDeudas?"▲":"▼"}</span>
           </div>
-          {mostrarAnterior&&(
-            <div style={{display:"flex",flexDirection:"column",gap:"6px"}}>
-              {deudaAnterior.map(h=>(
-                <div key={`ant-${h.año}-${h.mes}`} style={{display:"flex",alignItems:"center",gap:"10px",border:"1px solid var(--red)",borderRadius:"8px",padding:"8px 14px",background:"#E0454506"}}>
-                  <span style={{fontSize:"13px",fontWeight:"600",flex:1}}>{MESES_FULL[h.mes-1]} {h.año}</span>
-                  <span style={{fontFamily:"'DM Mono',monospace",fontSize:"12px",color:"var(--red)",fontWeight:"600"}}>✗ Pendiente</span>
-                  <button className="table-action success" style={{fontSize:"11px",padding:"3px 10px"}} onClick={(e)=>{e.stopPropagation();toggleMesAnterior(h);}}>✓ Marcar pagada</button>
+          {mostrarDeudas&&(
+            <div style={{display:"flex",flexDirection:"column",gap:"6px",marginBottom:"10px"}}>
+              {deudaManual.map(d=>(
+                <div key={d.id} style={{display:"flex",alignItems:"center",gap:"10px",border:"1px solid var(--red)",borderRadius:"8px",padding:"8px 14px",background:"#E0454506"}}>
+                  <span style={{fontSize:"11px",fontWeight:"700",background:d.organismo==="ART"?"#FFF3CD":"#E8F0FE",color:d.organismo==="ART"?"#856404":"#1a56db",borderRadius:"5px",padding:"2px 7px"}}>{d.organismo}</span>
+                  <span style={{fontFamily:"'DM Mono',monospace",fontWeight:"700",fontSize:"13px",color:"var(--red)"}}>{$$(d.monto)}</span>
+                  {d.descripcion&&<span style={{fontSize:"12px",color:"var(--muted)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.descripcion}</span>}
+                  {!d.descripcion&&<span style={{flex:1}}/>}
+                  <button className="table-action success" style={{fontSize:"11px",padding:"3px 10px",flexShrink:0}} onClick={(e)=>{e.stopPropagation();pagarDeuda(d);}}>✓ Pagada</button>
+                  <button className="table-action" style={{fontSize:"11px",padding:"3px 8px",flexShrink:0}} onClick={(e)=>{e.stopPropagation();eliminarDeuda(d);}}>✕</button>
                 </div>
               ))}
             </div>
@@ -1445,20 +1465,35 @@ function HistorialCuotas({ slug, cuota, categoria, onToggleMesActual }) {
         </div>
       )}
 
-      <div style={{marginTop:"12px"}}>
+      {/* Formulario agregar deuda */}
+      <div style={{marginTop:"10px"}}>
         {mostrarForm ? (
-          <div style={{display:"flex",alignItems:"center",gap:"8px",background:"var(--light)",border:"1px solid var(--border)",borderRadius:"8px",padding:"10px 14px",flexWrap:"wrap"}}>
-            <span style={{fontSize:"12px",color:"var(--muted)"}}>Mes:</span>
-            <select className="form-input" style={{width:"120px",padding:"3px 8px",fontSize:"12px",height:"28px"}} value={formMes} onChange={e=>setFormMes(Number(e.target.value))}>
-              {MESES_FULL.map((m,i)=><option key={i+1} value={i+1}>{m}</option>)}
-            </select>
-            <span style={{fontSize:"12px",color:"var(--muted)"}}>Año:</span>
-            <input className="form-input" style={{width:"78px",padding:"3px 8px",fontSize:"12px",height:"28px"}} type="number" value={formAño} onChange={e=>setFormAño(Number(e.target.value))} min="2020" max={hoy.getFullYear()}/>
-            <button className="btn-primary" style={{fontSize:"12px",padding:"4px 14px",height:"28px"}} onClick={agregarMes} disabled={guardando}>{guardando?"...":"Agregar"}</button>
-            <button className="table-action" style={{fontSize:"12px",padding:"3px 10px"}} onClick={()=>setMostrarForm(false)}>Cancelar</button>
+          <div style={{background:"var(--light)",border:"1px solid var(--border)",borderRadius:"8px",padding:"12px 14px"}}>
+            <div style={{fontSize:"12px",fontWeight:"600",color:"var(--muted)",marginBottom:"10px",textTransform:"uppercase",letterSpacing:"0.04em"}}>Nueva deuda</div>
+            <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"flex-end"}}>
+              <div>
+                <div style={{fontSize:"11px",color:"var(--muted)",marginBottom:"4px"}}>Organismo</div>
+                <select className="form-input" style={{width:"100px",padding:"5px 8px",fontSize:"13px"}} value={formOrg} onChange={e=>setFormOrg(e.target.value)}>
+                  <option value="ARCA">ARCA</option>
+                  <option value="ART">ART</option>
+                </select>
+              </div>
+              <div>
+                <div style={{fontSize:"11px",color:"var(--muted)",marginBottom:"4px"}}>Monto</div>
+                <input className="form-input" style={{width:"130px",padding:"5px 8px",fontSize:"13px"}} type="number" placeholder="0" value={formMonto} onChange={e=>setFormMonto(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")agregarDeuda();if(e.key==="Escape")setMostrarForm(false);}}/>
+              </div>
+              <div style={{flex:1,minWidth:"150px"}}>
+                <div style={{fontSize:"11px",color:"var(--muted)",marginBottom:"4px"}}>Descripción</div>
+                <input className="form-input" style={{width:"100%",padding:"5px 8px",fontSize:"13px"}} type="text" placeholder="ej: cuota Nov 2024, intereses..." value={formDesc} onChange={e=>setFormDesc(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")agregarDeuda();if(e.key==="Escape")setMostrarForm(false);}}/>
+              </div>
+              <div style={{display:"flex",gap:"6px"}}>
+                <button className="btn-primary" style={{fontSize:"12px",padding:"5px 16px"}} onClick={agregarDeuda} disabled={guardando}>{guardando?"...":"Agregar"}</button>
+                <button className="table-action" style={{fontSize:"12px",padding:"5px 10px"}} onClick={()=>setMostrarForm(false)}>Cancelar</button>
+              </div>
+            </div>
           </div>
         ) : (
-          <button className="table-action" style={{fontSize:"11px",padding:"4px 12px"}} onClick={(e)=>{e.stopPropagation();setMostrarForm(true);}}>+ Agregar deuda anterior</button>
+          <button className="table-action" style={{fontSize:"11px",padding:"4px 12px"}} onClick={(e)=>{e.stopPropagation();setMostrarForm(true);}}>+ Agregar deuda</button>
         )}
       </div>
     </div>
