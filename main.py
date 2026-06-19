@@ -378,9 +378,9 @@ async def cargar_facturacion(slug: str, data: dict):
 
 @app.get("/portal/{slug}")
 async def datos_portal(slug: str):
-    cliente_res = db.from_("clientes").select("*").eq("slug", slug).eq("activo", True).execute()
+    cliente_res = db.from_("clientes").select("*").eq("slug", slug).execute()
     if not cliente_res.data:
-        raise HTTPException(404, "Cliente no encontrado o inactivo")
+        raise HTTPException(404, "Cliente no encontrado")
     cliente = cliente_res.data[0]
     tope_res = db.from_("topes_categoria").select("*").eq("categoria", cliente.get("categoria", "")).execute()
     tope = tope_res.data[0]["tope_anual"] if tope_res.data else 0
@@ -388,6 +388,12 @@ async def datos_portal(slug: str):
     planes_res = db.from_("planes_pago").select("*").eq("cliente_id", cliente["id"]).eq("estado", "activo").execute()
     docs_res = db.from_("documentos").select("*").eq("cliente_id", cliente["id"]).order("created_at", desc=True).execute()
     alertas_res = db.from_("alertas").select("*").eq("cliente_id", cliente["id"]).eq("leida", False).execute()
+    try:
+        nov_res = db.from_("novedades").select("*").eq("activa", True).order("created_at", desc=True).execute()
+        novedades = [n for n in (nov_res.data or [])
+                     if n.get("para_todos") or str(n.get("cliente_id")) == str(cliente["id"])]
+    except Exception:
+        novedades = []
     facturacion = fac_res.data or []
     montos = [f["monto"] for f in facturacion if f["monto"] > 0]
     total_fac = sum(montos)
@@ -398,7 +404,54 @@ async def datos_portal(slug: str):
         "total_fac": total_fac, "promedio": total_fac / meses_cargados,
         "pct": pct, "planes": planes_res.data or [],
         "documentos": docs_res.data or [], "alertas": alertas_res.data or [],
+        "novedades": novedades,
     }
+
+
+@app.post("/portal/login")
+async def portal_login(data: dict):
+    cuit = re.sub(r'\D', '', data.get("cuit", ""))
+    password = data.get("password", "")
+    if not cuit or not password:
+        return {"ok": False, "error": "CUIT y contraseña requeridos"}
+    try:
+        res = db.from_("clientes").select("id,slug,nombre,apellido,activo,portal_password,cuit").eq("cuit", cuit).single().execute()
+    except Exception:
+        return {"ok": False, "error": "Credenciales incorrectas"}
+    if not res.data:
+        return {"ok": False, "error": "Credenciales incorrectas"}
+    cliente = res.data
+    pwd_guardado = cliente.get("portal_password") or cuit
+    if password != pwd_guardado:
+        return {"ok": False, "error": "Credenciales incorrectas"}
+    return {
+        "ok": True,
+        "slug": cliente["slug"],
+        "nombre": cliente.get("nombre", ""),
+        "apellido": cliente.get("apellido", ""),
+        "activo": cliente.get("activo", True),
+    }
+
+
+@app.patch("/portal/cambiar-password")
+async def portal_cambiar_password(data: dict):
+    cuit = re.sub(r'\D', '', data.get("cuit", ""))
+    pwd_actual = data.get("password_actual", "")
+    pwd_nueva = data.get("password_nueva", "")
+    if not cuit or not pwd_actual or not pwd_nueva:
+        return {"ok": False, "error": "Datos incompletos"}
+    try:
+        res = db.from_("clientes").select("id,portal_password,cuit").eq("cuit", cuit).single().execute()
+    except Exception:
+        return {"ok": False, "error": "Credenciales incorrectas"}
+    if not res.data:
+        return {"ok": False, "error": "Credenciales incorrectas"}
+    cliente = res.data
+    pwd_guardado = cliente.get("portal_password") or cuit
+    if pwd_actual != pwd_guardado:
+        return {"ok": False, "error": "Contraseña actual incorrecta"}
+    db.from_("clientes").update({"portal_password": pwd_nueva}).eq("id", cliente["id"]).execute()
+    return {"ok": True}
 
 
 @app.post("/importar-comprobantes/{slug}")
