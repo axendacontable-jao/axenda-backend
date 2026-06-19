@@ -133,6 +133,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 .table-action { background:none; border:1px solid var(--border); border-radius:7px; padding:5px 12px; font-size:12px; font-weight:500; cursor:pointer; font-family:inherit; color:var(--muted); transition:0.15s; white-space:nowrap; }
 .table-action:hover { border-color:var(--green); color:var(--green); }
 .table-action.danger:hover { border-color:var(--red); color:var(--red); }
+.table-action.success:hover { border-color:var(--green); color:var(--green); background:#2BAF8210; }
 
 /* DETALLE CLIENTE */
 .back-btn { display:inline-flex; align-items:center; gap:6px; font-size:13px; color:var(--muted); font-weight:500; background:none; border:none; cursor:pointer; font-family:inherit; padding:0; margin-bottom:20px; transition:0.15s; }
@@ -172,7 +173,8 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 
 /* PLAN CARD */
 .plan-card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:18px; margin-bottom:12px; }
-.plan-card.cancelado { opacity:0.6; }
+.plan-card.cancelado { opacity:0.65; border-left:3px solid var(--green); }
+.plan-card.caido     { opacity:0.65; border-left:3px solid var(--red); background:#E0454504; }
 .plan-card-top { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px; }
 .plan-num { font-size:15px; font-weight:700; font-family:'DM Mono',monospace; }
 .plan-org-badge { font-size:11px; font-weight:600; padding:3px 9px; border-radius:10px; background:var(--light); color:var(--blue); }
@@ -708,6 +710,18 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
     if (onPlanGuardado) onPlanGuardado();
   }
 
+  async function cambiarEstadoPlan(planId, nuevoEstado) {
+    const msgs = {
+      cancelado:"¿Marcar este plan como CANCELADO (pagado por completo)?",
+      caido:"¿Marcar este plan como CAÍDO (en incumplimiento)?",
+      activo:"¿Reactivar este plan?",
+      inactivo:"¿Eliminar este plan? No aparecerá más en el historial.",
+    };
+    if (!confirm(msgs[nuevoEstado]||"¿Confirmar?")) return;
+    await fetch(`${BACKEND_URL}/planes/${planId}/estado`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({estado:nuevoEstado})});
+    recargarPlanes();
+  }
+
   async function marcarCuotaPagada(planId) {
     const res = await fetch(`${BACKEND_URL}/planes/${planId}/pagar`,{method:"PATCH"});
     const d = await res.json();
@@ -879,17 +893,24 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
                       </div>
                     )}
                     <div className="plan-actions">
-                      <button className="table-action" onClick={()=>marcarCuotaPagada(p.id)}>✓ Marcar cuota pagada</button>
-                      {p.url_pdf&&<a className="table-action" href={p.url_pdf} target="_blank" rel="noopener" style={{textDecoration:"none"}}>↗ Ver PDF</a>}
+                      <button className="table-action" onClick={()=>marcarCuotaPagada(p.id)}>✓ Pagar cuota</button>
+                      <button className="table-action success" onClick={()=>cambiarEstadoPlan(p.id,"cancelado")}>✅ Cancelado</button>
+                      <button className="table-action danger" onClick={()=>cambiarEstadoPlan(p.id,"caido")}>✗ Caído</button>
+                      <button className="table-action" style={{color:"var(--muted)",fontSize:"11px"}} onClick={()=>cambiarEstadoPlan(p.id,"inactivo")} title="Eliminar">🗑</button>
+                      {p.url_pdf&&<a className="table-action" href={p.url_pdf} target="_blank" rel="noopener" style={{textDecoration:"none"}}>↗ PDF</a>}
                     </div>
                   </div>
                 );
               })}
-              {planes.filter(p=>p.estado!=="activo").length>0&&(
-                <div>
-                  <div style={{fontSize:"11px",color:"var(--muted)",fontWeight:"600",textTransform:"uppercase",letterSpacing:"0.08em",margin:"16px 0 10px"}}>Cancelados</div>
-                  {planes.filter(p=>p.estado!=="activo").map(p=>(
-                    <div key={p.id} className="plan-card cancelado">
+              {["cancelado","caido"].map(estado=>{
+                const grupo=planes.filter(p=>p.estado===estado);
+                if(!grupo.length) return null;
+                const esCaido=estado==="caido";
+                return (
+                <div key={estado}>
+                  <div style={{fontSize:"11px",fontWeight:"600",textTransform:"uppercase",letterSpacing:"0.08em",margin:"16px 0 10px",color:esCaido?"var(--red)":"var(--green)"}}>{esCaido?"Caídos":"Cancelados"}</div>
+                  {grupo.map(p=>(
+                    <div key={p.id} className={`plan-card ${estado}`}>
                       <div className="plan-card-top">
                         <div><div className="plan-num">{p.numero_plan||"—"}</div></div>
                         <span className="plan-org-badge">{p.organismo||"ARCA"}</span>
@@ -897,10 +918,15 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
                       <div className="plan-meta">
                         <div className="plan-meta-item">Cuotas: <strong>{p.cuotas_pagas||0}/{p.total_cuotas||"?"}</strong></div>
                       </div>
+                      <div className="plan-actions" style={{marginTop:"10px"}}>
+                        <button className="table-action" onClick={()=>cambiarEstadoPlan(p.id,"activo")}>↩ Reactivar</button>
+                        <button className="table-action danger" onClick={()=>cambiarEstadoPlan(p.id,"inactivo")} title="Eliminar">🗑</button>
+                      </div>
                     </div>
                   ))}
                 </div>
-              )}
+              );
+            })}
             </div>
           )}
           {modalPlan&&<ModalNuevoPlan slug={cliente.slug} onClose={()=>setModalPlan(false)} onGuardado={recargarPlanes} initialData={planInicial}/>}
@@ -990,6 +1016,17 @@ function ViewPlanes({ clientes }) {
     if (d.ok) setPlanes(prev=>prev.map(p=>p.id===planId?{...p,cuotas_pagas:d.cuotas_pagas,estado:d.estado}:p));
   }
 
+  async function cambiarEstadoPlan(planId, nuevoEstado) {
+    const msgs = {
+      cancelado:"¿Marcar como CANCELADO (pagado por completo)?",
+      caido:"¿Marcar como CAÍDO (en incumplimiento)?",
+      inactivo:"¿Eliminar este plan? No aparecerá más en la lista.",
+    };
+    if (!confirm(msgs[nuevoEstado]||"¿Confirmar?")) return;
+    await fetch(`${BACKEND_URL}/planes/${planId}/estado`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({estado:nuevoEstado})});
+    setPlanes(prev=>prev.map(p=>p.id===planId?{...p,estado:nuevoEstado}:p));
+  }
+
   const activos = planes.filter(p=>p.estado==="activo"||!p.estado);
 
   return (
@@ -1044,7 +1081,14 @@ function ViewPlanes({ clientes }) {
                     </td>
                     <td style={{fontWeight:"500"}}>{formatArgDate(p.proximo_venc)}</td>
                     <td style={{fontFamily:"'DM Mono',monospace"}}>{$$(p.monto_primer_venc)}</td>
-                    <td><button className="table-action" onClick={()=>marcarPagado(p.id)}>✓ Pagar cuota</button></td>
+                    <td>
+                      <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>
+                        <button className="table-action" onClick={()=>marcarPagado(p.id)}>✓ Pagar</button>
+                        <button className="table-action success" onClick={()=>cambiarEstadoPlan(p.id,"cancelado")}>✅ Cancelado</button>
+                        <button className="table-action danger" onClick={()=>cambiarEstadoPlan(p.id,"caido")}>✗ Caído</button>
+                        <button className="table-action" style={{color:"var(--muted)",borderColor:"var(--light)"}} onClick={()=>cambiarEstadoPlan(p.id,"inactivo")}>🗑</button>
+                      </div>
+                    </td>
                   </tr>
                 );
               })}

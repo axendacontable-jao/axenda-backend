@@ -563,6 +563,17 @@ async def marcar_cuota_pagada(plan_id: str):
     db.from_("planes_pago").update(update_data).eq("id", plan_id).execute()
     return {"ok": True, "cuotas_pagas": nuevas_pagas, "estado": nuevo_estado, "proximo_venc": nuevo_venc}
 
+@app.patch("/planes/{plan_id}/estado")
+async def cambiar_estado_plan(plan_id: str, data: dict):
+    estado = data.get("estado")
+    if estado not in ("activo", "cancelado", "caido", "inactivo"):
+        raise HTTPException(400, "Estado inválido")
+    try:
+        db.from_("planes_pago").update({"estado": estado}).eq("id", plan_id).execute()
+    except Exception as e:
+        raise HTTPException(500, f"Error al actualizar estado: {str(e)}")
+    return {"ok": True, "estado": estado}
+
 @app.delete("/planes/{plan_id}")
 async def eliminar_plan(plan_id: str):
     db.from_("planes_pago").update({"estado": "inactivo"}).eq("id", plan_id).execute()
