@@ -579,6 +579,110 @@ async def eliminar_plan(plan_id: str):
     db.from_("planes_pago").update({"estado": "inactivo"}).eq("id", plan_id).execute()
     return {"ok": True}
 
+# ─── Cuotas individuales de plan ──────────────────────────────────────────────
+
+@app.get("/planes/{plan_id}/cuotas")
+async def get_cuotas_plan(plan_id: str):
+    try:
+        res = db.from_("planes_pago_cuotas").select("*").eq("plan_id", plan_id).order("numero_cuota").execute()
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    return {"ok": True, "cuotas": res.data or []}
+
+
+@app.post("/planes/{plan_id}/cuotas/inicializar")
+async def inicializar_cuotas(plan_id: str):
+    import calendar as cal_mod
+    try:
+        res = db.from_("planes_pago").select("*").eq("id", plan_id).single().execute()
+    except Exception:
+        raise HTTPException(404, "Plan no encontrado")
+    p = res.data
+    total = p.get("total_cuotas") or 0
+    if total <= 0:
+        raise HTTPException(400, "El plan no tiene total_cuotas definido")
+    pagas = p.get("cuotas_pagas") or 0
+    monto_1 = p.get("monto_primer_venc")
+    monto_2 = p.get("monto_segundo_venc")
+    fecha_base = None
+    raw = p.get("proximo_venc")
+    if raw:
+        try:
+            fecha_base = datetime.date.fromisoformat(raw)
+        except Exception:
+            pass
+    if not fecha_base:
+        fecha_base = datetime.date.today().replace(day=16)
+
+    def add_months(d, n):
+        month = d.month - 1 + n
+        year = d.year + month // 12
+        month = month % 12 + 1
+        day = min(d.day, cal_mod.monthrange(year, month)[1])
+        return datetime.date(year, month, day)
+
+    now_utc = datetime.datetime.utcnow().isoformat() + "Z"
+    cuotas = []
+    for i in range(1, total + 1):
+        offset = i - (pagas + 1)
+        fecha_venc = add_months(fecha_base, offset)
+        ya_pagada = i <= pagas
+        cuotas.append({
+            "plan_id": plan_id,
+            "numero_cuota": i,
+            "monto_primer_venc": monto_1,
+            "monto_segundo_venc": monto_2,
+            "fecha_venc": fecha_venc.isoformat(),
+            "pagado_primer_venc": ya_pagada,
+            "pagado_segundo_venc": False,
+            "fecha_pago": now_utc if ya_pagada else None,
+        })
+    try:
+        db.from_("planes_pago_cuotas").delete().eq("plan_id", plan_id).execute()
+        db.from_("planes_pago_cuotas").insert(cuotas).execute()
+    except Exception as e:
+        raise HTTPException(500, f"Error al inicializar cuotas: {str(e)}")
+    return {"ok": True, "cuotas": cuotas}
+
+
+@app.patch("/planes/{plan_id}/cuotas/{numero_cuota}/pagar")
+async def pagar_cuota_individual(plan_id: str, numero_cuota: int, data: dict):
+    vencimiento = data.get("vencimiento", "1ro")
+    if vencimiento not in ("1ro", "2do"):
+        raise HTTPException(400, "vencimiento debe ser '1ro' o '2do'")
+    update = {}
+    if vencimiento == "1ro":
+        update["pagado_primer_venc"] = True
+        update["pagado_segundo_venc"] = False
+    else:
+        update["pagado_segundo_venc"] = True
+    update["fecha_pago"] = datetime.datetime.utcnow().isoformat() + "Z"
+    try:
+        db.from_("planes_pago_cuotas").update(update).eq("plan_id", plan_id).eq("numero_cuota", numero_cuota).execute()
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    try:
+        all_c = db.from_("planes_pago_cuotas").select("*").eq("plan_id", plan_id).order("numero_cuota").execute()
+        cuotas = all_c.data or []
+    except Exception:
+        cuotas = []
+    pagas = sum(1 for c in cuotas if c.get("pagado_primer_venc") or c.get("pagado_segundo_venc"))
+    total = len(cuotas)
+    nuevo_estado = "cancelado" if total > 0 and pagas >= total else "activo"
+    proximo_venc = next(
+        (c["fecha_venc"] for c in cuotas
+         if not (c.get("pagado_primer_venc") or c.get("pagado_segundo_venc")) and c.get("fecha_venc")),
+        None
+    )
+    plan_update = {"cuotas_pagas": pagas, "estado": nuevo_estado}
+    if proximo_venc:
+        plan_update["proximo_venc"] = proximo_venc
+    try:
+        db.from_("planes_pago").update(plan_update).eq("id", plan_id).execute()
+    except Exception:
+        pass
+    return {"ok": True, "cuotas_pagas": pagas, "proximo_venc": proximo_venc, "estado": nuevo_estado}
+
 # ─── Topes ───────────────────────────────────────────────────────────────────
 
 def parse_ar_number(s):

@@ -593,6 +593,8 @@ function ModalNuevoPlan({ slug, onClose, onGuardado, initialData }) {
     url_pdf:           initialData?.url_pdf||"",
   });
   const [guardando, setGuardando] = useState(false);
+  const [paso, setPaso] = useState(1);
+  const [cuotasInit, setCuotasInit] = useState([]);
   const set = (k,v) => setForm(p=>({...p,[k]:v}));
 
   async function guardar() {
@@ -612,10 +614,58 @@ function ModalNuevoPlan({ slug, onClose, onGuardado, initialData }) {
       };
       const res = await fetch(`${BACKEND_URL}/planes/${slug}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
       const d = await res.json();
-      if (d.ok) { onGuardado(); onClose(); } else alert("Error: "+JSON.stringify(d));
+      if (d.ok) {
+        const pid = d.data?.[0]?.id;
+        if (pid && parseInt(form.total_cuotas) > 0) {
+          try {
+            const ci = await fetch(`${BACKEND_URL}/planes/${pid}/cuotas/inicializar`,{method:"POST"});
+            const cd = await ci.json();
+            setCuotasInit(cd.cuotas||[]);
+            setPaso(2);
+            onGuardado();
+          } catch {
+            onGuardado(); onClose();
+          }
+        } else {
+          onGuardado(); onClose();
+        }
+      } else { alert("Error: "+JSON.stringify(d)); }
     } catch(e) { alert("Error: "+e.message); }
     setGuardando(false);
   }
+
+  if (paso===2) {
+    const pagas = cuotasInit.filter(c=>c.pagado_primer_venc||c.pagado_segundo_venc).length;
+    return (
+      <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+        <div className="modal" style={{maxWidth:"540px"}}>
+          <div className="modal-title">Cuotas inicializadas</div>
+          <div className="modal-sub">{pagas} cuota{pagas!==1?"s":""} marcada{pagas!==1?"s":""} como pagada{pagas!==1?"s":""}. Podés ajustar cuotas individuales desde la vista de Planes.</div>
+          <div style={{maxHeight:"340px",overflowY:"auto",margin:"16px 0"}}>
+            <div style={{display:"grid",gridTemplateColumns:"36px 1fr 1fr 80px",gap:"6px 12px",fontSize:"11px",color:"var(--muted)",fontWeight:"600",padding:"0 0 6px",borderBottom:"1px solid var(--border)",marginBottom:"4px"}}>
+              <div>#</div><div>1er venc.</div><div>Fecha</div><div>Estado</div>
+            </div>
+            {cuotasInit.map(cu=>{
+              const pagada = cu.pagado_primer_venc||cu.pagado_segundo_venc;
+              const fecha = cu.fecha_venc ? new Date(cu.fecha_venc+"T12:00:00").toLocaleDateString("es-AR",{day:"2-digit",month:"2-digit",year:"numeric"}) : "—";
+              return (
+                <div key={cu.numero_cuota} style={{display:"grid",gridTemplateColumns:"36px 1fr 1fr 80px",gap:"6px 12px",fontSize:"13px",padding:"7px 0",borderBottom:"1px solid var(--border)",alignItems:"center",opacity:pagada?0.7:1}}>
+                  <div style={{fontWeight:"700",color:"var(--muted)"}}>{cu.numero_cuota}</div>
+                  <div style={{fontFamily:"'DM Mono',monospace"}}>{$$(cu.monto_primer_venc)}</div>
+                  <div style={{color:"var(--muted)"}}>{fecha}</div>
+                  <div>{pagada ? <span style={{color:"var(--green)",fontWeight:"600",fontSize:"11px"}}>✓ Pagada</span> : <span style={{color:"var(--muted)",fontSize:"11px"}}>Pendiente</span>}</div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="modal-actions">
+            <button className="btn-primary" onClick={onClose}>Listo</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div className="modal" style={{maxWidth:"520px"}}>
@@ -1000,8 +1050,11 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
 
 // ── Vista planes (global) ──
 function ViewPlanes({ clientes }) {
-  const [planes, setPlanes]   = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [planes, setPlanes]         = useState([]);
+  const [loading, setLoading]       = useState(true);
+  const [expandido, setExpandido]   = useState(null);
+  const [cuotasMap, setCuotasMap]   = useState({});
+  const [cargandoMap, setCargandoMap] = useState({});
   const clienteMap = Object.fromEntries(clientes.map(c=>[c.id,c]));
 
   useEffect(()=>{
@@ -1027,6 +1080,35 @@ function ViewPlanes({ clientes }) {
     setPlanes(prev=>prev.map(p=>p.id===planId?{...p,estado:nuevoEstado}:p));
   }
 
+  async function abrirPlan(planId) {
+    if (expandido===planId) { setExpandido(null); return; }
+    setExpandido(planId);
+    if (!cuotasMap[planId]) {
+      setCargandoMap(prev=>({...prev,[planId]:true}));
+      try {
+        const res = await fetch(`${BACKEND_URL}/planes/${planId}/cuotas`);
+        const d = await res.json();
+        setCuotasMap(prev=>({...prev,[planId]:d.cuotas||[]}));
+      } catch {}
+      setCargandoMap(prev=>({...prev,[planId]:false}));
+    }
+  }
+
+  async function pagarCuota(planId, numeroCuota, vencimiento) {
+    const res = await fetch(`${BACKEND_URL}/planes/${planId}/cuotas/${numeroCuota}/pagar`,{
+      method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({vencimiento})
+    });
+    const d = await res.json();
+    if (d.ok) {
+      setCuotasMap(prev=>({...prev,[planId]:(prev[planId]||[]).map(c=>c.numero_cuota===numeroCuota?{
+        ...c,
+        pagado_primer_venc: vencimiento==="1ro"?true:c.pagado_primer_venc,
+        pagado_segundo_venc: vencimiento==="1ro"?false:(vencimiento==="2do"?true:c.pagado_segundo_venc),
+      }:c)}));
+      setPlanes(prev=>prev.map(p=>p.id===planId?{...p,cuotas_pagas:d.cuotas_pagas,estado:d.estado,proximo_venc:d.proximo_venc||p.proximo_venc}:p));
+    }
+  }
+
   const activos = planes.filter(p=>p.estado==="activo"||!p.estado);
 
   return (
@@ -1048,48 +1130,96 @@ function ViewPlanes({ clientes }) {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Cliente</th>
-                <th>Nro. plan</th>
-                <th>Organismo</th>
-                <th>Cuotas</th>
-                <th>Próx. vencimiento</th>
-                <th>1ra cuota</th>
-                <th></th>
+                <th>Cliente</th><th>Nro. plan</th><th>Organismo</th><th>Cuotas</th><th>Próx. vencimiento</th><th>1ra cuota</th><th></th>
               </tr>
             </thead>
             <tbody>
               {activos.map(p=>{
                 const c = clienteMap[p.cliente_id];
                 const pct = p.total_cuotas>0 ? (p.cuotas_pagas||0)/p.total_cuotas : 0;
+                const abierto = expandido===p.id;
+                const cuotas = cuotasMap[p.id]||[];
+                const cargando = cargandoMap[p.id];
                 return (
-                  <tr key={p.id}>
-                    <td>
-                      {c ? (
+                  <React.Fragment key={p.id}>
+                    <tr style={{cursor:"pointer",background:abierto?"var(--light)":"transparent"}} onClick={()=>abrirPlan(p.id)}>
+                      <td>
+                        {c ? (
+                          <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+                            <div style={{width:"28px",height:"28px",borderRadius:"50%",background:"linear-gradient(135deg,#2BAF82,#1B2D4F)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"11px",fontWeight:"700",color:"#fff",flexShrink:0}}>{initials(c.nombre,c.apellido)}</div>
+                            <div style={{fontWeight:"600"}}>{c.nombre} {c.apellido}</div>
+                          </div>
+                        ) : "—"}
+                      </td>
+                      <td style={{fontFamily:"'DM Mono',monospace",fontWeight:"600"}}>{p.numero_plan||"—"}</td>
+                      <td><span className="plan-org-badge">{p.organismo||"ARCA"}</span></td>
+                      <td>
                         <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
-                          <div style={{width:"28px",height:"28px",borderRadius:"50%",background:"linear-gradient(135deg,#2BAF82,#1B2D4F)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"11px",fontWeight:"700",color:"#fff",flexShrink:0}}>{initials(c.nombre,c.apellido)}</div>
-                          <div style={{fontWeight:"600"}}>{c.nombre} {c.apellido}</div>
+                          <span>{p.cuotas_pagas||0}/{p.total_cuotas||"?"}</span>
+                          {p.total_cuotas>0&&<div style={{width:"50px",height:"4px",background:"var(--light)",borderRadius:"4px",overflow:"hidden"}}><div style={{height:"100%",background:"var(--green)",width:`${pct*100}%`,borderRadius:"4px"}}/></div>}
                         </div>
-                      ) : "—"}
-                    </td>
-                    <td style={{fontFamily:"'DM Mono',monospace",fontWeight:"600"}}>{p.numero_plan||"—"}</td>
-                    <td><span className="plan-org-badge">{p.organismo||"ARCA"}</span></td>
-                    <td>
-                      <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
-                        <span>{p.cuotas_pagas||0}/{p.total_cuotas||"?"}</span>
-                        {p.total_cuotas>0&&<div style={{width:"50px",height:"4px",background:"var(--light)",borderRadius:"4px",overflow:"hidden"}}><div style={{height:"100%",background:"var(--green)",width:`${pct*100}%`,borderRadius:"4px"}}/></div>}
-                      </div>
-                    </td>
-                    <td style={{fontWeight:"500"}}>{formatArgDate(p.proximo_venc)}</td>
-                    <td style={{fontFamily:"'DM Mono',monospace"}}>{$$(p.monto_primer_venc)}</td>
-                    <td>
-                      <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>
-                        <button className="table-action" onClick={()=>marcarPagado(p.id)}>✓ Pagar</button>
-                        <button className="table-action success" onClick={()=>cambiarEstadoPlan(p.id,"cancelado")}>✅ Cancelado</button>
-                        <button className="table-action danger" onClick={()=>cambiarEstadoPlan(p.id,"caido")}>✗ Caído</button>
-                        <button className="table-action" style={{color:"var(--muted)",borderColor:"var(--light)"}} onClick={()=>cambiarEstadoPlan(p.id,"inactivo")}>🗑</button>
-                      </div>
-                    </td>
-                  </tr>
+                      </td>
+                      <td style={{fontWeight:"500"}}>{formatArgDate(p.proximo_venc)}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace"}}>{$$(p.monto_primer_venc)}</td>
+                      <td>
+                        <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}} onClick={e=>e.stopPropagation()}>
+                          <button className="table-action" onClick={()=>marcarPagado(p.id)}>✓ Pagar</button>
+                          <button className="table-action success" onClick={()=>cambiarEstadoPlan(p.id,"cancelado")}>✅ Cancelado</button>
+                          <button className="table-action danger" onClick={()=>cambiarEstadoPlan(p.id,"caido")}>✗ Caído</button>
+                          <button className="table-action" style={{color:"var(--muted)",borderColor:"var(--light)"}} onClick={()=>cambiarEstadoPlan(p.id,"inactivo")}>🗑</button>
+                        </div>
+                      </td>
+                    </tr>
+                    {abierto&&(
+                      <tr>
+                        <td colSpan="7" style={{padding:"0",background:"var(--light)"}}>
+                          <div style={{padding:"14px 20px",borderBottom:"1px solid var(--border)"}}>
+                            {cargando ? (
+                              <div style={{color:"var(--muted)",fontSize:"13px"}}>Cargando cuotas...</div>
+                            ) : cuotas.length===0 ? (
+                              <div style={{color:"var(--muted)",fontSize:"13px"}}>Sin cuotas registradas. Cargá el plan desde el detalle del cliente para inicializarlas.</div>
+                            ) : (
+                              <div>
+                                <div style={{display:"grid",gridTemplateColumns:"36px 1fr 1fr 110px 100px 100px",gap:"4px 12px",fontSize:"11px",color:"var(--muted)",fontWeight:"600",paddingBottom:"6px",borderBottom:"1px solid var(--border)",marginBottom:"4px"}}>
+                                  <div>#</div><div>1er venc.</div><div>2do venc.</div><div>Fecha</div><div>Estado</div><div>Acción</div>
+                                </div>
+                                {cuotas.map(cu=>{
+                                  const pagada = cu.pagado_primer_venc||cu.pagado_segundo_venc;
+                                  const fecha = cu.fecha_venc ? new Date(cu.fecha_venc+"T12:00:00").toLocaleDateString("es-AR",{day:"2-digit",month:"2-digit",year:"numeric"}) : "—";
+                                  return (
+                                    <div key={cu.numero_cuota} style={{display:"grid",gridTemplateColumns:"36px 1fr 1fr 110px 100px 100px",gap:"4px 12px",fontSize:"13px",padding:"6px 0",borderBottom:"1px solid var(--border)",alignItems:"center",opacity:pagada?0.6:1}}>
+                                      <div style={{fontWeight:"700",color:"var(--muted)"}}>{cu.numero_cuota}</div>
+                                      <div style={{fontFamily:"'DM Mono',monospace"}}>{cu.pagado_primer_venc&&<span style={{color:"var(--green)"}}>✓ </span>}{$$(cu.monto_primer_venc)}</div>
+                                      <div style={{fontFamily:"'DM Mono',monospace",color:"var(--muted)"}}>{cu.monto_segundo_venc ? <>{cu.pagado_segundo_venc&&<span style={{color:"var(--yellow)"}}>✓ </span>}{$$(cu.monto_segundo_venc)}</> : "—"}</div>
+                                      <div style={{fontSize:"12px"}}>{fecha}</div>
+                                      <div>
+                                        {cu.pagado_primer_venc
+                                          ? <span style={{color:"var(--green)",fontWeight:"600",fontSize:"11px"}}>✓ 1er venc.</span>
+                                          : cu.pagado_segundo_venc
+                                          ? <span style={{color:"var(--yellow)",fontWeight:"600",fontSize:"11px"}}>✓ 2do venc.</span>
+                                          : <span style={{color:"var(--muted)",fontSize:"11px"}}>Pendiente</span>}
+                                      </div>
+                                      <div>
+                                        {!pagada&&(
+                                          <div style={{display:"flex",gap:"4px"}}>
+                                            <button className="table-action" style={{fontSize:"11px",padding:"2px 7px"}} onClick={()=>pagarCuota(p.id,cu.numero_cuota,"1ro")}>1ro</button>
+                                            {cu.monto_segundo_venc&&<button className="table-action" style={{fontSize:"11px",padding:"2px 7px",color:"var(--yellow)",borderColor:"var(--yellow)"}} onClick={()=>pagarCuota(p.id,cu.numero_cuota,"2do")}>2do</button>}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                                <div style={{marginTop:"8px",fontSize:"12px",color:"var(--muted)"}}>
+                                  {cuotas.filter(c=>c.pagado_primer_venc||c.pagado_segundo_venc).length} pagadas · {cuotas.filter(c=>!c.pagado_primer_venc&&!c.pagado_segundo_venc).length} pendientes
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 );
               })}
             </tbody>
@@ -1105,6 +1235,13 @@ function ViewCuotas({ clientes, onActualizar }) {
   const hoy = new Date();
   const activos = clientes.filter(c=>c.activo&&c.cuota);
   const pagados = activos.filter(c=>c.estado_pago==="al_dia").length;
+  const [expandido, setExpandido] = useState(null);
+  const diaVenc = 20;
+  const fechaVenc = new Date(hoy.getFullYear(), hoy.getMonth(), diaVenc);
+  function estadoCuota(c) {
+    if (c.estado_pago==="al_dia") return "al_dia";
+    return hoy > fechaVenc ? "vencida" : "pendiente";
+  }
   async function resetear(){if(!confirm("¿Reiniciar todos a PENDIENTE para el nuevo mes?"))return;for(const c of activos)await onActualizar(c,"debe",true);}
   return (
     <div>
@@ -1127,20 +1264,60 @@ function ViewCuotas({ clientes, onActualizar }) {
           <table className="data-table">
             <thead><tr><th>Cliente</th><th>Categoría</th><th>Cuota</th><th>Estado</th><th></th></tr></thead>
             <tbody>
-              {activos.map(c=>(
-                <tr key={c.id}>
-                  <td>
-                    <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
-                      <div style={{width:"32px",height:"32px",borderRadius:"50%",background:"linear-gradient(135deg,#2BAF82,#1B2D4F)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",fontWeight:"700",color:"#fff",flexShrink:0}}>{initials(c.nombre,c.apellido)}</div>
-                      <div><div style={{fontWeight:"600"}}>{c.nombre} {c.apellido}</div><div style={{fontSize:"11px",color:"var(--muted)",fontFamily:"'DM Mono',monospace"}}>{c.cuit}</div></div>
-                    </div>
-                  </td>
-                  <td style={{color:"var(--muted)"}}>{c.categoria?`Cat. ${c.categoria}`:"—"}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",fontWeight:"500"}}>{$$(c.cuota)}</td>
-                  <td><span className={`estado-badge ${c.estado_pago==="al_dia"?"estado-al-dia":"estado-debe"}`}>{c.estado_pago==="al_dia"?"✓ Al día":"✗ Pendiente"}</span></td>
-                  <td><button className="table-action" onClick={()=>onActualizar(c,c.estado_pago==="al_dia"?"debe":"al_dia")}>{c.estado_pago==="al_dia"?"Marcar pendiente":"Marcar pagado"}</button></td>
-                </tr>
-              ))}
+              {activos.map(c=>{
+                const estado = estadoCuota(c);
+                const abierto = expandido===c.id;
+                return (
+                  <React.Fragment key={c.id}>
+                    <tr style={{cursor:"pointer",background:abierto?"var(--light)":"transparent"}} onClick={()=>setExpandido(abierto?null:c.id)}>
+                      <td>
+                        <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
+                          <div style={{width:"32px",height:"32px",borderRadius:"50%",background:"linear-gradient(135deg,#2BAF82,#1B2D4F)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",fontWeight:"700",color:"#fff",flexShrink:0}}>{initials(c.nombre,c.apellido)}</div>
+                          <div><div style={{fontWeight:"600"}}>{c.nombre} {c.apellido}</div><div style={{fontSize:"11px",color:"var(--muted)",fontFamily:"'DM Mono',monospace"}}>{c.cuit}</div></div>
+                        </div>
+                      </td>
+                      <td style={{color:"var(--muted)"}}>{c.categoria?`Cat. ${c.categoria}`:"—"}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",fontWeight:"500"}}>{$$(c.cuota)}</td>
+                      <td>
+                        <span className={`estado-badge ${estado==="al_dia"?"estado-al-dia":"estado-debe"}`}
+                          style={estado==="vencida"?{background:"#E0454510",color:"var(--red)"}:{}}>
+                          {estado==="al_dia"?"✓ Al día":estado==="vencida"?"✗ Vencida":"⏳ Pendiente"}
+                        </span>
+                      </td>
+                      <td>
+                        <div style={{display:"flex",gap:"6px",alignItems:"center"}}>
+                          <button className="table-action" onClick={(e)=>{e.stopPropagation();onActualizar(c,estado==="al_dia"?"debe":"al_dia");}}>
+                            {estado==="al_dia"?"Marcar pendiente":"Marcar pagado"}
+                          </button>
+                          <span style={{color:"var(--muted)",fontSize:"11px",marginLeft:"2px"}}>{abierto?"▲":"▼"}</span>
+                        </div>
+                      </td>
+                    </tr>
+                    {abierto&&(
+                      <tr>
+                        <td colSpan="5" style={{padding:"0",background:"var(--light)"}}>
+                          <div style={{padding:"14px 20px",display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"16px",alignItems:"center",borderBottom:"1px solid var(--border)"}}>
+                            <div>
+                              <div style={{fontSize:"11px",color:"var(--muted)",marginBottom:"3px"}}>Cuota mensual</div>
+                              <div style={{fontWeight:"700",fontFamily:"'DM Mono',monospace",fontSize:"15px"}}>{$$(c.cuota)}</div>
+                            </div>
+                            <div>
+                              <div style={{fontSize:"11px",color:"var(--muted)",marginBottom:"3px"}}>Vencimiento</div>
+                              <div style={{fontWeight:"600"}}>Día {diaVenc} · {MESES_FULL[hoy.getMonth()]} {hoy.getFullYear()}</div>
+                            </div>
+                            <div>
+                              <button className={`table-action ${estado!=="al_dia"?"success":""}`} style={{fontSize:"12px"}}
+                                onClick={(e)=>{e.stopPropagation();onActualizar(c,estado==="al_dia"?"debe":"al_dia");}}>
+                                {estado==="al_dia"?"↩ Marcar pendiente":"✓ Marcar como pagada"}
+                              </button>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
