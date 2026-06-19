@@ -1321,14 +1321,28 @@ function ViewPlanes({ clientes }) {
 
 // ── Historial cuotas mensuales ──
 function HistorialCuotas({ slug, cuota, categoria, onToggleMesActual }) {
-  const [historial, setHistorial] = useState([]);
-  const [cargando, setCargando]   = useState(true);
+  const [historial, setHistorial]         = useState([]);
+  const [deudaAnterior, setDeudaAnterior] = useState([]);
+  const [cargando, setCargando]           = useState(true);
+  const [mostrarForm, setMostrarForm]     = useState(false);
+  const [mostrarAnterior, setMostrarAnterior] = useState(true);
+  const [formAño, setFormAño]             = useState(new Date().getFullYear() - 1);
+  const [formMes, setFormMes]             = useState(1);
+  const [guardando, setGuardando]         = useState(false);
   const hoy = new Date();
-  useEffect(()=>{
+
+  function cargar() {
+    setCargando(true);
     fetch(`${BACKEND_URL}/clientes/${slug}/historial-cuotas`)
-      .then(r=>r.json()).then(d=>{setHistorial(d.historial||[]);setCargando(false);})
+      .then(r=>r.json()).then(d=>{
+        setHistorial(d.historial||[]);
+        setDeudaAnterior(d.deuda_anterior||[]);
+        setCargando(false);
+      })
       .catch(()=>setCargando(false));
-  },[slug]);
+  }
+  useEffect(()=>{ cargar(); },[slug]);
+
   async function toggleMes(h) {
     const nuevoPagado = !h.pagado;
     setHistorial(prev=>prev.map(x=>x.año===h.año&&x.mes===h.mes?{...x,pagado:nuevoPagado}:x));
@@ -1337,22 +1351,39 @@ function HistorialCuotas({ slug, cuota, categoria, onToggleMesActual }) {
       method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({pagado:nuevoPagado})
     }).catch(()=>{});
   }
+
+  async function toggleMesAnterior(h) {
+    setDeudaAnterior(prev=>prev.filter(x=>!(x.año===h.año&&x.mes===h.mes)));
+    await fetch(`${BACKEND_URL}/clientes/${slug}/historial-cuotas/${h.año}/${h.mes}`,{
+      method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({pagado:true})
+    }).catch(()=>{});
+  }
+
+  async function agregarMes() {
+    setGuardando(true);
+    await fetch(`${BACKEND_URL}/clientes/${slug}/historial-cuotas/${formAño}/${formMes}`,{
+      method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({pagado:false})
+    }).catch(()=>{});
+    await fetch(`${BACKEND_URL}/clientes/${slug}/historial-cuotas`)
+      .then(r=>r.json()).then(d=>{ setHistorial(d.historial||[]); setDeudaAnterior(d.deuda_anterior||[]); })
+      .catch(()=>{});
+    setMostrarForm(false);
+    setGuardando(false);
+  }
+
   if (cargando) return <div style={{color:"var(--muted)",fontSize:"13px",padding:"8px 0"}}>Cargando historial...</div>;
-  const mesesPendientes = historial.filter(h=>!h.pagado);
-  const artPorMes = (ART_RIO_NEGRO_2026[categoria] || 0);
-  const hoyDia = hoy.getDate();
-  // Meses vencidos: pasados, o mes actual si hoy > 20
-  const mesesVencidos = mesesPendientes.filter(h=>{
-    const esMesActual = h.año===hoy.getFullYear()&&h.mes===hoy.getMonth()+1;
-    return !esMesActual || hoyDia>20;
-  });
-  const mesesSinVencer = mesesPendientes.filter(h=>{
-    const esMesActual = h.año===hoy.getFullYear()&&h.mes===hoy.getMonth()+1;
-    return esMesActual && hoyDia<=20;
-  });
-  const deudaART  = mesesVencidos.length * artPorMes;
-  const deudaARCA = mesesVencidos.length*((cuota||0)-artPorMes) + mesesSinVencer.length*(cuota||0);
+
+  const artPorMes    = (ART_RIO_NEGRO_2026[categoria] || 0);
+  const hoyDia       = hoy.getDate();
+  const pendientes6  = historial.filter(h=>!h.pagado);
+  const vencidos6    = pendientes6.filter(h=>{ const esActual=h.año===hoy.getFullYear()&&h.mes===hoy.getMonth()+1; return !esActual||hoyDia>20; });
+  const sinVencer    = pendientes6.filter(h=>{ const esActual=h.año===hoy.getFullYear()&&h.mes===hoy.getMonth()+1; return esActual&&hoyDia<=20; });
+  const totalVencidos = vencidos6.length + deudaAnterior.length;
+  const totalPend     = pendientes6.length + deudaAnterior.length;
+  const deudaART  = totalVencidos * artPorMes;
+  const deudaARCA = totalVencidos*((cuota||0)-artPorMes) + sinVencer.length*(cuota||0);
   const deudaTotal = deudaART + deudaARCA;
+
   return (
     <div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px"}}>
@@ -1362,7 +1393,7 @@ function HistorialCuotas({ slug, cuota, categoria, onToggleMesActual }) {
             <div style={{display:"flex",gap:"8px",alignItems:"center",marginBottom:deudaART>0?"4px":"0"}}>
               <span style={{fontSize:"11px",color:"var(--red)",fontWeight:"600"}}>Deuda estimada</span>
               <span style={{fontFamily:"'DM Mono',monospace",fontWeight:"700",color:"var(--red)",fontSize:"14px"}}>{$$(deudaTotal)}</span>
-              <span style={{fontSize:"11px",color:"var(--red)"}}>({mesesPendientes.length} {mesesPendientes.length===1?"mes":"meses"})</span>
+              <span style={{fontSize:"11px",color:"var(--red)"}}>({totalPend} {totalPend===1?"mes":"meses"})</span>
             </div>
             {deudaART>0&&<div style={{display:"flex",gap:"14px",fontSize:"11px",color:"var(--muted)"}}>
               <span>ART Río Negro: <b style={{color:"var(--red)"}}>{$$(deudaART)}</b></span>
@@ -1375,6 +1406,7 @@ function HistorialCuotas({ slug, cuota, categoria, onToggleMesActual }) {
           </div>
         )}
       </div>
+
       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"8px"}}>
         {historial.map(h=>{
           const esMesActual = h.año===hoy.getFullYear()&&h.mes===hoy.getMonth()+1;
@@ -1391,6 +1423,43 @@ function HistorialCuotas({ slug, cuota, categoria, onToggleMesActual }) {
             </div>
           );
         })}
+      </div>
+
+      {deudaAnterior.length>0&&(
+        <div style={{marginTop:"14px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"8px",cursor:"pointer",userSelect:"none"}} onClick={()=>setMostrarAnterior(v=>!v)}>
+            <span style={{fontSize:"11px",fontWeight:"600",color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.05em"}}>Deuda anterior · {deudaAnterior.length} {deudaAnterior.length===1?"mes":"meses"}</span>
+            <span style={{fontSize:"11px",color:"var(--muted)"}}>{mostrarAnterior?"▲":"▼"}</span>
+          </div>
+          {mostrarAnterior&&(
+            <div style={{display:"flex",flexDirection:"column",gap:"6px"}}>
+              {deudaAnterior.map(h=>(
+                <div key={`ant-${h.año}-${h.mes}`} style={{display:"flex",alignItems:"center",gap:"10px",border:"1px solid var(--red)",borderRadius:"8px",padding:"8px 14px",background:"#E0454506"}}>
+                  <span style={{fontSize:"13px",fontWeight:"600",flex:1}}>{MESES_FULL[h.mes-1]} {h.año}</span>
+                  <span style={{fontFamily:"'DM Mono',monospace",fontSize:"12px",color:"var(--red)",fontWeight:"600"}}>✗ Pendiente</span>
+                  <button className="table-action success" style={{fontSize:"11px",padding:"3px 10px"}} onClick={(e)=>{e.stopPropagation();toggleMesAnterior(h);}}>✓ Marcar pagada</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={{marginTop:"12px"}}>
+        {mostrarForm ? (
+          <div style={{display:"flex",alignItems:"center",gap:"8px",background:"var(--light)",border:"1px solid var(--border)",borderRadius:"8px",padding:"10px 14px",flexWrap:"wrap"}}>
+            <span style={{fontSize:"12px",color:"var(--muted)"}}>Mes:</span>
+            <select className="form-input" style={{width:"120px",padding:"3px 8px",fontSize:"12px",height:"28px"}} value={formMes} onChange={e=>setFormMes(Number(e.target.value))}>
+              {MESES_FULL.map((m,i)=><option key={i+1} value={i+1}>{m}</option>)}
+            </select>
+            <span style={{fontSize:"12px",color:"var(--muted)"}}>Año:</span>
+            <input className="form-input" style={{width:"78px",padding:"3px 8px",fontSize:"12px",height:"28px"}} type="number" value={formAño} onChange={e=>setFormAño(Number(e.target.value))} min="2020" max={hoy.getFullYear()}/>
+            <button className="btn-primary" style={{fontSize:"12px",padding:"4px 14px",height:"28px"}} onClick={agregarMes} disabled={guardando}>{guardando?"...":"Agregar"}</button>
+            <button className="table-action" style={{fontSize:"12px",padding:"3px 10px"}} onClick={()=>setMostrarForm(false)}>Cancelar</button>
+          </div>
+        ) : (
+          <button className="table-action" style={{fontSize:"11px",padding:"4px 12px"}} onClick={(e)=>{e.stopPropagation();setMostrarForm(true);}}>+ Agregar deuda anterior</button>
+        )}
       </div>
     </div>
   );

@@ -339,7 +339,13 @@ async def get_historial_cuotas(slug: str, meses: int = 6):
             resultado.append(existentes[(y, m)])
         else:
             resultado.append({"cliente_id": cliente_id, "año": y, "mes": m, "pagado": False, "fecha_pago": None, "id": None})
-    return {"ok": True, "historial": resultado}
+    meses_set = set(meses_lista)
+    deuda_anterior = [
+        r for r in existentes.values()
+        if not r["pagado"] and (r["año"], r["mes"]) not in meses_set
+    ]
+    deuda_anterior.sort(key=lambda r: (r["año"], r["mes"]), reverse=True)
+    return {"ok": True, "historial": resultado, "deuda_anterior": deuda_anterior}
 
 
 @app.patch("/clientes/{slug}/historial-cuotas/{año}/{mes}")
