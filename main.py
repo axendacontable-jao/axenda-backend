@@ -726,25 +726,24 @@ async def inicializar_cuotas(plan_id: str):
         day = min(d.day, cal_mod.monthrange(year, month)[1])
         return datetime.date(year, month, day)
 
-    now_utc = datetime.datetime.utcnow().isoformat() + "Z"
     cuotas = []
     for i in range(1, total + 1):
         offset = i - (pagas + 1)
         fecha_venc = add_months(fecha_base, offset)
-        ya_pagada = i <= pagas
         cuotas.append({
             "plan_id": plan_id,
             "numero_cuota": i,
             "monto_primer_venc": monto_1,
             "monto_segundo_venc": monto_2,
             "fecha_venc": fecha_venc.isoformat(),
-            "pagado_primer_venc": ya_pagada,
+            "pagado_primer_venc": False,
             "pagado_segundo_venc": False,
-            "fecha_pago": now_utc if ya_pagada else None,
+            "fecha_pago": None,
         })
     try:
         db.from_("planes_pago_cuotas").delete().eq("plan_id", plan_id).execute()
         db.from_("planes_pago_cuotas").insert(cuotas).execute()
+        db.from_("planes_pago").update({"cuotas_pagas": 0}).eq("id", plan_id).execute()
     except Exception as e:
         raise HTTPException(500, f"Error al inicializar cuotas: {str(e)}")
     return {"ok": True, "cuotas": cuotas}

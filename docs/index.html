@@ -592,9 +592,12 @@ function ModalNuevoPlan({ slug, onClose, onGuardado, initialData }) {
     monto_segundo_venc:String(initialData?.monto_segundo_venc||""),
     url_pdf:           initialData?.url_pdf||"",
   });
-  const [guardando, setGuardando] = useState(false);
-  const [paso, setPaso] = useState(1);
-  const [cuotasInit, setCuotasInit] = useState([]);
+  const [guardando, setGuardando]     = useState(false);
+  const [paso, setPaso]               = useState(1);
+  const [cuotasInit, setCuotasInit]   = useState([]);
+  const [planIdGuardado, setPlanIdGuardado] = useState(null);
+  const [seleccionadas, setSeleccionadas]   = useState({});
+  const [confirmando, setConfirmando] = useState(false);
   const set = (k,v) => setForm(p=>({...p,[k]:v}));
 
   async function guardar() {
@@ -620,46 +623,77 @@ function ModalNuevoPlan({ slug, onClose, onGuardado, initialData }) {
           try {
             const ci = await fetch(`${BACKEND_URL}/planes/${pid}/cuotas/inicializar`,{method:"POST"});
             const cd = await ci.json();
+            setPlanIdGuardado(pid);
             setCuotasInit(cd.cuotas||[]);
+            setSeleccionadas({});
             setPaso(2);
             onGuardado();
-          } catch {
-            onGuardado(); onClose();
-          }
-        } else {
-          onGuardado(); onClose();
-        }
+          } catch { onGuardado(); onClose(); }
+        } else { onGuardado(); onClose(); }
       } else { alert("Error: "+JSON.stringify(d)); }
     } catch(e) { alert("Error: "+e.message); }
     setGuardando(false);
   }
 
+  function toggleSel(num, venc) {
+    setSeleccionadas(prev=>{
+      const actual = prev[num];
+      if (actual===venc) { const n={...prev}; delete n[num]; return n; }
+      return {...prev,[num]:venc};
+    });
+  }
+
+  async function confirmarPagos() {
+    setConfirmando(true);
+    const entradas = Object.entries(seleccionadas);
+    for (const [num, venc] of entradas) {
+      await fetch(`${BACKEND_URL}/planes/${planIdGuardado}/cuotas/${num}/pagar`,{
+        method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({vencimiento:venc})
+      }).catch(()=>{});
+    }
+    setConfirmando(false);
+    onClose();
+  }
+
   if (paso===2) {
-    const pagas = cuotasInit.filter(c=>c.pagado_primer_venc||c.pagado_segundo_venc).length;
+    const cantSel = Object.keys(seleccionadas).length;
     return (
       <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
-        <div className="modal" style={{maxWidth:"540px"}}>
-          <div className="modal-title">Cuotas inicializadas</div>
-          <div className="modal-sub">{pagas} cuota{pagas!==1?"s":""} marcada{pagas!==1?"s":""} como pagada{pagas!==1?"s":""}. Podés ajustar cuotas individuales desde la vista de Planes.</div>
-          <div style={{maxHeight:"340px",overflowY:"auto",margin:"16px 0"}}>
-            <div style={{display:"grid",gridTemplateColumns:"36px 1fr 1fr 80px",gap:"6px 12px",fontSize:"11px",color:"var(--muted)",fontWeight:"600",padding:"0 0 6px",borderBottom:"1px solid var(--border)",marginBottom:"4px"}}>
-              <div>#</div><div>1er venc.</div><div>Fecha</div><div>Estado</div>
+        <div className="modal" style={{maxWidth:"580px"}}>
+          <div className="modal-title">¿Cuáles cuotas ya están pagadas?</div>
+          <div className="modal-sub">Seleccioná cada cuota abonada y si fue al 1er o 2do vencimiento. Podés omitir y ajustar después desde Planes de pago.</div>
+          <div style={{maxHeight:"380px",overflowY:"auto",margin:"14px 0"}}>
+            <div style={{display:"grid",gridTemplateColumns:"32px 80px 1fr 150px",gap:"6px 12px",fontSize:"11px",color:"var(--muted)",fontWeight:"600",padding:"0 4px 6px",borderBottom:"1px solid var(--border)",marginBottom:"4px"}}>
+              <div>#</div><div>Fecha</div><div>Monto</div><div>Marcar como</div>
             </div>
             {cuotasInit.map(cu=>{
-              const pagada = cu.pagado_primer_venc||cu.pagado_segundo_venc;
+              const sel = seleccionadas[cu.numero_cuota];
               const fecha = cu.fecha_venc ? new Date(cu.fecha_venc+"T12:00:00").toLocaleDateString("es-AR",{day:"2-digit",month:"2-digit",year:"numeric"}) : "—";
               return (
-                <div key={cu.numero_cuota} style={{display:"grid",gridTemplateColumns:"36px 1fr 1fr 80px",gap:"6px 12px",fontSize:"13px",padding:"7px 0",borderBottom:"1px solid var(--border)",alignItems:"center",opacity:pagada?0.7:1}}>
+                <div key={cu.numero_cuota} style={{display:"grid",gridTemplateColumns:"32px 80px 1fr 150px",gap:"6px 12px",fontSize:"13px",padding:"7px 4px",borderBottom:"1px solid var(--border)",alignItems:"center",background:sel?"#2BAF8206":"transparent"}}>
                   <div style={{fontWeight:"700",color:"var(--muted)"}}>{cu.numero_cuota}</div>
+                  <div style={{fontSize:"12px",color:"var(--muted)"}}>{fecha}</div>
                   <div style={{fontFamily:"'DM Mono',monospace"}}>{$$(cu.monto_primer_venc)}</div>
-                  <div style={{color:"var(--muted)"}}>{fecha}</div>
-                  <div>{pagada ? <span style={{color:"var(--green)",fontWeight:"600",fontSize:"11px"}}>✓ Pagada</span> : <span style={{color:"var(--muted)",fontSize:"11px"}}>Pendiente</span>}</div>
+                  <div style={{display:"flex",gap:"5px"}}>
+                    <button onClick={()=>toggleSel(cu.numero_cuota,"1ro")}
+                      style={{fontSize:"11px",padding:"3px 8px",border:`1px solid ${sel==="1ro"?"var(--green)":"var(--border)"}`,borderRadius:"6px",background:sel==="1ro"?"#2BAF8215":"transparent",color:sel==="1ro"?"var(--green)":"var(--muted)",cursor:"pointer",fontWeight:sel==="1ro"?"700":"400"}}>
+                      {sel==="1ro"?"✓ 1er":"1er venc."}
+                    </button>
+                    <button onClick={()=>toggleSel(cu.numero_cuota,"2do")} disabled={sel==="1ro"}
+                      style={{fontSize:"11px",padding:"3px 8px",border:`1px solid ${sel==="2do"?"var(--yellow)":"var(--border)"}`,borderRadius:"6px",background:sel==="2do"?"#E8A02015":"transparent",color:sel==="2do"?"var(--yellow)":sel==="1ro"?"var(--light)":"var(--muted)",cursor:sel==="1ro"?"not-allowed":"pointer",fontWeight:sel==="2do"?"700":"400"}}>
+                      {sel==="2do"?"✓ 2do":"2do venc."}
+                    </button>
+                  </div>
                 </div>
               );
             })}
           </div>
+          <div style={{fontSize:"13px",color:"var(--muted)",marginBottom:"12px"}}>
+            {cantSel>0 ? <span style={{color:"var(--green)",fontWeight:"600"}}>{cantSel} cuota{cantSel!==1?"s":""} seleccionada{cantSel!==1?"s":""}</span> : "Ninguna cuota seleccionada"}
+          </div>
           <div className="modal-actions">
-            <button className="btn-primary" onClick={onClose}>Listo</button>
+            <button className="btn-secondary" onClick={onClose}>Omitir</button>
+            <button className="btn-primary" onClick={confirmarPagos} disabled={confirmando||cantSel===0}>{confirmando?"Guardando...":"Confirmar pagadas"}</button>
           </div>
         </div>
       </div>
