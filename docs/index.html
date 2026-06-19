@@ -1265,9 +1265,24 @@ function HistorialCuotas({ slug, cuota, onToggleMesActual }) {
     }).catch(()=>{});
   }
   if (cargando) return <div style={{color:"var(--muted)",fontSize:"13px",padding:"8px 0"}}>Cargando historial...</div>;
+  const mesesPendientes = historial.filter(h=>!h.pagado);
+  const deudaTotal = mesesPendientes.length * (cuota||0);
   return (
     <div>
-      <div style={{fontSize:"11px",fontWeight:"600",color:"var(--muted)",marginBottom:"10px",textTransform:"uppercase",letterSpacing:"0.05em"}}>Últimos 6 meses · Cuota {$$(cuota)}</div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px"}}>
+        <div style={{fontSize:"11px",fontWeight:"600",color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.05em"}}>Últimos 6 meses · Cuota {$$(cuota)}</div>
+        {deudaTotal>0 ? (
+          <div style={{background:"#E0454510",border:"1px solid var(--red)",borderRadius:"8px",padding:"4px 12px",display:"flex",gap:"8px",alignItems:"center"}}>
+            <span style={{fontSize:"11px",color:"var(--red)",fontWeight:"600"}}>Deuda estimada</span>
+            <span style={{fontFamily:"'DM Mono',monospace",fontWeight:"700",color:"var(--red)",fontSize:"14px"}}>{$$(deudaTotal)}</span>
+            <span style={{fontSize:"11px",color:"var(--red)"}}>({mesesPendientes.length} {mesesPendientes.length===1?"mes":"meses"})</span>
+          </div>
+        ) : (
+          <div style={{background:"#2BAF8210",border:"1px solid var(--green)",borderRadius:"8px",padding:"4px 12px"}}>
+            <span style={{fontSize:"11px",color:"var(--green)",fontWeight:"600"}}>Sin deuda ✓</span>
+          </div>
+        )}
+      </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"8px"}}>
         {historial.map(h=>{
           const esMesActual = h.año===hoy.getFullYear()&&h.mes===hoy.getMonth()+1;
@@ -1277,7 +1292,7 @@ function HistorialCuotas({ slug, cuota, onToggleMesActual }) {
                 <span style={{fontSize:"12px",fontWeight:"600"}}>{MESES_FULL[h.mes-1]} {h.año}</span>
                 {esMesActual&&<span style={{fontSize:"10px",background:"var(--blue)",color:"#fff",borderRadius:"4px",padding:"1px 5px",fontWeight:"600"}}>Actual</span>}
               </div>
-              <div style={{fontFamily:"'DM Mono',monospace",fontWeight:"700",fontSize:"13px",marginBottom:"8px",color:h.pagado?"var(--green)":"inherit"}}>{h.pagado?"✓ Pagada":"Pendiente"}</div>
+              <div style={{fontFamily:"'DM Mono',monospace",fontWeight:"700",fontSize:"13px",marginBottom:"8px",color:h.pagado?"var(--green)":"var(--red)"}}>{h.pagado?"✓ Pagada":"✗ Pendiente"}</div>
               <button className={`table-action ${h.pagado?"":"success"}`} style={{fontSize:"11px",padding:"3px 8px",width:"100%"}} onClick={(e)=>{e.stopPropagation();toggleMes(h);}}>
                 {h.pagado?"↩ Marcar pendiente":"✓ Marcar pagada"}
               </button>
