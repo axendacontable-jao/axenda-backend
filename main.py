@@ -473,24 +473,31 @@ async def datos_portal(slug: str):
         art_por_mes = ART_RIO_NEGRO.get(cat, 0)
 
         # Historial cuotas: últimos 6 meses
+        # Los meses SIN registro en historial_cuotas también se consideran no pagados
+        # (idéntica lógica al panel de administrador)
         hist_res = db.from_("historial_cuotas").select("*").eq("cliente_id", cliente["id"]).execute()
         historial = hist_res.data or []
-        meses_6 = set()
+        pagados_db = {(h["año"], h["mes"]) for h in historial if h.get("pagado")}
+        meses_6 = []
         for i in range(6):
             m = hoy.month - i
             y = hoy.year
             while m <= 0:
                 m += 12
                 y -= 1
-            meses_6.add((y, m))
-        hist_6 = [h for h in historial if (h["año"], h["mes"]) in meses_6]
-        pendientes = [h for h in hist_6 if not h.get("pagado")]
-        vencidos = [h for h in pendientes
-                    if not (h["año"] == hoy.year and h["mes"] == hoy.month) or hoy.day > 20]
-        sin_vencer = [h for h in pendientes
-                      if h["año"] == hoy.year and h["mes"] == hoy.month and hoy.day <= 20]
-        deuda_art_hist  = len(vencidos) * art_por_mes
-        deuda_arca_hist = len(vencidos) * ((cuota_mensual) - art_por_mes) + len(sin_vencer) * cuota_mensual
+            meses_6.append((y, m))
+        vencidos_count = 0
+        sin_vencer_count = 0
+        for (y, m) in meses_6:
+            if (y, m) in pagados_db:
+                continue  # mes pagado, no cuenta
+            es_mes_actual = (y == hoy.year and m == hoy.month)
+            if not es_mes_actual or hoy.day > 20:
+                vencidos_count += 1
+            else:
+                sin_vencer_count += 1
+        deuda_art_hist  = vencidos_count * art_por_mes
+        deuda_arca_hist = vencidos_count * (cuota_mensual - art_por_mes) + sin_vencer_count * cuota_mensual
 
         # Deuda manual — neq(True) captura tanto False como NULL
         deuda_res = db.from_("deuda_manual").select("*").eq("cliente_id", cliente["id"]).neq("pagado", True).execute()
@@ -508,8 +515,8 @@ async def datos_portal(slug: str):
         if deuda_arca > 0:  partes.append(f"ARCA: ${deuda_arca:,.0f}".replace(",", "."))
         if deuda_otro_man > 0: partes.append(f"Otros: ${deuda_otro_man:,.0f}".replace(",", "."))
         deuda_desc = " · ".join(partes) if partes else None
-    except Exception as _e:
-        deuda_total, deuda_desc, deuda_art, deuda_arca = 0, f"[debug: {_e}]", 0, 0
+    except Exception:
+        deuda_total, deuda_desc, deuda_art, deuda_arca = 0, None, 0, 0
     facturacion = fac_res.data or []
     montos = [f["monto"] for f in facturacion if f["monto"] > 0]
     total_fac = sum(montos)
