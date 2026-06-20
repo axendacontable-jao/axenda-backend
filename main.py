@@ -36,6 +36,14 @@ db = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 CUIT_CONTADOR = os.getenv("CUIT_CONTADOR", "20395847946")
 
+# Componente ART Río Negro por categoría (vigente desde 01/02/2026)
+ART_RIO_NEGRO = {
+    "A": 17773.24, "B": 26330.15, "C": 35038.48,
+    "D": 52992.43, "E": 70657.51, "F": 88097.78,
+    "G": 105032.36, "H": 170242.95, "I": 197256.01,
+    "J": 231453.81, "K": 261120.28,
+}
+
 def setup_cert_files():
     cert_content = os.getenv("CERT_CONTENT", "")
     key_content  = os.getenv("KEY_CONTENT", "")
@@ -459,12 +467,49 @@ async def datos_portal(slug: str):
     except Exception:
         cfg = {}
     try:
+        hoy = datetime.date.today()
+        cat = (cliente.get("categoria") or "").upper()
+        cuota_mensual = cliente.get("cuota") or 0
+        art_por_mes = ART_RIO_NEGRO.get(cat, 0)
+
+        # Historial cuotas: últimos 6 meses
+        hist_res = db.from_("historial_cuotas").select("*").eq("cliente_id", cliente["id"]).execute()
+        historial = hist_res.data or []
+        meses_6 = set()
+        for i in range(6):
+            m = hoy.month - i
+            y = hoy.year
+            while m <= 0:
+                m += 12
+                y -= 1
+            meses_6.add((y, m))
+        hist_6 = [h for h in historial if (h["año"], h["mes"]) in meses_6]
+        pendientes = [h for h in hist_6 if not h.get("pagado")]
+        vencidos = [h for h in pendientes
+                    if not (h["año"] == hoy.year and h["mes"] == hoy.month) or hoy.day > 20]
+        sin_vencer = [h for h in pendientes
+                      if h["año"] == hoy.year and h["mes"] == hoy.month and hoy.day <= 20]
+        deuda_art_hist  = len(vencidos) * art_por_mes
+        deuda_arca_hist = len(vencidos) * ((cuota_mensual) - art_por_mes) + len(sin_vencer) * cuota_mensual
+
+        # Deuda manual
         deuda_res = db.from_("deuda_manual").select("*").eq("cliente_id", cliente["id"]).eq("pagado", False).execute()
-        deudas = deuda_res.data or []
-        deuda_total = sum(d.get("monto", 0) or 0 for d in deudas)
-        deuda_desc = "; ".join(d.get("organismo", "") for d in deudas if d.get("organismo")) if deudas else None
+        deudas_man = deuda_res.data or []
+        deuda_art_man  = sum(d.get("monto", 0) or 0 for d in deudas_man if d.get("organismo") == "ART")
+        deuda_arca_man = sum(d.get("monto", 0) or 0 for d in deudas_man if d.get("organismo") == "ARCA")
+        deuda_otro_man = sum(d.get("monto", 0) or 0 for d in deudas_man
+                             if d.get("organismo") not in ("ART", "ARCA"))
+
+        deuda_art   = deuda_art_hist + deuda_art_man
+        deuda_arca  = deuda_arca_hist + deuda_arca_man
+        deuda_total = deuda_art + deuda_arca + deuda_otro_man
+        partes = []
+        if deuda_art > 0:   partes.append(f"ART Río Negro: ${deuda_art:,.0f}".replace(",", "."))
+        if deuda_arca > 0:  partes.append(f"ARCA: ${deuda_arca:,.0f}".replace(",", "."))
+        if deuda_otro_man > 0: partes.append(f"Otros: ${deuda_otro_man:,.0f}".replace(",", "."))
+        deuda_desc = " · ".join(partes) if partes else None
     except Exception:
-        deudas, deuda_total, deuda_desc = [], 0, None
+        deuda_total, deuda_desc, deuda_art, deuda_arca = 0, None, 0, 0
     facturacion = fac_res.data or []
     montos = [f["monto"] for f in facturacion if f["monto"] > 0]
     total_fac = sum(montos)
@@ -476,7 +521,8 @@ async def datos_portal(slug: str):
         "pct": pct, "planes": planes_res.data or [],
         "documentos": docs_res.data or [], "alertas": alertas_res.data or [],
         "novedades": novedades, "whatsapp": cfg.get("whatsapp"),
-        "deuda_total": deuda_total, "deuda_desc": deuda_desc, "deudas": deudas,
+        "deuda_total": deuda_total, "deuda_desc": deuda_desc,
+        "deuda_art": deuda_art, "deuda_arca": deuda_arca,
     }
 
 
