@@ -458,6 +458,13 @@ async def datos_portal(slug: str):
         cfg = {r["clave"]: r["valor"] for r in (cfg_res.data or [])}
     except Exception:
         cfg = {}
+    try:
+        deuda_res = db.from_("deuda_manual").select("*").eq("cliente_id", cliente["id"]).eq("pagado", False).execute()
+        deudas = deuda_res.data or []
+        deuda_total = sum(d.get("monto", 0) or 0 for d in deudas)
+        deuda_desc = "; ".join(d.get("organismo", "") for d in deudas if d.get("organismo")) if deudas else None
+    except Exception:
+        deudas, deuda_total, deuda_desc = [], 0, None
     facturacion = fac_res.data or []
     montos = [f["monto"] for f in facturacion if f["monto"] > 0]
     total_fac = sum(montos)
@@ -469,6 +476,7 @@ async def datos_portal(slug: str):
         "pct": pct, "planes": planes_res.data or [],
         "documentos": docs_res.data or [], "alertas": alertas_res.data or [],
         "novedades": novedades, "whatsapp": cfg.get("whatsapp"),
+        "deuda_total": deuda_total, "deuda_desc": deuda_desc, "deudas": deudas,
     }
 
 
