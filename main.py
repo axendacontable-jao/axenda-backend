@@ -492,8 +492,8 @@ async def datos_portal(slug: str):
         deuda_art_hist  = len(vencidos) * art_por_mes
         deuda_arca_hist = len(vencidos) * ((cuota_mensual) - art_por_mes) + len(sin_vencer) * cuota_mensual
 
-        # Deuda manual
-        deuda_res = db.from_("deuda_manual").select("*").eq("cliente_id", cliente["id"]).eq("pagado", False).execute()
+        # Deuda manual — neq(True) captura tanto False como NULL
+        deuda_res = db.from_("deuda_manual").select("*").eq("cliente_id", cliente["id"]).neq("pagado", True).execute()
         deudas_man = deuda_res.data or []
         deuda_art_man  = sum(d.get("monto", 0) or 0 for d in deudas_man if d.get("organismo") == "ART")
         deuda_arca_man = sum(d.get("monto", 0) or 0 for d in deudas_man if d.get("organismo") == "ARCA")
@@ -508,8 +508,8 @@ async def datos_portal(slug: str):
         if deuda_arca > 0:  partes.append(f"ARCA: ${deuda_arca:,.0f}".replace(",", "."))
         if deuda_otro_man > 0: partes.append(f"Otros: ${deuda_otro_man:,.0f}".replace(",", "."))
         deuda_desc = " · ".join(partes) if partes else None
-    except Exception:
-        deuda_total, deuda_desc, deuda_art, deuda_arca = 0, None, 0, 0
+    except Exception as _e:
+        deuda_total, deuda_desc, deuda_art, deuda_arca = 0, f"[debug: {_e}]", 0, 0
     facturacion = fac_res.data or []
     montos = [f["monto"] for f in facturacion if f["monto"] > 0]
     total_fac = sum(montos)
