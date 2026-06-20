@@ -228,6 +228,25 @@ async def health():
         "servicios_cacheados": list(_token_cache.keys()),
     }
 
+@app.get("/constancia/{cuit}")
+async def obtener_constancia(cuit: str):
+    cuit_limpio = re.sub(r'\D', '', cuit)
+    if len(cuit_limpio) != 11:
+        raise HTTPException(400, "CUIT inválido")
+    try:
+        datos = buscar_en_constancia(cuit_limpio)
+        return {
+            "ok": True,
+            "cuit": cuit_limpio,
+            "nombre": datos.get("nombre"),
+            "apellido": datos.get("apellido"),
+            "categoria": datos.get("categoria"),
+            "estado": datos.get("estado"),
+            "url_pdf": f"https://serviciosweb.afip.gob.ar/crs/publico/constanciaAFIP.aspx?cuit={cuit_limpio}",
+        }
+    except Exception as e:
+        raise HTTPException(503, f"ARCA no responde: {str(e)}")
+
 @app.get("/padron/{cuit}")
 async def consultar_padron(cuit: str):
     cuit_limpio = re.sub(r'\D', '', cuit)
