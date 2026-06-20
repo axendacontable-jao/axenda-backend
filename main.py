@@ -235,14 +235,16 @@ async def obtener_constancia(cuit: str):
         raise HTTPException(400, "CUIT inválido")
     try:
         datos = buscar_en_constancia(cuit_limpio)
+        cuit_fmt = f"{cuit_limpio[:2]}-{cuit_limpio[2:-1]}-{cuit_limpio[-1]}"
         return {
             "ok": True,
             "cuit": cuit_limpio,
-            "nombre": datos.get("nombre"),
-            "apellido": datos.get("apellido"),
-            "categoria": datos.get("categoria"),
-            "estado": datos.get("estado"),
-            "url_pdf": f"https://serviciosweb.afip.gob.ar/crs/publico/constanciaAFIP.aspx?cuit={cuit_limpio}",
+            "cuit_fmt": cuit_fmt,
+            "nombre": datos.get("nombre", ""),
+            "apellido": datos.get("apellido", ""),
+            "categoria": datos.get("categoria", ""),
+            "estado": datos.get("estado", "ACTIVO"),
+            "fecha_consulta": datetime.date.today().isoformat(),
         }
     except Exception as e:
         raise HTTPException(503, f"ARCA no responde: {str(e)}")
