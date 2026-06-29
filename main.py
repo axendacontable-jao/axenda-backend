@@ -7,7 +7,7 @@ import pandas as pd
 import io
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client
-from jose import jwt, JWTError
+from jose import jwt, JWTError, jwk as jose_jwk
 import requests
 import urllib3
 from requests.adapters import HTTPAdapter
@@ -39,6 +39,40 @@ db = create_client(SUPABASE_URL, SUPABASE_KEY)
 CUIT_CONTADOR = os.getenv("CUIT_CONTADOR", "20395847946")
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
+# Supabase usa JWT con firma asimétrica ES256 (ECC P-256).
+# Cacheamos las claves públicas del endpoint JWKS en memoria.
+
+_jwks_cache: list = []
+
+def _get_jwks() -> list:
+    global _jwks_cache
+    if not _jwks_cache:
+        url = f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json"
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        _jwks_cache = resp.json().get("keys", [])
+    return _jwks_cache
+
+def _verify_supabase_token(token: str) -> dict:
+    header = jwt.get_unverified_header(token)
+    alg = header.get("alg", "ES256")
+
+    if alg == "HS256":
+        # Fallback legacy: secret compartido
+        return jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=["HS256"],
+                          options={"verify_aud": False})
+
+    # ES256 u otro algoritmo asimétrico: verificar con clave pública JWKS
+    kid = header.get("kid")
+    keys = _get_jwks()
+    key_data = next((k for k in keys if k.get("kid") == kid), None) if kid else None
+    if key_data is None:
+        key_data = keys[0] if keys else None
+    if key_data is None:
+        raise JWTError("No se encontró clave pública en JWKS")
+    public_key = jose_jwk.construct(key_data)
+    return jwt.decode(token, public_key, algorithms=[alg],
+                      options={"verify_aud": False})
 
 async def get_estudio_id(request: Request) -> str:
     """Verifica JWT de Supabase Auth y devuelve el estudio_id del usuario."""
@@ -47,11 +81,7 @@ async def get_estudio_id(request: Request) -> str:
         raise HTTPException(401, "Autenticación requerida")
     token = auth[7:]
     try:
-        payload = jwt.decode(
-            token, SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
-            options={"verify_aud": False},
-        )
+        payload = _verify_supabase_token(token)
         user_id = payload.get("sub")
         if not user_id:
             raise HTTPException(401, "Token sin subject")
