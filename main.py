@@ -2,11 +2,12 @@
 from pathlib import Path
 from dotenv import load_dotenv
 from lxml import etree
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, UploadFile, Depends, Request
 import pandas as pd
 import io
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client
+from jose import jwt, JWTError
 import requests
 import urllib3
 from requests.adapters import HTTPAdapter
@@ -30,11 +31,41 @@ load_dotenv()
 app = FastAPI(title="Axenda Contable API")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_URL        = os.getenv("SUPABASE_URL")
+SUPABASE_KEY        = os.getenv("SUPABASE_KEY")
+SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
 db = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 CUIT_CONTADOR = os.getenv("CUIT_CONTADOR", "20395847946")
+
+# ── Auth ─────────────────────────────────────────────────────────────────────
+
+async def get_estudio_id(request: Request) -> str:
+    """Verifica JWT de Supabase Auth y devuelve el estudio_id del usuario."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(401, "Autenticación requerida")
+    token = auth[7:]
+    try:
+        payload = jwt.decode(
+            token, SUPABASE_JWT_SECRET,
+            algorithms=["HS256"],
+            options={"verify_aud": False},
+        )
+        user_id = payload.get("sub")
+        if not user_id:
+            raise HTTPException(401, "Token sin subject")
+    except JWTError as e:
+        raise HTTPException(401, f"Token inválido: {e}")
+    try:
+        res = db.from_("estudios").select("id,estado").eq("owner_id", user_id).single().execute()
+    except Exception:
+        raise HTTPException(403, "Estudio no encontrado. Completá el registro.")
+    if not res.data:
+        raise HTTPException(403, "Estudio no encontrado")
+    if res.data["estado"] != "activa":
+        raise HTTPException(403, f"Estudio {res.data['estado']}")
+    return res.data["id"]
 
 # Componente ART Río Negro por categoría (vigente desde 01/02/2026)
 ART_RIO_NEGRO = {
@@ -228,6 +259,34 @@ async def health():
         "servicios_cacheados": list(_token_cache.keys()),
     }
 
+@app.get("/estudios/me")
+async def estudios_me(estudio_id: str = Depends(get_estudio_id)):
+    res = db.from_("estudios").select("*").eq("id", estudio_id).single().execute()
+    return res.data or {}
+
+@app.patch("/estudios/me")
+async def actualizar_estudio(data: dict, estudio_id: str = Depends(get_estudio_id)):
+    campos = {"nombre", "onboarding_completo"}
+    update = {k: v for k, v in data.items() if k in campos}
+    if not update:
+        raise HTTPException(400, "Sin campos válidos")
+    db.from_("estudios").update(update).eq("id", estudio_id).execute()
+    return {"ok": True}
+
+# Migración one-time: asigna todos los registros huérfanos al estudio del usuario
+@app.post("/estudios/migrar-datos")
+async def migrar_datos(estudio_id: str = Depends(get_estudio_id)):
+    tablas = ["clientes", "planes_pago", "deuda_manual", "alertas",
+              "facturacion", "documentos", "configuracion"]
+    totales = {}
+    for tabla in tablas:
+        try:
+            res = db.from_(tabla).update({"estudio_id": estudio_id}).is_("estudio_id", "null").execute()
+            totales[tabla] = len(res.data or [])
+        except Exception as e:
+            totales[tabla] = f"error: {e}"
+    return {"ok": True, "migrados": totales}
+
 @app.get("/constancia/{cuit}")
 async def obtener_constancia(cuit: str):
     cuit_limpio = re.sub(r'\D', '', cuit)
@@ -266,12 +325,12 @@ async def consultar_padron(cuit: str):
         raise HTTPException(404, f"CUIT no encontrado: {str(e2)}")
 
 @app.get("/clientes")
-async def listar_clientes():
-    result = db.from_("clientes").select("*").order("apellido").execute()
+async def listar_clientes(estudio_id: str = Depends(get_estudio_id)):
+    result = db.from_("clientes").select("*").eq("estudio_id", estudio_id).order("apellido").execute()
     return result.data
 
 @app.post("/clientes")
-async def crear_cliente(data: dict):
+async def crear_cliente(data: dict, estudio_id: str = Depends(get_estudio_id)):
     cuit = re.sub(r'\D', '', data.get("cuit", ""))
     apellido_slug = re.sub(r'[^a-z0-9]', '', data.get("apellido", "").lower().replace(" ", "-"))
     slug = f"{apellido_slug}-{cuit}"
@@ -280,6 +339,7 @@ async def crear_cliente(data: dict):
         "cuit": cuit, "whatsapp": data.get("whatsapp", ""), "email": data.get("email", ""),
         "categoria": (data.get("categoria") or "").upper() or None,
         "cuota": data.get("cuota") or None, "activo": True,
+        "estudio_id": estudio_id,
     }
     try:
         result = db.from_("clientes").insert(cliente).execute()
@@ -290,15 +350,15 @@ async def crear_cliente(data: dict):
     return {"ok": True, "slug": slug, "data": result.data}
 
 @app.patch("/clientes/{slug}/toggle")
-async def toggle_activo(slug: str):
+async def toggle_activo(slug: str, estudio_id: str = Depends(get_estudio_id)):
     try:
-        cliente = db.from_("clientes").select("activo").eq("slug", slug).single().execute()
+        cliente = db.from_("clientes").select("activo").eq("slug", slug).eq("estudio_id", estudio_id).single().execute()
     except Exception:
         raise HTTPException(404, "Cliente no encontrado")
     if not cliente.data:
         raise HTTPException(404, "Cliente no encontrado")
     nuevo = not cliente.data["activo"]
-    db.from_("clientes").update({"activo": nuevo}).eq("slug", slug).execute()
+    db.from_("clientes").update({"activo": nuevo}).eq("slug", slug).eq("estudio_id", estudio_id).execute()
     return {"ok": True, "activo": nuevo}
 
 def log_actividad(cliente_id, mensaje: str):
@@ -311,40 +371,40 @@ def log_actividad(cliente_id, mensaje: str):
         pass
 
 @app.patch("/clientes/{slug}/estado-pago")
-async def actualizar_estado_pago(slug: str, data: dict):
+async def actualizar_estado_pago(slug: str, data: dict, estudio_id: str = Depends(get_estudio_id)):
     nuevo = data.get("estado_pago")
     if nuevo not in ("al_dia", "debe", "vencida"):
         raise HTTPException(400, "Estado inválido: debe ser al_dia, debe o vencida")
     try:
-        res = db.from_("clientes").select("id,nombre,apellido").eq("slug", slug).single().execute()
+        res = db.from_("clientes").select("id,nombre,apellido").eq("slug", slug).eq("estudio_id", estudio_id).single().execute()
     except Exception:
         raise HTTPException(404, "Cliente no encontrado")
     if not res.data:
         raise HTTPException(404, "Cliente no encontrado")
-    db.from_("clientes").update({"estado_pago": nuevo}).eq("slug", slug).execute()
+    db.from_("clientes").update({"estado_pago": nuevo}).eq("slug", slug).eq("estudio_id", estudio_id).execute()
     if nuevo == "al_dia":
         nombre = f"{res.data.get('nombre','')} {res.data.get('apellido','')}".strip()
         log_actividad(res.data["id"], f"Cuota marcada al día — {nombre}")
     return {"ok": True, "estado_pago": nuevo}
 
 @app.patch("/clientes/{slug}/cuota")
-async def actualizar_cuota(slug: str, data: dict):
+async def actualizar_cuota(slug: str, data: dict, estudio_id: str = Depends(get_estudio_id)):
     nueva_cuota = data.get("cuota")
     if nueva_cuota is None or not isinstance(nueva_cuota, (int, float)) or nueva_cuota < 0:
         raise HTTPException(400, "Cuota inválida")
     try:
-        res = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+        res = db.from_("clientes").select("id").eq("slug", slug).eq("estudio_id", estudio_id).single().execute()
     except Exception:
         raise HTTPException(404, "Cliente no encontrado")
     if not res.data:
         raise HTTPException(404, "Cliente no encontrado")
-    db.from_("clientes").update({"cuota": nueva_cuota}).eq("slug", slug).execute()
+    db.from_("clientes").update({"cuota": nueva_cuota}).eq("slug", slug).eq("estudio_id", estudio_id).execute()
     return {"ok": True, "cuota": nueva_cuota}
 
 @app.get("/clientes/{slug}/historial-cuotas")
-async def get_historial_cuotas(slug: str, meses: int = 6):
+async def get_historial_cuotas(slug: str, meses: int = 6, estudio_id: str = Depends(get_estudio_id)):
     try:
-        cl = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+        cl = db.from_("clientes").select("id").eq("slug", slug).eq("estudio_id", estudio_id).single().execute()
     except Exception:
         raise HTTPException(404, "Cliente no encontrado")
     cliente_id = cl.data["id"]
@@ -372,9 +432,9 @@ async def get_historial_cuotas(slug: str, meses: int = 6):
 
 
 @app.patch("/clientes/{slug}/historial-cuotas/{año}/{mes}")
-async def toggle_historial_cuota(slug: str, año: int, mes: int, data: dict):
+async def toggle_historial_cuota(slug: str, año: int, mes: int, data: dict, estudio_id: str = Depends(get_estudio_id)):
     try:
-        cl = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+        cl = db.from_("clientes").select("id").eq("slug", slug).eq("estudio_id", estudio_id).single().execute()
     except Exception:
         raise HTTPException(404, "Cliente no encontrado")
     cliente_id = cl.data["id"]
@@ -394,16 +454,16 @@ async def toggle_historial_cuota(slug: str, año: int, mes: int, data: dict):
 
 
 @app.get("/clientes/{slug}/deuda-manual")
-async def get_deuda_manual(slug: str):
+async def get_deuda_manual(slug: str, estudio_id: str = Depends(get_estudio_id)):
     try:
-        cl = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+        cl = db.from_("clientes").select("id").eq("slug", slug).eq("estudio_id", estudio_id).single().execute()
     except Exception:
         raise HTTPException(404, "Cliente no encontrado")
-    res = db.from_("deuda_manual").select("*").eq("cliente_id", cl.data["id"]).eq("pagado", False).order("created_at").execute()
+    res = db.from_("deuda_manual").select("*").eq("cliente_id", cl.data["id"]).eq("estudio_id", estudio_id).eq("pagado", False).order("created_at").execute()
     return {"ok": True, "deudas": res.data or []}
 
 @app.post("/clientes/{slug}/deuda-manual")
-async def agregar_deuda_manual(slug: str, data: dict):
+async def agregar_deuda_manual(slug: str, data: dict, estudio_id: str = Depends(get_estudio_id)):
     organismo = data.get("organismo")
     monto = data.get("monto")
     descripcion = data.get("descripcion", "")
@@ -412,7 +472,7 @@ async def agregar_deuda_manual(slug: str, data: dict):
     if not monto or float(monto) <= 0:
         raise HTTPException(400, "Monto inválido")
     try:
-        cl = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+        cl = db.from_("clientes").select("id").eq("slug", slug).eq("estudio_id", estudio_id).single().execute()
     except Exception:
         raise HTTPException(404, "Cliente no encontrado")
     res = db.from_("deuda_manual").insert({
@@ -421,27 +481,28 @@ async def agregar_deuda_manual(slug: str, data: dict):
         "monto": float(monto),
         "descripcion": descripcion,
         "pagado": False,
+        "estudio_id": estudio_id,
     }).execute()
     return {"ok": True, "deuda": res.data[0] if res.data else None}
 
 @app.patch("/deuda-manual/{deuda_id}/pagar")
-async def pagar_deuda_manual(deuda_id: str):
+async def pagar_deuda_manual(deuda_id: str, estudio_id: str = Depends(get_estudio_id)):
     db.from_("deuda_manual").update({
         "pagado": True,
         "fecha_pago": datetime.datetime.utcnow().isoformat() + "Z",
-    }).eq("id", deuda_id).execute()
+    }).eq("id", deuda_id).eq("estudio_id", estudio_id).execute()
     return {"ok": True}
 
 @app.delete("/deuda-manual/{deuda_id}")
-async def eliminar_deuda_manual(deuda_id: str):
-    db.from_("deuda_manual").delete().eq("id", deuda_id).execute()
+async def eliminar_deuda_manual(deuda_id: str, estudio_id: str = Depends(get_estudio_id)):
+    db.from_("deuda_manual").delete().eq("id", deuda_id).eq("estudio_id", estudio_id).execute()
     return {"ok": True}
 
 
 @app.get("/facturacion/{slug}")
-async def obtener_facturacion(slug: str):
+async def obtener_facturacion(slug: str, estudio_id: str = Depends(get_estudio_id)):
     try:
-        cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+        cliente = db.from_("clientes").select("id").eq("slug", slug).eq("estudio_id", estudio_id).single().execute()
     except Exception:
         raise HTTPException(404, "Cliente no encontrado")
     if not cliente.data:
@@ -450,9 +511,9 @@ async def obtener_facturacion(slug: str):
     return result.data
 
 @app.post("/facturacion/{slug}")
-async def cargar_facturacion(slug: str, data: dict):
+async def cargar_facturacion(slug: str, data: dict, estudio_id: str = Depends(get_estudio_id)):
     try:
-        cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+        cliente = db.from_("clientes").select("id").eq("slug", slug).eq("estudio_id", estudio_id).single().execute()
     except Exception:
         raise HTTPException(404, "Cliente no encontrado")
     if not cliente.data:
@@ -460,6 +521,7 @@ async def cargar_facturacion(slug: str, data: dict):
     registro = {
         "cliente_id": cliente.data["id"], "anio": data["anio"],
         "mes": data["mes"], "monto": data["monto"], "fuente": "manual",
+        "estudio_id": estudio_id,
     }
     result = db.from_("facturacion").upsert(registro, on_conflict="cliente_id,anio,mes").execute()
     return {"ok": True, "data": result.data}
@@ -601,10 +663,9 @@ async def portal_cambiar_password(data: dict):
 
 
 @app.post("/importar-comprobantes/{slug}")
-async def importar_comprobantes(slug: str, file: UploadFile):
-    # Leer cliente
+async def importar_comprobantes(slug: str, file: UploadFile, estudio_id: str = Depends(get_estudio_id)):
     try:
-        cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+        cliente = db.from_("clientes").select("id").eq("slug", slug).eq("estudio_id", estudio_id).single().execute()
     except Exception:
         raise HTTPException(404, "Cliente no encontrado")
     if not cliente.data:
@@ -635,6 +696,7 @@ async def importar_comprobantes(slug: str, file: UploadFile):
             "fuente": "arca_excel"
         })
     for r in registros:
+        r["estudio_id"] = estudio_id
         db.from_("facturacion").upsert(r, on_conflict="cliente_id,anio,mes").execute()
     if registros:
         log_actividad(cliente_id, f"Importación ARCA — {slug} — {len(registros)} meses")
@@ -643,19 +705,19 @@ async def importar_comprobantes(slug: str, file: UploadFile):
 # ─── Planes de pago ──────────────────────────────────────────────────────────
 
 @app.get("/planes")
-async def listar_todos_planes():
-    result = db.from_("planes_pago").select("*").eq("estado", "activo").order("proximo_venc").execute()
+async def listar_todos_planes(estudio_id: str = Depends(get_estudio_id)):
+    result = db.from_("planes_pago").select("*").eq("estudio_id", estudio_id).eq("estado", "activo").order("proximo_venc").execute()
     return result.data or []
 
 @app.get("/planes/{slug}")
-async def planes_cliente(slug: str):
+async def planes_cliente(slug: str, estudio_id: str = Depends(get_estudio_id)):
     try:
-        cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+        cliente = db.from_("clientes").select("id").eq("slug", slug).eq("estudio_id", estudio_id).single().execute()
     except Exception:
         raise HTTPException(404, "Cliente no encontrado")
     if not cliente.data:
         raise HTTPException(404, "Cliente no encontrado")
-    result = db.from_("planes_pago").select("*").eq("cliente_id", cliente.data["id"]).order("created_at", desc=True).execute()
+    result = db.from_("planes_pago").select("*").eq("cliente_id", cliente.data["id"]).eq("estudio_id", estudio_id).order("created_at", desc=True).execute()
     return result.data or []
 
 @app.post("/planes/parsear-pdf")
@@ -754,9 +816,9 @@ async def parsear_pdf_plan(file: UploadFile):
     return {"ok": True, **result}
 
 @app.post("/planes/{slug}")
-async def crear_plan(slug: str, data: dict):
+async def crear_plan(slug: str, data: dict, estudio_id: str = Depends(get_estudio_id)):
     try:
-        cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+        cliente = db.from_("clientes").select("id").eq("slug", slug).eq("estudio_id", estudio_id).single().execute()
     except Exception:
         raise HTTPException(404, "Cliente no encontrado")
     if not cliente.data:
@@ -766,6 +828,7 @@ async def crear_plan(slug: str, data: dict):
     impagas = (int(total) - int(pagas)) if total is not None else data.get("cuotas_impagas")
     plan = {
         "cliente_id": cliente.data["id"],
+        "estudio_id": estudio_id,
         "numero_plan":        data.get("numero_plan"),
         "organismo":          data.get("organismo", "ARCA"),
         "fecha_consolidacion": data.get("fecha_consolidacion") or None,
@@ -786,9 +849,9 @@ async def crear_plan(slug: str, data: dict):
     return {"ok": True, "data": result.data}
 
 @app.patch("/planes/{plan_id}/pagar")
-async def marcar_cuota_pagada(plan_id: str):
+async def marcar_cuota_pagada(plan_id: str, estudio_id: str = Depends(get_estudio_id)):
     try:
-        res = db.from_("planes_pago").select("*").eq("id", plan_id).single().execute()
+        res = db.from_("planes_pago").select("*").eq("id", plan_id).eq("estudio_id", estudio_id).single().execute()
     except Exception:
         raise HTTPException(404, "Plan no encontrado")
     if not res.data:
@@ -815,25 +878,29 @@ async def marcar_cuota_pagada(plan_id: str):
     return {"ok": True, "cuotas_pagas": nuevas_pagas, "estado": nuevo_estado, "proximo_venc": nuevo_venc}
 
 @app.patch("/planes/{plan_id}/estado")
-async def cambiar_estado_plan(plan_id: str, data: dict):
+async def cambiar_estado_plan(plan_id: str, data: dict, estudio_id: str = Depends(get_estudio_id)):
     estado = data.get("estado")
     if estado not in ("activo", "cancelado", "caido", "inactivo"):
         raise HTTPException(400, "Estado inválido")
     try:
-        db.from_("planes_pago").update({"estado": estado}).eq("id", plan_id).execute()
+        db.from_("planes_pago").update({"estado": estado}).eq("id", plan_id).eq("estudio_id", estudio_id).execute()
     except Exception as e:
         raise HTTPException(500, f"Error al actualizar estado: {str(e)}")
     return {"ok": True, "estado": estado}
 
 @app.delete("/planes/{plan_id}")
-async def eliminar_plan(plan_id: str):
-    db.from_("planes_pago").update({"estado": "inactivo"}).eq("id", plan_id).execute()
+async def eliminar_plan(plan_id: str, estudio_id: str = Depends(get_estudio_id)):
+    db.from_("planes_pago").update({"estado": "inactivo"}).eq("id", plan_id).eq("estudio_id", estudio_id).execute()
     return {"ok": True}
 
 # ─── Cuotas individuales de plan ──────────────────────────────────────────────
 
 @app.get("/planes/{plan_id}/cuotas")
-async def get_cuotas_plan(plan_id: str):
+async def get_cuotas_plan(plan_id: str, estudio_id: str = Depends(get_estudio_id)):
+    # Verifica ownership del plan antes de devolver cuotas
+    plan_ok = db.from_("planes_pago").select("id").eq("id", plan_id).eq("estudio_id", estudio_id).execute()
+    if not plan_ok.data:
+        raise HTTPException(404, "Plan no encontrado")
     try:
         res = db.from_("planes_pago_cuotas").select("*").eq("plan_id", plan_id).order("numero_cuota").execute()
     except Exception as e:
@@ -842,10 +909,10 @@ async def get_cuotas_plan(plan_id: str):
 
 
 @app.post("/planes/{plan_id}/cuotas/inicializar")
-async def inicializar_cuotas(plan_id: str):
+async def inicializar_cuotas(plan_id: str, estudio_id: str = Depends(get_estudio_id)):
     import calendar as cal_mod
     try:
-        res = db.from_("planes_pago").select("*").eq("id", plan_id).single().execute()
+        res = db.from_("planes_pago").select("*").eq("id", plan_id).eq("estudio_id", estudio_id).single().execute()
     except Exception:
         raise HTTPException(404, "Plan no encontrado")
     p = res.data
@@ -896,7 +963,7 @@ async def inicializar_cuotas(plan_id: str):
 
 
 @app.patch("/planes/{plan_id}/cuotas/{numero_cuota}/pagar")
-async def pagar_cuota_individual(plan_id: str, numero_cuota: int, data: dict):
+async def pagar_cuota_individual(plan_id: str, numero_cuota: int, data: dict, estudio_id: str = Depends(get_estudio_id)):
     vencimiento = data.get("vencimiento", "1ro")
     if vencimiento not in ("1ro", "2do"):
         raise HTTPException(400, "vencimiento debe ser '1ro' o '2do'")
@@ -952,7 +1019,7 @@ def parse_ar_number(s):
         return None
 
 @app.patch("/topes/{categoria}")
-async def actualizar_tope(categoria: str, data: dict):
+async def actualizar_tope(categoria: str, data: dict, _: str = Depends(get_estudio_id)):
     campos = {"tope_anual", "cuota_servicios", "cuota_bienes", "vigente_desde"}
     update = {k: v for k, v in data.items() if k in campos}
     if not update:
@@ -961,7 +1028,7 @@ async def actualizar_tope(categoria: str, data: dict):
     return {"ok": True}
 
 @app.post("/topes/importar")
-async def importar_topes(file: UploadFile):
+async def importar_topes(file: UploadFile, _: str = Depends(get_estudio_id)):
     nombre = (file.filename or "").lower()
     contenido = await file.read()
     resultados = []
@@ -1072,36 +1139,37 @@ async def importar_topes(file: UploadFile):
 # ─── Configuración ───────────────────────────────────────────────────────────
 
 @app.get("/configuracion")
-async def obtener_configuracion():
-    result = db.from_("configuracion").select("clave,valor").execute()
+async def obtener_configuracion(estudio_id: str = Depends(get_estudio_id)):
+    result = db.from_("configuracion").select("clave,valor").eq("estudio_id", estudio_id).execute()
     return {r["clave"]: r["valor"] for r in (result.data or [])}
 
 @app.post("/configuracion")
-async def guardar_configuracion(data: dict):
+async def guardar_configuracion(data: dict, estudio_id: str = Depends(get_estudio_id)):
     for clave, valor in data.items():
         db.from_("configuracion").upsert(
-            {"clave": clave, "valor": str(valor) if valor is not None else ""},
-            on_conflict="clave"
+            {"clave": clave, "valor": str(valor) if valor is not None else "",
+             "estudio_id": estudio_id},
+            on_conflict="clave,estudio_id"
         ).execute()
     return {"ok": True}
 
 # ─── Alertas ─────────────────────────────────────────────────────────────────
 
 @app.get("/alertas/{slug}")
-async def alertas_cliente(slug: str):
+async def alertas_cliente(slug: str, estudio_id: str = Depends(get_estudio_id)):
     try:
-        cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+        cliente = db.from_("clientes").select("id").eq("slug", slug).eq("estudio_id", estudio_id).single().execute()
     except Exception:
         raise HTTPException(404, "Cliente no encontrado")
     if not cliente.data:
         raise HTTPException(404, "Cliente no encontrado")
-    result = db.from_("alertas").select("*").eq("cliente_id", cliente.data["id"]).order("created_at", desc=True).execute()
+    result = db.from_("alertas").select("*").eq("cliente_id", cliente.data["id"]).eq("estudio_id", estudio_id).order("created_at", desc=True).execute()
     return result.data or []
 
 @app.post("/alertas/{slug}")
-async def crear_alerta(slug: str, data: dict):
+async def crear_alerta(slug: str, data: dict, estudio_id: str = Depends(get_estudio_id)):
     try:
-        cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+        cliente = db.from_("clientes").select("id").eq("slug", slug).eq("estudio_id", estudio_id).single().execute()
     except Exception:
         raise HTTPException(404, "Cliente no encontrado")
     if not cliente.data:
@@ -1111,6 +1179,7 @@ async def crear_alerta(slug: str, data: dict):
         "tipo":    data.get("tipo", "manual"),
         "mensaje": data.get("mensaje", ""),
         "leida":   False,
+        "estudio_id": estudio_id,
     }
     try:
         result = db.from_("alertas").insert(alerta).execute()
@@ -1119,26 +1188,27 @@ async def crear_alerta(slug: str, data: dict):
     return {"ok": True, "data": result.data}
 
 @app.delete("/alertas/{alerta_id}")
-async def eliminar_alerta(alerta_id: str):
-    db.from_("alertas").delete().eq("id", alerta_id).execute()
+async def eliminar_alerta(alerta_id: str, estudio_id: str = Depends(get_estudio_id)):
+    db.from_("alertas").delete().eq("id", alerta_id).eq("estudio_id", estudio_id).execute()
     return {"ok": True}
 
 # ─── Documentos ──────────────────────────────────────────────────────────────
 
 @app.post("/documentos/{slug}")
-async def crear_documento(slug: str, data: dict):
+async def crear_documento(slug: str, data: dict, estudio_id: str = Depends(get_estudio_id)):
     try:
-        cliente = db.from_("clientes").select("id").eq("slug", slug).single().execute()
+        cliente = db.from_("clientes").select("id").eq("slug", slug).eq("estudio_id", estudio_id).single().execute()
     except Exception:
         raise HTTPException(404, "Cliente no encontrado")
     if not cliente.data:
         raise HTTPException(404, "Cliente no encontrado")
     doc = {
         "cliente_id": cliente.data["id"],
-        "nombre":  data.get("nombre"),
-        "tipo":    data.get("tipo"),
-        "fecha":   data.get("fecha"),
-        "url":     data.get("url"),
+        "nombre":     data.get("nombre"),
+        "tipo":       data.get("tipo"),
+        "fecha":      data.get("fecha"),
+        "url":        data.get("url"),
+        "estudio_id": estudio_id,
     }
     try:
         result = db.from_("documentos").insert({k: v for k, v in doc.items() if v is not None}).execute()

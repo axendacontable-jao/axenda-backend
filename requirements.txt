@@ -1,11 +1,12 @@
-fastapi 
-uvicorn 
-supabase 
-zeep 
-cryptography 
-python-dotenv 
-requests 
-lxml 
+fastapi
+uvicorn
+supabase
+zeep
+cryptography
+python-dotenv
+requests
+lxml
+python-jose[cryptography]
 
 pandas
 openpyxl

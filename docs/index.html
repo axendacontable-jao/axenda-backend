@@ -313,6 +313,15 @@ const SUPABASE_KEY = "sb_publishable_XpIFC8TNibuit_o1LOtPbw_iPoyONEu";
 const PORTAL_URL   = "https://benevolent-taffy-8b3761.netlify.app";
 const db = createClient(SUPABASE_URL, SUPABASE_KEY);
 
+// ── Auth globals ─────────────────────────────────────────────────────────────
+let _session = null;
+
+// Wrapper de fetch que agrega el JWT de Supabase en todos los llamados al backend
+function apiFetch(url, opts = {}) {
+  const authHeader = _session ? { 'Authorization': `Bearer ${_session.access_token}` } : {};
+  return fetch(url, { ...opts, headers: { ...authHeader, ...(opts.headers || {}) } });
+}
+
 const MESES      = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 const MESES_FULL = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 const ORGANISMOS = ["ARCA","ART","ARERN","Otro"];
@@ -454,7 +463,7 @@ function ModalCargarDocumento({ slug, onClose, onGuardado }) {
     setGuardando(true);
     try {
       const payload={tipo:form.tipo,nombre:form.nombre||null,fecha:parseArgDate(form.fecha)||null,url:form.url||null};
-      const res=await fetch(`${BACKEND_URL}/documentos/${slug}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+      const res=await apiFetch(`${BACKEND_URL}/documentos/${slug}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
       const d=await res.json();
       if(d.ok){onGuardado();onClose();}else alert("Error: "+JSON.stringify(d));
     }catch(e){alert("Error: "+e.message);}
@@ -495,7 +504,7 @@ function ModalNuevoCliente({ onClose, onGuardado, topes }) {
     if (cuit.replace(/\D/g,"").length<11) return;
     setBuscando(true);
     try {
-      const res=await fetch(`${BACKEND_URL}/padron/${cuit.replace(/\D/g,"")}`);
+      const res=await apiFetch(`${BACKEND_URL}/padron/${cuit.replace(/\D/g,"")}`);
       if (!res.ok){alert("CUIT no encontrado en ARCA");setBuscando(false);return;}
       const d=await res.json();
       setNombre(d.nombre||""); setApellido(d.apellido||""); setPadronOk(true);
@@ -513,7 +522,7 @@ function ModalNuevoCliente({ onClose, onGuardado, topes }) {
     if (!cuit||!nombre||!apellido) return;
     setGuardando(true);
     try {
-      const res=await fetch(`${BACKEND_URL}/clientes`,{method:"POST",headers:{"Content-Type":"application/json"},
+      const res=await apiFetch(`${BACKEND_URL}/clientes`,{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({nombre,apellido,cuit:cuit.replace(/\D/g,""),whatsapp,categoria:categoria.toUpperCase()||null,cuota:cuota?parseFloat(cuota):null})});
       const d=await res.json();
       if(d.ok){onGuardado(d.slug);onClose();}else alert("Error: "+JSON.stringify(d));
@@ -617,13 +626,13 @@ function ModalNuevoPlan({ slug, onClose, onGuardado, initialData }) {
         monto_segundo_venc: form.monto_segundo_venc ? parseFloat(form.monto_segundo_venc) : null,
         url_pdf: form.url_pdf || null,
       };
-      const res = await fetch(`${BACKEND_URL}/planes/${slug}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+      const res = await apiFetch(`${BACKEND_URL}/planes/${slug}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
       const d = await res.json();
       if (d.ok) {
         const pid = d.data?.[0]?.id;
         if (pid && parseInt(form.total_cuotas) > 0) {
           try {
-            const ci = await fetch(`${BACKEND_URL}/planes/${pid}/cuotas/inicializar`,{method:"POST"});
+            const ci = await apiFetch(`${BACKEND_URL}/planes/${pid}/cuotas/inicializar`,{method:"POST"});
             const cd = await ci.json();
             setPlanIdGuardado(pid);
             setCuotasInit(cd.cuotas||[]);
@@ -649,7 +658,7 @@ function ModalNuevoPlan({ slug, onClose, onGuardado, initialData }) {
     setConfirmando(true);
     const entradas = Object.entries(seleccionadas);
     for (const [num, venc] of entradas) {
-      await fetch(`${BACKEND_URL}/planes/${planIdGuardado}/cuotas/${num}/pagar`,{
+      await apiFetch(`${BACKEND_URL}/planes/${planIdGuardado}/cuotas/${num}/pagar`,{
         method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({vencimiento:venc})
       }).catch(()=>{});
     }
@@ -760,7 +769,7 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
     setParsandoPlan(true);
     try {
       const fd = new FormData(); fd.append("file", file);
-      const res = await fetch(`${BACKEND_URL}/planes/parsear-pdf`, {method:"POST", body:fd});
+      const res = await apiFetch(`${BACKEND_URL}/planes/parsear-pdf`, {method:"POST", body:fd});
       const d = await res.json();
       if (d.ok) { setPlanInicial(d); setModalPlan(true); }
       else alert("No se pudo parsear el PDF: "+JSON.stringify(d));
@@ -772,7 +781,7 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
   async function guardarCuota() {
     const val = parseFloat(cuotaInput.replace(/\./g,"").replace(",","."));
     if (isNaN(val) || val <= 0) { alert("Cuota inválida"); return; }
-    await fetch(`${BACKEND_URL}/clientes/${cliente.slug}/cuota`, {
+    await apiFetch(`${BACKEND_URL}/clientes/${cliente.slug}/cuota`, {
       method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify({cuota:val})
     }).catch(()=>{});
     onActualizarCuota && onActualizarCuota(cliente, val);
@@ -783,13 +792,13 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
     if (!cliente) return;
     if (tab === "planes" && planes === null) {
       setCargandoTab(true);
-      fetch(`${BACKEND_URL}/planes/${cliente.slug}`)
+      apiFetch(`${BACKEND_URL}/planes/${cliente.slug}`)
         .then(r=>r.json()).then(d=>{ setPlanes(Array.isArray(d)?d:[]); setCargandoTab(false); })
         .catch(()=>{ setPlanes([]); setCargandoTab(false); });
     }
     if (tab === "alertas" && alertas === null) {
       setCargandoTab(true);
-      fetch(`${BACKEND_URL}/alertas/${cliente.slug}`)
+      apiFetch(`${BACKEND_URL}/alertas/${cliente.slug}`)
         .then(r=>r.json()).then(d=>{ setAlertas(Array.isArray(d)?d:[]); setCargandoTab(false); })
         .catch(()=>{ setAlertas([]); setCargandoTab(false); });
     }
@@ -802,7 +811,7 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
   }, [tab, cliente]);
 
   async function recargarPlanes() {
-    const res = await fetch(`${BACKEND_URL}/planes/${cliente.slug}`);
+    const res = await apiFetch(`${BACKEND_URL}/planes/${cliente.slug}`);
     const d = await res.json();
     setPlanes(Array.isArray(d)?d:[]);
     if (onPlanGuardado) onPlanGuardado();
@@ -816,26 +825,26 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
       inactivo:"¿Eliminar este plan? No aparecerá más en el historial.",
     };
     if (!confirm(msgs[nuevoEstado]||"¿Confirmar?")) return;
-    await fetch(`${BACKEND_URL}/planes/${planId}/estado`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({estado:nuevoEstado})});
+    await apiFetch(`${BACKEND_URL}/planes/${planId}/estado`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({estado:nuevoEstado})});
     recargarPlanes();
   }
 
   async function marcarCuotaPagada(planId) {
-    const res = await fetch(`${BACKEND_URL}/planes/${planId}/pagar`,{method:"PATCH"});
+    const res = await apiFetch(`${BACKEND_URL}/planes/${planId}/pagar`,{method:"PATCH"});
     const d = await res.json();
     if (d.ok) setPlanes(prev=>prev.map(p=>p.id===planId?{...p,cuotas_pagas:d.cuotas_pagas,estado:d.estado}:p));
   }
 
   async function crearAlerta() {
     if (!nuevaAlerta.mensaje.trim()) return;
-    await fetch(`${BACKEND_URL}/alertas/${cliente.slug}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(nuevaAlerta)});
+    await apiFetch(`${BACKEND_URL}/alertas/${cliente.slug}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(nuevaAlerta)});
     setNuevaAlerta({tipo:"vencimiento",mensaje:""});
-    const res = await fetch(`${BACKEND_URL}/alertas/${cliente.slug}`);
+    const res = await apiFetch(`${BACKEND_URL}/alertas/${cliente.slug}`);
     setAlertas(await res.json());
   }
 
   async function eliminarAlerta(id) {
-    await fetch(`${BACKEND_URL}/alertas/${id}`,{method:"DELETE"});
+    await apiFetch(`${BACKEND_URL}/alertas/${id}`,{method:"DELETE"});
     setAlertas(prev=>prev.filter(a=>a.id!==id));
   }
 
@@ -1137,13 +1146,13 @@ function ViewPlanes({ clientes }) {
   const clienteMap = Object.fromEntries(clientes.map(c=>[c.id,c]));
 
   useEffect(()=>{
-    fetch(`${BACKEND_URL}/planes`)
+    apiFetch(`${BACKEND_URL}/planes`)
       .then(r=>r.json()).then(d=>{setPlanes(Array.isArray(d)?d:[]);setLoading(false);})
       .catch(()=>setLoading(false));
   },[]);
 
   async function marcarPagado(planId) {
-    const res = await fetch(`${BACKEND_URL}/planes/${planId}/pagar`,{method:"PATCH"});
+    const res = await apiFetch(`${BACKEND_URL}/planes/${planId}/pagar`,{method:"PATCH"});
     const d = await res.json();
     if (d.ok) setPlanes(prev=>prev.map(p=>p.id===planId?{...p,cuotas_pagas:d.cuotas_pagas,estado:d.estado}:p));
   }
@@ -1155,7 +1164,7 @@ function ViewPlanes({ clientes }) {
       inactivo:"¿Eliminar este plan? No aparecerá más en la lista.",
     };
     if (!confirm(msgs[nuevoEstado]||"¿Confirmar?")) return;
-    await fetch(`${BACKEND_URL}/planes/${planId}/estado`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({estado:nuevoEstado})});
+    await apiFetch(`${BACKEND_URL}/planes/${planId}/estado`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({estado:nuevoEstado})});
     setPlanes(prev=>prev.map(p=>p.id===planId?{...p,estado:nuevoEstado}:p));
   }
 
@@ -1165,7 +1174,7 @@ function ViewPlanes({ clientes }) {
     if (!cuotasMap[planId]) {
       setCargandoMap(prev=>({...prev,[planId]:true}));
       try {
-        const res = await fetch(`${BACKEND_URL}/planes/${planId}/cuotas`);
+        const res = await apiFetch(`${BACKEND_URL}/planes/${planId}/cuotas`);
         const d = await res.json();
         setCuotasMap(prev=>({...prev,[planId]:d.cuotas||[]}));
       } catch {}
@@ -1174,7 +1183,7 @@ function ViewPlanes({ clientes }) {
   }
 
   async function pagarCuota(planId, numeroCuota, vencimiento) {
-    const res = await fetch(`${BACKEND_URL}/planes/${planId}/cuotas/${numeroCuota}/pagar`,{
+    const res = await apiFetch(`${BACKEND_URL}/planes/${planId}/cuotas/${numeroCuota}/pagar`,{
       method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({vencimiento})
     });
     const d = await res.json();
@@ -1261,7 +1270,7 @@ function ViewPlanes({ clientes }) {
                                 <button className="table-action success" style={{fontSize:"12px"}} onClick={async(e)=>{
                                   e.stopPropagation();
                                   try{
-                                    const r=await fetch(`${BACKEND_URL}/planes/${p.id}/cuotas/inicializar`,{method:"POST"});
+                                    const r=await apiFetch(`${BACKEND_URL}/planes/${p.id}/cuotas/inicializar`,{method:"POST"});
                                     const d=await r.json();
                                     if(d.ok) setCuotasMap(prev=>({...prev,[p.id]:d.cuotas||[]}));
                                   }catch{}
@@ -1333,18 +1342,18 @@ function HistorialCuotas({ slug, cuota, categoria, onToggleMesActual }) {
   const hoy = new Date();
 
   function cargarHistorial() {
-    fetch(`${BACKEND_URL}/clientes/${slug}/historial-cuotas`)
+    apiFetch(`${BACKEND_URL}/clientes/${slug}/historial-cuotas`)
       .then(r=>r.json()).then(d=>setHistorial(d.historial||[])).catch(()=>{});
   }
   function cargarDeudas() {
-    fetch(`${BACKEND_URL}/clientes/${slug}/deuda-manual`)
+    apiFetch(`${BACKEND_URL}/clientes/${slug}/deuda-manual`)
       .then(r=>r.json()).then(d=>setDeudaManual(d.deudas||[])).catch(()=>{});
   }
   useEffect(()=>{
     setCargando(true);
     Promise.all([
-      fetch(`${BACKEND_URL}/clientes/${slug}/historial-cuotas`).then(r=>r.json()),
-      fetch(`${BACKEND_URL}/clientes/${slug}/deuda-manual`).then(r=>r.json()),
+      apiFetch(`${BACKEND_URL}/clientes/${slug}/historial-cuotas`).then(r=>r.json()),
+      apiFetch(`${BACKEND_URL}/clientes/${slug}/deuda-manual`).then(r=>r.json()),
     ]).then(([hd, dd])=>{
       setHistorial(hd.historial||[]);
       setDeudaManual(dd.deudas||[]);
@@ -1356,26 +1365,26 @@ function HistorialCuotas({ slug, cuota, categoria, onToggleMesActual }) {
     const nuevoPagado = !h.pagado;
     setHistorial(prev=>prev.map(x=>x.año===h.año&&x.mes===h.mes?{...x,pagado:nuevoPagado}:x));
     if (h.año===hoy.getFullYear()&&h.mes===hoy.getMonth()+1) onToggleMesActual&&onToggleMesActual(nuevoPagado);
-    await fetch(`${BACKEND_URL}/clientes/${slug}/historial-cuotas/${h.año}/${h.mes}`,{
+    await apiFetch(`${BACKEND_URL}/clientes/${slug}/historial-cuotas/${h.año}/${h.mes}`,{
       method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({pagado:nuevoPagado})
     }).catch(()=>{});
   }
 
   async function pagarDeuda(d) {
     setDeudaManual(prev=>prev.filter(x=>x.id!==d.id));
-    await fetch(`${BACKEND_URL}/deuda-manual/${d.id}/pagar`,{method:"PATCH"}).catch(()=>{});
+    await apiFetch(`${BACKEND_URL}/deuda-manual/${d.id}/pagar`,{method:"PATCH"}).catch(()=>{});
   }
 
   async function eliminarDeuda(d) {
     setDeudaManual(prev=>prev.filter(x=>x.id!==d.id));
-    await fetch(`${BACKEND_URL}/deuda-manual/${d.id}`,{method:"DELETE"}).catch(()=>{});
+    await apiFetch(`${BACKEND_URL}/deuda-manual/${d.id}`,{method:"DELETE"}).catch(()=>{});
   }
 
   async function agregarDeuda() {
     const monto = parseFloat(formMonto.replace(/\./g,"").replace(",","."));
     if (!formMonto||isNaN(monto)||monto<=0) { alert("Ingresá un monto válido"); return; }
     setGuardando(true);
-    const res = await fetch(`${BACKEND_URL}/clientes/${slug}/deuda-manual`,{
+    const res = await apiFetch(`${BACKEND_URL}/clientes/${slug}/deuda-manual`,{
       method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({organismo:formOrg,monto,descripcion:formDesc})
     }).then(r=>r.json()).catch(()=>null);
@@ -1763,7 +1772,7 @@ function PendientesFeed({ tareas }) {
 function ViewDashboard({ clientes, planes, factura, topes, onNavigate }) {
   const [tareas,setTareas]=useState(null);
   useEffect(()=>{
-    fetch(`${BACKEND_URL}/configuracion`).then(r=>r.json())
+    apiFetch(`${BACKEND_URL}/configuracion`).then(r=>r.json())
       .then(d=>setTareas(parseTareasArr(d.tareas_mensuales)))
       .catch(()=>setTareas(TAREAS_DEFAULT));
   },[]);
@@ -1833,7 +1842,7 @@ function ViewConfig({ topes, onRefresh }) {
   };
 
   useEffect(()=>{
-    fetch(`${BACKEND_URL}/configuracion`).then(r=>r.json())
+    apiFetch(`${BACKEND_URL}/configuracion`).then(r=>r.json())
       .then(d=>setCfg({...DEFAULTS,...d}))
       .catch(()=>setCfg(DEFAULTS));
   },[]);
@@ -1845,7 +1854,7 @@ function ViewConfig({ topes, onRefresh }) {
     const payload={};
     claves.forEach(k=>{ payload[k]=cfg[k]??""; });
     try {
-      await fetch(`${BACKEND_URL}/configuracion`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+      await apiFetch(`${BACKEND_URL}/configuracion`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
       setOkKey(sKey); setTimeout(()=>setOkKey(null),2500);
     } catch(e){ alert("Error al guardar: "+e.message); }
     setGKey(null);
@@ -1856,7 +1865,7 @@ function ViewConfig({ topes, onRefresh }) {
     setImp(true);
     try {
       const fd=new FormData(); fd.append("file",file);
-      const res=await fetch(`${BACKEND_URL}/topes/importar`,{method:"POST",body:fd});
+      const res=await apiFetch(`${BACKEND_URL}/topes/importar`,{method:"POST",body:fd});
       const d=await res.json();
       if(d.ok){ setIR(d); onRefresh(); }
       else alert("Error al importar: "+JSON.stringify(d));
@@ -2024,7 +2033,126 @@ function ViewConfig({ topes, onRefresh }) {
 }
 
 // ── App ──
+// ── LoginScreen ──────────────────────────────────────────────────────────────
+function LoginScreen({ onLogin }) {
+  const [email,setEmail]     = useState("");
+  const [password,setPassword] = useState("");
+  const [nombre,setNombre]   = useState("");
+  const [modo,setModo]       = useState("login"); // login | register | verify
+  const [cargando,setCargando] = useState(false);
+  const [error,setError]     = useState("");
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setCargando(true); setError("");
+    if (modo === "login") {
+      const { data, error: err } = await db.auth.signInWithPassword({ email, password });
+      if (err) setError(err.message === "Invalid login credentials" ? "Email o contraseña incorrectos" : err.message);
+      else onLogin(data.session);
+    } else {
+      const { error: err } = await db.auth.signUp({
+        email, password,
+        options: { data: { nombre_estudio: nombre || "Mi Estudio" } }
+      });
+      if (err) setError(err.message);
+      else setModo("verify");
+    }
+    setCargando(false);
+  }
+
+  const styles = {
+    wrap: { minHeight:"100vh", background:"#F0F2F7", display:"flex", alignItems:"center", justifyContent:"center", padding:"20px" },
+    card: { background:"#fff", borderRadius:"20px", padding:"40px 44px", width:"100%", maxWidth:"420px", boxShadow:"0 8px 40px rgba(27,45,79,0.13)" },
+    logo: { textAlign:"center", marginBottom:"28px" },
+    logoMain: { fontSize:"22px", fontWeight:"700", color:"#1B2D4F", letterSpacing:"0.06em" },
+    logoSub: { fontSize:"10px", color:"#2BAF82", letterSpacing:"0.2em", textTransform:"uppercase", marginTop:"3px" },
+    tabs: { display:"flex", background:"#EAF0F6", borderRadius:"10px", padding:"3px", marginBottom:"24px" },
+    tab: (active) => ({ flex:1, padding:"9px", border:"none", borderRadius:"8px", fontSize:"13px", fontWeight:"600", cursor:"pointer", fontFamily:"inherit", background:active?"#fff":"transparent", color:active?"#1B2D4F":"#6B7A96", boxShadow:active?"0 1px 4px rgba(27,45,79,0.1)":"none", transition:"0.15s" }),
+    err: { color:"#E04545", fontSize:"13px", background:"#FEE2E2", padding:"10px 12px", borderRadius:"8px", marginBottom:"12px" },
+    verify: { textAlign:"center", padding:"10px 0" },
+  };
+
+  if (modo === "verify") return (
+    <div style={styles.wrap}>
+      <div style={styles.card}>
+        <div style={styles.logo}><div style={styles.logoMain}>AXENDA</div><div style={styles.logoSub}>CONTABLE</div></div>
+        <div style={styles.verify}>
+          <div style={{fontSize:"44px",marginBottom:"16px"}}>📧</div>
+          <div style={{fontSize:"17px",fontWeight:"700",color:"#1B2D4F",marginBottom:"10px"}}>Verificá tu email</div>
+          <div style={{fontSize:"13px",color:"#6B7A96",lineHeight:"1.6",marginBottom:"24px"}}>
+            Te enviamos un link a <strong>{email}</strong>.<br/>Hacé click en el link para activar tu cuenta.
+          </div>
+          <button className="btn-secondary" onClick={()=>setModo("login")}>← Volver al inicio</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={styles.wrap}>
+      <div style={styles.card}>
+        <div style={styles.logo}>
+          <div style={styles.logoMain}>AXENDA</div>
+          <div style={styles.logoSub}>CONTABLE</div>
+        </div>
+        <div style={styles.tabs}>
+          {[["login","Iniciar sesión"],["register","Registrarse"]].map(([m,l])=>(
+            <button key={m} style={styles.tab(modo===m)} onClick={()=>{setModo(m);setError("");}}>{l}</button>
+          ))}
+        </div>
+        <form onSubmit={handleSubmit}>
+          {modo==="register"&&(
+            <div className="form-group">
+              <label className="form-label">NOMBRE DEL ESTUDIO</label>
+              <input className="form-input" type="text" value={nombre} onChange={e=>setNombre(e.target.value)}
+                placeholder="Ej: Estudio Contable García" autoFocus/>
+            </div>
+          )}
+          <div className="form-group">
+            <label className="form-label">EMAIL</label>
+            <input className="form-input" type="email" value={email} onChange={e=>setEmail(e.target.value)}
+              required autoFocus={modo==="login"}/>
+          </div>
+          <div className="form-group">
+            <label className="form-label">CONTRASEÑA</label>
+            <input className="form-input" type="password" value={password} onChange={e=>setPassword(e.target.value)}
+              required minLength={6}/>
+          </div>
+          {error&&<div style={styles.err}>{error}</div>}
+          <button className="btn-primary" type="submit" disabled={cargando}>
+            {cargando ? "Cargando..." : modo==="login" ? "Entrar" : "Crear cuenta"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 function App() {
+  // ── Auth ──────────────────────────────────────────────────────────
+  const [session,setSession]         = useState(null);
+  const [authLoading,setAuthLoading] = useState(true);
+
+  useEffect(()=>{
+    db.auth.getSession().then(({data:{session:s}})=>{
+      _session = s;
+      setSession(s);
+      setAuthLoading(false);
+    });
+    const { data:{ subscription } } = db.auth.onAuthStateChange((_ev, s)=>{
+      _session = s;
+      setSession(s);
+    });
+    return ()=>subscription.unsubscribe();
+  },[]);
+
+  async function logout(){
+    await db.auth.signOut();
+    _session = null;
+    setSession(null);
+  }
+
+  // ── App state ──────────────────────────────────────────────────────
   const [clientes,setClientes]   = useState([]);
   const [factura,setFactura]     = useState({});
   const [topes,setTopes]         = useState([]);
@@ -2046,10 +2174,10 @@ function App() {
     setLoading(true);
     try {
       const [clsRes,facRes,topRes,planRes]=await Promise.all([
-        fetch(`${BACKEND_URL}/clientes`).then(r=>r.json()),
+        apiFetch(`${BACKEND_URL}/clientes`).then(r=>r.json()),
         db.from("facturacion").select("*").then(r=>r.data),
         db.from("topes_categoria").select("*").order("categoria").then(r=>r.data),
-        fetch(`${BACKEND_URL}/planes`).then(r=>r.json()).catch(()=>[]),
+        apiFetch(`${BACKEND_URL}/planes`).then(r=>r.json()).catch(()=>[]),
       ]);
       setClientes(clsRes||[]);
       setTopes(topRes||[]);
@@ -2060,16 +2188,16 @@ function App() {
     }catch(e){console.error(e);}
     setLoading(false);
   }
-  useEffect(()=>{cargarDatos();},[]);
+  useEffect(()=>{ if(session) cargarDatos(); },[session]);
   function mostrarToast(msg){setToast(msg);setTimeout(()=>setToast(null),3500);}
 
   async function toggleActivo(c){
-    await fetch(`${BACKEND_URL}/clientes/${c.slug}/toggle`,{method:"PATCH"});
+    await apiFetch(`${BACKEND_URL}/clientes/${c.slug}/toggle`,{method:"PATCH"});
     setClientes(prev=>prev.map(x=>x.id===c.id?{...x,activo:!x.activo}:x));
     mostrarToast(`${c.nombre} ${c.apellido} → ${!c.activo?"activo":"inactivo"}`);
   }
   async function actualizarEstadoPago(c,nuevoEstado,silencioso=false){
-    try{await fetch(`${BACKEND_URL}/clientes/${c.slug}/estado-pago`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({estado_pago:nuevoEstado})});}catch{}
+    try{await apiFetch(`${BACKEND_URL}/clientes/${c.slug}/estado-pago`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({estado_pago:nuevoEstado})});}catch{}
     setClientes(prev=>prev.map(x=>x.id===c.id?{...x,estado_pago:nuevoEstado}:x));
     if(!silencioso) mostrarToast(`${c.nombre} → ${nuevoEstado==="al_dia"?"pagado ✓":"pendiente"}`);
   }
@@ -2080,7 +2208,7 @@ function App() {
     setImportando(slug);
     try {
       const fd=new FormData(); fd.append("file",file);
-      const res=await fetch(`${BACKEND_URL}/importar-comprobantes/${slug}`,{method:"POST",body:fd});
+      const res=await apiFetch(`${BACKEND_URL}/importar-comprobantes/${slug}`,{method:"POST",body:fd});
       const d=await res.json();
       if(d.ok){setImportResult({slug,meses:d.meses_importados,detalle:d.detalle});cargarDatos();}
       else alert("Error al importar: "+JSON.stringify(d));
@@ -2107,6 +2235,17 @@ function App() {
   function irSeccion(s){setSeccion(s);setClienteDetalle(null);setBusqueda("");}
   const clienteSeleccionado = clienteDetalle ? clientes.find(c=>c.slug===clienteDetalle) : null;
 
+  // ── Auth guards ──────────────────────────────────────────────────
+  if (authLoading) return (
+    <div style={{minHeight:"100vh",background:"#F0F2F7",display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{textAlign:"center",color:"#1B2D4F"}}>
+        <div style={{fontSize:"22px",fontWeight:"700",letterSpacing:"0.06em",marginBottom:"8px"}}>AXENDA</div>
+        <div style={{fontSize:"11px",color:"#6B7A96"}}>Cargando...</div>
+      </div>
+    </div>
+  );
+  if (!session) return <LoginScreen onLogin={s=>{ _session=s; setSession(s); }}/>;
+
   return (
     <div className="layout">
       <aside className="sidebar">
@@ -2126,7 +2265,11 @@ function App() {
           <button className={`nav-btn ${seccion==="config"?"active":""}`} onClick={()=>irSeccion("config")}>⚙️ &nbsp;Configuración</button>
         </nav>
         <div className="sidebar-footer">
-          <div className="footer-text">axendacontable@gmail.com</div>
+          <div className="footer-text" style={{marginBottom:"8px"}}>{session?.user?.email}</div>
+          <button onClick={logout} style={{width:"100%",padding:"8px",background:"#243C65",border:"none",borderRadius:"7px",color:"#8CA0BE",fontSize:"12px",fontWeight:"500",cursor:"pointer",fontFamily:"inherit",transition:"0.15s"}}
+            onMouseOver={e=>e.target.style.color="#E04545"} onMouseOut={e=>e.target.style.color="#8CA0BE"}>
+            Cerrar sesión
+          </button>
         </div>
       </aside>
 
@@ -2154,7 +2297,7 @@ function App() {
               importando={importando}
               onActualizarEstado={actualizarEstadoPago}
               onPlanGuardado={async()=>{
-                const planRes=await fetch(`${BACKEND_URL}/planes`).then(r=>r.json()).catch(()=>[]);
+                const planRes=await apiFetch(`${BACKEND_URL}/planes`).then(r=>r.json()).catch(()=>[]);
                 setPlanes(Array.isArray(planRes)?planRes:[]);
               }}
               onActualizarCuota={(c, nuevaCuota)=>{
