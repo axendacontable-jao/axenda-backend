@@ -2166,26 +2166,46 @@ function App() {
   const [importResult,setImportResult] = useState(null);
   const [seccion,setSeccion]     = useState("dashboard");
   const [clienteDetalle,setClienteDetalle] = useState(null);
+  const [datosError,setDatosError]         = useState(null);
   const fileInputRef  = useRef(null);
   const importSlugRef = useRef(null);
   const dias = diasAlCorte();
 
   async function cargarDatos(){
     setLoading(true);
+    setDatosError(null);
+    console.log('[cargarDatos] iniciando, session uid:', _session?.user?.id);
     try {
-      const [clsRes,facRes,topRes,planRes]=await Promise.all([
-        apiFetch(`${BACKEND_URL}/clientes`).then(r=>r.json()),
-        db.from("facturacion").select("*").then(r=>r.data),
+      const clsR  = await apiFetch(`${BACKEND_URL}/clientes`);
+      console.log('[cargarDatos] /clientes status:', clsR.status);
+      if (!clsR.ok) {
+        const e = await clsR.json().catch(()=>({}));
+        console.error('[cargarDatos] /clientes error body:', e);
+        setDatosError(`Error ${clsR.status}: ${e.detail || 'No se pudo cargar clientes'}`);
+        setLoading(false);
+        return;
+      }
+      const clsRes = await clsR.json();
+      console.log('[cargarDatos] clientes recibidos:', Array.isArray(clsRes) ? clsRes.length : typeof clsRes);
+
+      const planR = await apiFetch(`${BACKEND_URL}/planes`).catch(()=>null);
+      const planRes = planR?.ok ? await planR.json().catch(()=>[]) : [];
+
+      const [facRes,topRes] = await Promise.all([
+        db.from("facturacion").select("*").then(r=>{ console.log('[cargarDatos] facturacion:', r.data?.length, r.error?.message); return r.data; }),
         db.from("topes_categoria").select("*").order("categoria").then(r=>r.data),
-        apiFetch(`${BACKEND_URL}/planes`).then(r=>r.json()).catch(()=>[]),
       ]);
-      setClientes(clsRes||[]);
+
+      setClientes(Array.isArray(clsRes) ? clsRes : []);
       setTopes(topRes||[]);
       setPlanes(Array.isArray(planRes)?planRes:[]);
       const map={};
       (facRes||[]).forEach(f=>{if(!map[f.cliente_id])map[f.cliente_id]=[];map[f.cliente_id].push(f);});
       setFactura(map);
-    }catch(e){console.error(e);}
+    }catch(e){
+      console.error('[cargarDatos] excepcion:', e);
+      setDatosError('Error inesperado: ' + e.message);
+    }
     setLoading(false);
   }
   useEffect(()=>{ if(session) cargarDatos(); },[session]);
@@ -2287,6 +2307,18 @@ function App() {
         </div>
 
         <div className="content">
+          {datosError && (
+            <div style={{background:"#E0454514",border:"1px solid #E0454530",borderRadius:"12px",padding:"20px 24px",marginBottom:"20px",display:"flex",alignItems:"flex-start",gap:"14px"}}>
+              <div style={{fontSize:"20px",flexShrink:0}}>⚠️</div>
+              <div>
+                <div style={{fontWeight:"600",color:"#E04545",marginBottom:"4px"}}>Error al cargar datos</div>
+                <div style={{fontSize:"13px",color:"#6B7A96",marginBottom:"12px"}}>{datosError}</div>
+                <button onClick={cargarDatos} style={{fontSize:"12px",background:"#1B2D4F",color:"#fff",border:"none",borderRadius:"8px",padding:"7px 16px",cursor:"pointer",fontFamily:"inherit",fontWeight:"500"}}>
+                  Reintentar
+                </button>
+              </div>
+            </div>
+          )}
           {clienteDetalle ? (
             <ViewClienteDetalle
               cliente={clienteSeleccionado}
