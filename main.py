@@ -473,8 +473,8 @@ async def get_historial_cuotas(slug: str, meses: int = 6, estudio_id: str = Depe
     return {"ok": True, "historial": resultado}
 
 
-@app.patch("/clientes/{slug}/historial-cuotas/{año}/{mes}")
-async def toggle_historial_cuota(slug: str, año: int, mes: int, data: dict, estudio_id: str = Depends(get_estudio_id)):
+@app.patch("/clientes/{slug}/historial-cuotas/{anio}/{mes}")
+async def toggle_historial_cuota(slug: str, anio: int, mes: int, data: dict, estudio_id: str = Depends(get_estudio_id)):
     cl_res = db.from_("clientes").select("id").eq("slug", slug).eq("estudio_id", estudio_id).limit(1).execute()
     if not cl_res.data:
         raise HTTPException(404, "Cliente no encontrado")
@@ -485,11 +485,11 @@ async def toggle_historial_cuota(slug: str, año: int, mes: int, data: dict, est
         upd = db.from_("historial_cuotas").update({
             "pagado": pagado,
             "fecha_pago": fecha_pago,
-        }).eq("cliente_id", cliente_id).eq("año", año).eq("mes", mes).execute()
+        }).eq("cliente_id", cliente_id).eq("año", anio).eq("mes", mes).execute()
         if not upd.data:
             db.from_("historial_cuotas").insert({
                 "cliente_id": cliente_id,
-                "año": año,
+                "año": anio,
                 "mes": mes,
                 "pagado": pagado,
                 "fecha_pago": fecha_pago,
