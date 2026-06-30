@@ -568,6 +568,29 @@ async def cargar_facturacion(slug: str, data: dict, estudio_id: str = Depends(ge
     result = db.from_("facturacion").upsert(registro, on_conflict="cliente_id,anio,mes").execute()
     return {"ok": True, "data": result.data}
 
+@app.patch("/portal/{slug}/marcar-pago")
+async def portal_marcar_pago(slug: str):
+    """Endpoint sin auth de admin para que el cliente marque su cuota como pagada."""
+    cliente_res = db.from_("clientes").select("id,nombre,apellido").eq("slug", slug).execute()
+    if not cliente_res.data:
+        raise HTTPException(404, "Cliente no encontrado")
+    cliente = cliente_res.data[0]
+    hoy = datetime.date.today()
+    upsert_data = {
+        "cliente_id": cliente["id"],
+        "año": hoy.year,
+        "mes": hoy.month,
+        "pagado": True,
+        "fecha_pago": datetime.datetime.utcnow().isoformat() + "Z",
+    }
+    try:
+        db.from_("historial_cuotas").upsert(upsert_data, on_conflict="cliente_id,año,mes").execute()
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    nombre = f"{cliente.get('nombre','')} {cliente.get('apellido','')}".strip()
+    log_actividad(cliente["id"], f"Cuota {hoy.month}/{hoy.year} marcada al día desde el portal — {nombre}")
+    return {"ok": True, "estado_cuota": "al_dia"}
+
 @app.get("/portal/{slug}")
 async def datos_portal(slug: str):
     cliente_res = db.from_("clientes").select("*").eq("slug", slug).execute()
