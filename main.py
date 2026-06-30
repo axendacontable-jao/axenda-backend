@@ -642,6 +642,19 @@ async def datos_portal(slug: str):
         deuda_desc = " · ".join(partes) if partes else None
     except Exception:
         deuda_total, deuda_desc, deuda_art, deuda_arca = 0, None, 0, 0
+
+    # Estado de cuota del mes actual basado en historial_cuotas (no en campo manual)
+    try:
+        mes_actual_pagado = (hoy.year, hoy.month) in pagados_db
+        if mes_actual_pagado:
+            estado_cuota = "al_dia"
+        elif hoy.day > 20:
+            estado_cuota = "vencida"
+        else:
+            estado_cuota = "pendiente"
+    except Exception:
+        estado_cuota = "pendiente"
+
     facturacion = fac_res.data or []
     montos = [f["monto"] for f in facturacion if f["monto"] > 0]
     total_fac = sum(montos)
@@ -655,6 +668,7 @@ async def datos_portal(slug: str):
         "novedades": novedades, "whatsapp": cfg.get("whatsapp"),
         "deuda_total": deuda_total, "deuda_desc": deuda_desc,
         "deuda_art": deuda_art, "deuda_arca": deuda_arca,
+        "estado_cuota": estado_cuota,
     }
 
 
