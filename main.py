@@ -87,15 +87,22 @@ async def get_estudio_id(request: Request) -> str:
             raise HTTPException(401, "Token sin subject")
     except JWTError as e:
         raise HTTPException(401, f"Token inválido: {e}")
-    try:
-        res = db.from_("estudios").select("id,estado").eq("owner_id", user_id).single().execute()
-    except Exception:
-        raise HTTPException(403, "Estudio no encontrado. Completá el registro.")
-    if not res.data:
-        raise HTTPException(403, "Estudio no encontrado")
-    if res.data["estado"] != "activa":
-        raise HTTPException(403, f"Estudio {res.data['estado']}")
-    return res.data["id"]
+    res = db.from_("estudios").select("id,estado").eq("owner_id", user_id).limit(1).execute()
+    rows = res.data or []
+    if not rows:
+        # El trigger handle_new_user no creó el estudio — lo inicializamos aquí como fallback
+        ins = db.from_("estudios").insert({
+            "owner_id": user_id,
+            "nombre": "Mi Estudio",
+            "estado": "activa",
+        }).execute()
+        if not ins.data:
+            raise HTTPException(403, "No se pudo inicializar el estudio")
+        return ins.data[0]["id"]
+    estudio = rows[0]
+    if estudio["estado"] != "activa":
+        raise HTTPException(403, f"Estudio {estudio['estado']}")
+    return estudio["id"]
 
 # Componente ART Río Negro por categoría (vigente desde 01/02/2026)
 ART_RIO_NEGRO = {
