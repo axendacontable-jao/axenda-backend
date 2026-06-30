@@ -1731,24 +1731,65 @@ function ResumenMes({ clientes, factura, topes }) {
   );
 }
 
-// ── Feed actividad reciente ──
-function ActividadFeed() {
-  const [items,setItems]=useState(null);
-  useEffect(()=>{
-    db.from("alertas").select("*").eq("tipo","actividad").order("created_at",{ascending:false}).limit(12)
-      .then(r=>setItems(r.data||[])).catch(()=>setItems([]));
-  },[]);
-  if(items===null)return <div style={{height:"80px",borderRadius:"8px"}} className="skeleton"/>;
-  if(items.length===0)return <div style={{textAlign:"center",padding:"24px",color:"var(--muted)",fontSize:"12px"}}>Sin actividad reciente.</div>;
+// ── Avisos WhatsApp ──
+function AvisosWhatsApp({ clientes, planes, cfg }) {
+  if (!cfg) return <div style={{height:"80px",borderRadius:"8px"}} className="skeleton"/>;
+  const hoy = new Date();
+  const tplCuota = cfg.tpl_vencimiento_cuota || TPL_DEFAULTS.tpl_vencimiento_cuota;
+  const tplPlan  = cfg.tpl_vencimiento_plan  || TPL_DEFAULTS.tpl_vencimiento_plan;
+  const clienteMap = Object.fromEntries(clientes.map(c=>[c.id,c]));
+  const cuotasPend = clientes.filter(c=>c.activo && c.estado_pago!=="al_dia");
+  const planesPend = planes.filter(p=>{
+    if(p.estado!=="activo"||!p.proximo_venc) return false;
+    return new Date(p.proximo_venc+"T00:00:00")<=hoy;
+  });
+  function applyTpl(t,vars){return Object.entries(vars).reduce((s,[k,v])=>s.split(k).join(v??"-"),t);}
+  function fmtFecha(s){try{const d=new Date(s+"T00:00:00");return`${d.getDate()}/${d.getMonth()+1}/${d.getFullYear()}`;}catch{return s;}}
+  function waUrl(wa,msg){return`https://wa.me/549${wa}?text=${encodeURIComponent(msg)}`;}
+  const btnWa=(wa,msg)=>wa
+    ?<a href={waUrl(wa,msg)} target="_blank" rel="noopener"
+        style={{background:"#25D366",color:"#fff",borderRadius:"7px",padding:"5px 12px",fontSize:"12px",fontWeight:"600",textDecoration:"none",flexShrink:0,display:"inline-block"}}>
+        💬 Avisar
+      </a>
+    :<span style={{fontSize:"11px",color:"var(--muted)",fontStyle:"italic",flexShrink:0}}>Sin WA</span>;
+  const secTitle=(t)=><div style={{fontSize:"11px",fontWeight:"700",color:"var(--blue)",textTransform:"uppercase",letterSpacing:"0.6px",padding:"12px 0 6px"}}>{t}</div>;
+  const emptyRow=(t)=><div style={{fontSize:"12px",color:"var(--muted)",padding:"6px 0 10px"}}>✓ {t}</div>;
   return (
-    <div>
-      {items.map((a,i)=>(
-        <div key={i} className="feed-item">
-          <div className="feed-icon">📝</div>
-          <div className="feed-text">{a.mensaje}</div>
-          <div className="feed-time">{tiempoRelativo(a.created_at)}</div>
+    <div style={{overflow:"auto",maxHeight:"300px"}}>
+      {secTitle("Cuota mensual")}
+      {cuotasPend.length===0 ? emptyRow("Todos al día") : cuotasPend.map(c=>(
+        <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid var(--border)",gap:"10px"}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontWeight:"600",fontSize:"13px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.nombre} {c.apellido}</div>
+            <div style={{fontSize:"11px",color:c.estado_pago==="vencida"?"var(--red)":"var(--yellow)",marginTop:"1px"}}>
+              {c.estado_pago==="vencida"?"Cuota vencida":"Cuota pendiente"} · {$$(c.cuota)}
+            </div>
+          </div>
+          {btnWa(c.whatsapp, applyTpl(tplCuota,{
+            "{nombre}":c.nombre,"{monto}":$$(c.cuota),
+            "{mes}":MESES_FULL[hoy.getMonth()],"{link_portal}":`${PORTAL_URL}/?cliente=${c.slug}`,
+          }))}
         </div>
       ))}
+      {secTitle("Planes de pago")}
+      {planesPend.length===0 ? emptyRow("Sin cuotas vencidas") : planesPend.map((p,i)=>{
+        const c=clienteMap[p.cliente_id]; if(!c) return null;
+        return (
+          <div key={p.id||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid var(--border)",gap:"10px"}}>
+            <div style={{minWidth:0}}>
+              <div style={{fontWeight:"600",fontSize:"13px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.nombre} {c.apellido}</div>
+              <div style={{fontSize:"11px",color:"var(--yellow)",marginTop:"1px"}}>
+                {p.descripcion||"Plan de pago"} · vence {fmtFecha(p.proximo_venc)} · {$$(p.monto_cuota)}
+              </div>
+            </div>
+            {btnWa(c.whatsapp, applyTpl(tplPlan,{
+              "{nombre}":c.nombre,"{numero_cuota}":p.numero_cuota??"—",
+              "{nombre_plan}":p.descripcion||"Plan de pago","{fecha_venc}":fmtFecha(p.proximo_venc),
+              "{monto}":$$(p.monto_cuota),"{link_portal}":`${PORTAL_URL}/?cliente=${c.slug}`,
+            }))}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1781,10 +1822,11 @@ function PendientesFeed({ tareas }) {
 // ── Dashboard principal ──
 function ViewDashboard({ clientes, planes, factura, topes, onNavigate }) {
   const [tareas,setTareas]=useState(null);
+  const [cfg,setCfg]=useState(null);
   useEffect(()=>{
     apiFetch(`${BACKEND_URL}/configuracion`).then(r=>r.json())
-      .then(d=>setTareas(parseTareasArr(d.tareas_mensuales)))
-      .catch(()=>setTareas(TAREAS_DEFAULT));
+      .then(d=>{ setTareas(parseTareasArr(d.tareas_mensuales)); setCfg(d); })
+      .catch(()=>{ setTareas(TAREAS_DEFAULT); setCfg({}); });
   },[]);
   const activos=clientes.filter(c=>c.activo);
   const topeMapa=Object.fromEntries(topes.map(t=>[t.categoria,t.tope_anual]));
@@ -1835,8 +1877,8 @@ function ViewDashboard({ clientes, planes, factura, topes, onNavigate }) {
       </div>
       <div className="dash-row">
         <div className="dash-card">
-          <div className="dash-card-title">Actividad reciente</div>
-          <ActividadFeed/>
+          <div className="dash-card-title">Avisos por WhatsApp</div>
+          <AvisosWhatsApp clientes={clientes} planes={planes} cfg={cfg}/>
         </div>
         <div className="dash-card">
           <div className="dash-card-title">Pendientes del mes</div>
