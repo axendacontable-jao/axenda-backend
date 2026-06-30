@@ -619,7 +619,8 @@ async def datos_portal(slug: str):
     except Exception:
         novedades = []
     try:
-        cfg_res = db.from_("configuracion").select("clave,valor").in_("clave", ["whatsapp"]).execute()
+        estudio_id_cliente = cliente.get("estudio_id", "")
+        cfg_res = db.from_("configuracion").select("clave,valor").in_("clave", ["whatsapp"]).eq("estudio_id", estudio_id_cliente).execute()
         cfg = {r["clave"]: r["valor"] for r in (cfg_res.data or [])}
     except Exception:
         cfg = {}
