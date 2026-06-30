@@ -1,6 +1,7 @@
 -- ═══════════════════════════════════════════════════════════════════
--- AXENDA CONTABLE — Migración multi-tenant
--- Ejecutar en Supabase → SQL Editor (de arriba hacia abajo, una sola vez)
+-- AXENDA CONTABLE — Paso 1: Estructura multi-tenant
+-- Correr en Supabase → SQL Editor UNA SOLA VEZ, antes de registrarte.
+-- No toca datos existentes.
 -- ═══════════════════════════════════════════════════════════════════
 
 -- ────────────────────────────────────────────────────────────────────
@@ -18,12 +19,11 @@ CREATE TABLE IF NOT EXISTS estudios (
 
 ALTER TABLE estudios ENABLE ROW LEVEL SECURITY;
 
--- Cada usuario solo ve y edita su propio estudio
 CREATE POLICY "estudio_owner" ON estudios
   FOR ALL USING (owner_id = auth.uid());
 
 -- ────────────────────────────────────────────────────────────────────
--- 2. Agregar estudio_id a todas las tablas de negocio
+-- 2. Columna estudio_id en todas las tablas de negocio
 -- ────────────────────────────────────────────────────────────────────
 ALTER TABLE clientes      ADD COLUMN IF NOT EXISTS estudio_id UUID REFERENCES estudios(id) ON DELETE CASCADE;
 ALTER TABLE planes_pago   ADD COLUMN IF NOT EXISTS estudio_id UUID REFERENCES estudios(id) ON DELETE CASCADE;
@@ -34,7 +34,7 @@ ALTER TABLE documentos    ADD COLUMN IF NOT EXISTS estudio_id UUID REFERENCES es
 ALTER TABLE configuracion ADD COLUMN IF NOT EXISTS estudio_id UUID REFERENCES estudios(id) ON DELETE CASCADE;
 
 -- ────────────────────────────────────────────────────────────────────
--- 3. Trigger: crear estudio automáticamente al confirmar email
+-- 3. Trigger: crea fila en estudios al registrar un usuario nuevo
 -- ────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION handle_new_user()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER AS $$
@@ -54,8 +54,7 @@ CREATE TRIGGER on_auth_user_created
   FOR EACH ROW EXECUTE FUNCTION handle_new_user();
 
 -- ────────────────────────────────────────────────────────────────────
--- 4. Helper function: devuelve el estudio_id del usuario actual
---    (usado por las políticas RLS)
+-- 4. Helper RLS: devuelve el estudio_id del usuario autenticado
 -- ────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION mi_estudio_id()
 RETURNS UUID LANGUAGE sql STABLE SECURITY DEFINER AS $$
@@ -66,16 +65,13 @@ $$;
 
 -- ────────────────────────────────────────────────────────────────────
 -- 5. RLS en cada tabla de negocio
---    Doble condición: estudio correcto AND estado activa
 -- ────────────────────────────────────────────────────────────────────
 
--- clientes
 ALTER TABLE clientes ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "clientes_estudio" ON clientes;
 CREATE POLICY "clientes_estudio" ON clientes
   FOR ALL USING (estudio_id = mi_estudio_id());
 
--- facturacion (accedida directo desde el browser con la anon key)
 ALTER TABLE facturacion ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "facturacion_estudio" ON facturacion;
 CREATE POLICY "facturacion_estudio" ON facturacion
@@ -92,13 +88,11 @@ DROP POLICY IF EXISTS "topes_escribir" ON topes_categoria;
 CREATE POLICY "topes_escribir" ON topes_categoria
   FOR ALL USING (auth.role() = 'authenticated');
 
--- planes_pago
 ALTER TABLE planes_pago ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "planes_estudio" ON planes_pago;
 CREATE POLICY "planes_estudio" ON planes_pago
   FOR ALL USING (estudio_id = mi_estudio_id());
 
--- planes_pago_cuotas: derivada del plan, acceso a través de plan_id
 ALTER TABLE planes_pago_cuotas ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "cuotas_plan_estudio" ON planes_pago_cuotas;
 CREATE POLICY "cuotas_plan_estudio" ON planes_pago_cuotas
@@ -106,7 +100,6 @@ CREATE POLICY "cuotas_plan_estudio" ON planes_pago_cuotas
     plan_id IN (SELECT id FROM planes_pago WHERE estudio_id = mi_estudio_id())
   );
 
--- historial_cuotas
 ALTER TABLE historial_cuotas ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "historial_estudio" ON historial_cuotas;
 CREATE POLICY "historial_estudio" ON historial_cuotas
@@ -114,60 +107,28 @@ CREATE POLICY "historial_estudio" ON historial_cuotas
     cliente_id IN (SELECT id FROM clientes WHERE estudio_id = mi_estudio_id())
   );
 
--- deuda_manual
 ALTER TABLE deuda_manual ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "deuda_manual_estudio" ON deuda_manual;
 CREATE POLICY "deuda_manual_estudio" ON deuda_manual
   FOR ALL USING (estudio_id = mi_estudio_id());
 
--- alertas
 ALTER TABLE alertas ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "alertas_estudio" ON alertas;
 CREATE POLICY "alertas_estudio" ON alertas
   FOR ALL USING (estudio_id = mi_estudio_id());
 
--- documentos
 ALTER TABLE documentos ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "documentos_estudio" ON documentos;
 CREATE POLICY "documentos_estudio" ON documentos
   FOR ALL USING (estudio_id = mi_estudio_id());
 
--- configuracion
 ALTER TABLE configuracion ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "config_estudio" ON configuracion;
 CREATE POLICY "config_estudio" ON configuracion
   FOR ALL USING (estudio_id = mi_estudio_id() OR estudio_id IS NULL);
 
 -- ────────────────────────────────────────────────────────────────────
--- 6. MIGRACIÓN DE DATOS EXISTENTES
---
---    Prerequisito: registrarte y confirmar tu email en el admin.
---    El trigger handle_new_user() ya habrá creado tu fila en estudios.
---    Este bloque la detecta automáticamente.
+-- Verificación rápida (opcional, podés correr esto al final)
 -- ────────────────────────────────────────────────────────────────────
-DO $$
-DECLARE
-  eid UUID;
-BEGIN
-  SELECT id INTO eid FROM estudios LIMIT 1;
-
-  IF eid IS NULL THEN
-    RAISE EXCEPTION 'No se encontró ningún estudio. Registrate en el admin y confirmá tu email antes de ejecutar esta sección.';
-  END IF;
-
-  UPDATE clientes      SET estudio_id = eid WHERE estudio_id IS NULL;
-  UPDATE planes_pago   SET estudio_id = eid WHERE estudio_id IS NULL;
-  UPDATE deuda_manual  SET estudio_id = eid WHERE estudio_id IS NULL;
-  UPDATE alertas       SET estudio_id = eid WHERE estudio_id IS NULL;
-  UPDATE facturacion   SET estudio_id = eid WHERE estudio_id IS NULL;
-  UPDATE documentos    SET estudio_id = eid WHERE estudio_id IS NULL;
-  UPDATE configuracion SET estudio_id = eid WHERE estudio_id IS NULL;
-
-  RAISE NOTICE 'Migración completada para estudio %', eid;
-END $$;
-
--- ────────────────────────────────────────────────────────────────────
--- 7. Verificación: corré esto para confirmar que el aislamiento funciona
--- ────────────────────────────────────────────────────────────────────
--- SELECT COUNT(*) FROM clientes WHERE estudio_id IS NULL;  -- debe ser 0
--- SELECT * FROM estudios;  -- debe tener tu fila
+-- SELECT table_name, column_name FROM information_schema.columns
+--   WHERE column_name = 'estudio_id' ORDER BY table_name;
