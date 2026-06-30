@@ -29,7 +29,12 @@ def requests_legacy():
 load_dotenv()
 
 app = FastAPI(title="Axenda Contable API")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With"],
+)
 
 SUPABASE_URL        = os.getenv("SUPABASE_URL")
 SUPABASE_KEY        = os.getenv("SUPABASE_KEY")
