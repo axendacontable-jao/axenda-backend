@@ -1234,11 +1234,10 @@ async def obtener_configuracion(estudio_id: str = Depends(get_estudio_id)):
 @app.post("/configuracion")
 async def guardar_configuracion(data: dict, estudio_id: str = Depends(get_estudio_id)):
     for clave, valor in data.items():
-        db.from_("configuracion").upsert(
-            {"clave": clave, "valor": str(valor) if valor is not None else "",
-             "estudio_id": estudio_id},
-            on_conflict="clave,estudio_id"
-        ).execute()
+        val = str(valor) if valor is not None else ""
+        upd = db.from_("configuracion").update({"valor": val}).eq("clave", clave).eq("estudio_id", estudio_id).execute()
+        if not upd.data:
+            db.from_("configuracion").insert({"clave": clave, "valor": val, "estudio_id": estudio_id}).execute()
     return {"ok": True}
 
 # ─── Alertas ─────────────────────────────────────────────────────────────────
