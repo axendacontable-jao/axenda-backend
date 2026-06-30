@@ -388,7 +388,7 @@ async def crear_cliente(data: dict, estudio_id: str = Depends(get_estudio_id)):
     except Exception as e:
         raise HTTPException(500, f"Error al guardar cliente: {str(e)}")
     cliente_id = result.data[0]["id"] if result.data else None
-    log_actividad(cliente_id, f"Alta de cliente — {data.get('nombre','')} {data.get('apellido','')}")
+    log_actividad(cliente_id, f"Alta de cliente — {data.get('nombre','')} {data.get('apellido','')}", estudio_id)
     return {"ok": True, "slug": slug, "data": result.data}
 
 @app.patch("/clientes/{slug}/toggle")
@@ -403,12 +403,12 @@ async def toggle_activo(slug: str, estudio_id: str = Depends(get_estudio_id)):
     db.from_("clientes").update({"activo": nuevo}).eq("slug", slug).eq("estudio_id", estudio_id).execute()
     return {"ok": True, "activo": nuevo}
 
-def log_actividad(cliente_id, mensaje: str):
+def log_actividad(cliente_id, mensaje: str, estudio_id: str = None):
     try:
-        db.from_("alertas").insert({
-            "cliente_id": cliente_id, "tipo": "actividad",
-            "mensaje": mensaje, "leida": True,
-        }).execute()
+        row = {"cliente_id": cliente_id, "tipo": "actividad", "mensaje": mensaje, "leida": True}
+        if estudio_id:
+            row["estudio_id"] = estudio_id
+        db.from_("alertas").insert(row).execute()
     except Exception:
         pass
 
@@ -426,7 +426,7 @@ async def actualizar_estado_pago(slug: str, data: dict, estudio_id: str = Depend
     db.from_("clientes").update({"estado_pago": nuevo}).eq("slug", slug).eq("estudio_id", estudio_id).execute()
     if nuevo == "al_dia":
         nombre = f"{res.data.get('nombre','')} {res.data.get('apellido','')}".strip()
-        log_actividad(res.data["id"], f"Cuota marcada al día — {nombre}")
+        log_actividad(res.data["id"], f"Cuota marcada al día — {nombre}", estudio_id)
     return {"ok": True, "estado_pago": nuevo}
 
 @app.patch("/clientes/{slug}/cuota")
@@ -597,7 +597,7 @@ async def portal_marcar_pago(slug: str):
     except Exception as e:
         raise HTTPException(500, str(e))
     nombre = f"{cliente.get('nombre','')} {cliente.get('apellido','')}".strip()
-    log_actividad(cliente["id"], f"Cuota {hoy.month}/{hoy.year} marcada al día desde el portal — {nombre}")
+    log_actividad(cliente["id"], f"Cuota {hoy.month}/{hoy.year} marcada al día desde el portal — {nombre}", cliente.get("estudio_id"))
     return {"ok": True, "estado_cuota": "al_dia"}
 
 @app.get("/portal/{slug}")
@@ -613,7 +613,8 @@ async def datos_portal(slug: str):
     docs_res = db.from_("documentos").select("*").eq("cliente_id", cliente["id"]).order("created_at", desc=True).execute()
     alertas_res = db.from_("alertas").select("*").eq("cliente_id", cliente["id"]).eq("leida", False).execute()
     try:
-        nov_res = db.from_("novedades").select("*").eq("activa", True).order("created_at", desc=True).execute()
+        estudio_id_portal = cliente.get("estudio_id")
+        nov_res = db.from_("novedades").select("*").eq("activa", True).eq("estudio_id", estudio_id_portal).order("created_at", desc=True).execute()
         novedades = [n for n in (nov_res.data or [])
                      if n.get("para_todos") or str(n.get("cliente_id")) == str(cliente["id"])]
     except Exception:
@@ -788,7 +789,7 @@ async def importar_comprobantes(slug: str, file: UploadFile, estudio_id: str = D
         r["estudio_id"] = estudio_id
         db.from_("facturacion").upsert(r, on_conflict="cliente_id,anio,mes").execute()
     if registros:
-        log_actividad(cliente_id, f"Importación ARCA — {slug} — {len(registros)} meses")
+        log_actividad(cliente_id, f"Importación ARCA — {slug} — {len(registros)} meses", estudio_id)
     return {"ok": True, "meses_importados": len(registros), "detalle": registros}
 
 # ─── Planes de pago ──────────────────────────────────────────────────────────
