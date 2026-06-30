@@ -1365,9 +1365,19 @@ function HistorialCuotas({ slug, cuota, categoria, onToggleMesActual }) {
     const nuevoPagado = !h.pagado;
     setHistorial(prev=>prev.map(x=>x.año===h.año&&x.mes===h.mes?{...x,pagado:nuevoPagado}:x));
     if (h.año===hoy.getFullYear()&&h.mes===hoy.getMonth()+1) onToggleMesActual&&onToggleMesActual(nuevoPagado);
-    await apiFetch(`${BACKEND_URL}/clientes/${slug}/historial-cuotas/${h.año}/${h.mes}`,{
-      method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({pagado:nuevoPagado})
-    }).catch(()=>{});
+    try {
+      const r = await apiFetch(`${BACKEND_URL}/clientes/${slug}/historial-cuotas/${h.año}/${h.mes}`,{
+        method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({pagado:nuevoPagado})
+      });
+      if (!r.ok) {
+        const e = await r.json().catch(()=>({}));
+        throw new Error(e.detail || `Error ${r.status}`);
+      }
+    } catch(e) {
+      setHistorial(prev=>prev.map(x=>x.año===h.año&&x.mes===h.mes?{...x,pagado:h.pagado}:x));
+      if (h.año===hoy.getFullYear()&&h.mes===hoy.getMonth()+1) onToggleMesActual&&onToggleMesActual(h.pagado);
+      alert("No se pudo guardar: " + e.message);
+    }
   }
 
   async function pagarDeuda(d) {

@@ -475,21 +475,25 @@ async def get_historial_cuotas(slug: str, meses: int = 6, estudio_id: str = Depe
 
 @app.patch("/clientes/{slug}/historial-cuotas/{año}/{mes}")
 async def toggle_historial_cuota(slug: str, año: int, mes: int, data: dict, estudio_id: str = Depends(get_estudio_id)):
-    try:
-        cl = db.from_("clientes").select("id").eq("slug", slug).eq("estudio_id", estudio_id).single().execute()
-    except Exception:
+    cl_res = db.from_("clientes").select("id").eq("slug", slug).eq("estudio_id", estudio_id).limit(1).execute()
+    if not cl_res.data:
         raise HTTPException(404, "Cliente no encontrado")
-    cliente_id = cl.data["id"]
+    cliente_id = cl_res.data[0]["id"]
     pagado = data.get("pagado", True)
-    upsert_data = {
-        "cliente_id": cliente_id,
-        "año": año,
-        "mes": mes,
-        "pagado": pagado,
-        "fecha_pago": datetime.datetime.utcnow().isoformat() + "Z" if pagado else None,
-    }
+    fecha_pago = datetime.datetime.utcnow().isoformat() + "Z" if pagado else None
     try:
-        db.from_("historial_cuotas").upsert(upsert_data, on_conflict="cliente_id,año,mes").execute()
+        upd = db.from_("historial_cuotas").update({
+            "pagado": pagado,
+            "fecha_pago": fecha_pago,
+        }).eq("cliente_id", cliente_id).eq("año", año).eq("mes", mes).execute()
+        if not upd.data:
+            db.from_("historial_cuotas").insert({
+                "cliente_id": cliente_id,
+                "año": año,
+                "mes": mes,
+                "pagado": pagado,
+                "fecha_pago": fecha_pago,
+            }).execute()
     except Exception as e:
         raise HTTPException(500, str(e))
     return {"ok": True, "pagado": pagado}
@@ -576,15 +580,20 @@ async def portal_marcar_pago(slug: str):
         raise HTTPException(404, "Cliente no encontrado")
     cliente = cliente_res.data[0]
     hoy = datetime.date.today()
-    upsert_data = {
-        "cliente_id": cliente["id"],
-        "año": hoy.year,
-        "mes": hoy.month,
-        "pagado": True,
-        "fecha_pago": datetime.datetime.utcnow().isoformat() + "Z",
-    }
+    fecha_pago = datetime.datetime.utcnow().isoformat() + "Z"
     try:
-        db.from_("historial_cuotas").upsert(upsert_data, on_conflict="cliente_id,año,mes").execute()
+        upd = db.from_("historial_cuotas").update({
+            "pagado": True,
+            "fecha_pago": fecha_pago,
+        }).eq("cliente_id", cliente["id"]).eq("año", hoy.year).eq("mes", hoy.month).execute()
+        if not upd.data:
+            db.from_("historial_cuotas").insert({
+                "cliente_id": cliente["id"],
+                "año": hoy.year,
+                "mes": hoy.month,
+                "pagado": True,
+                "fecha_pago": fecha_pago,
+            }).execute()
     except Exception as e:
         raise HTTPException(500, str(e))
     nombre = f"{cliente.get('nombre','')} {cliente.get('apellido','')}".strip()
