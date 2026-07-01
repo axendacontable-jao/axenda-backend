@@ -310,7 +310,7 @@ const { useState, useEffect, useRef } = React;
 const BACKEND_URL  = "https://axenda-backend-production.up.railway.app";
 const SUPABASE_URL = "https://mfzkcangoekzyadylaxi.supabase.co";
 const SUPABASE_KEY = "sb_publishable_XpIFC8TNibuit_o1LOtPbw_iPoyONEu";
-const PORTAL_URL   = "https://benevolent-taffy-8b3761.netlify.app";
+const PORTAL_URL   = "https://axendacontable-jao.github.io/Axenda-portal/";
 const db = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // ── Auth globals ─────────────────────────────────────────────────────────────
@@ -2013,7 +2013,7 @@ function AvisosWhatsApp({ clientes, planes, cfg }) {
           </div>
           {btnWa(c.whatsapp, applyTpl(tplCuota,{
             "{nombre}":c.nombre,"{monto}":$$(c.cuota),
-            "{mes}":MESES_FULL[hoy.getMonth()],"{link_portal}":`${PORTAL_URL}/?cliente=${c.slug}`,
+            "{mes}":MESES_FULL[hoy.getMonth()],"{link_portal}":PORTAL_URL,
           }))}
         </div>
       ))}
@@ -2031,7 +2031,7 @@ function AvisosWhatsApp({ clientes, planes, cfg }) {
             {btnWa(c.whatsapp, applyTpl(tplPlan,{
               "{nombre}":c.nombre,"{numero_cuota}":p.numero_cuota??"—",
               "{nombre_plan}":p.descripcion||"Plan de pago","{fecha_venc}":fmtFecha(p.proximo_venc),
-              "{monto}":$$(p.monto_cuota),"{link_portal}":`${PORTAL_URL}/?cliente=${c.slug}`,
+              "{monto}":$$(p.monto_cuota),"{link_portal}":PORTAL_URL,
             }))}
           </div>
         );
