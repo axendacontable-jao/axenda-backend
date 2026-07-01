@@ -693,7 +693,7 @@ async def datos_portal(slug: str):
         novedades = []
     try:
         estudio_id_cliente = cliente.get("estudio_id", "")
-        cfg_res = db.from_("configuracion").select("clave,valor").in_("clave", ["whatsapp"]).eq("estudio_id", estudio_id_cliente).execute()
+        cfg_res = db.from_("configuracion").select("clave,valor").in_("clave", ["whatsapp_estudio"]).eq("estudio_id", estudio_id_cliente).execute()
         cfg = {r["clave"]: r["valor"] for r in (cfg_res.data or [])}
     except Exception:
         cfg = {}
@@ -773,7 +773,7 @@ async def datos_portal(slug: str):
         "total_fac": total_fac, "promedio": total_fac / meses_cargados,
         "pct": pct, "planes": planes_res.data or [],
         "documentos": docs_res.data or [], "alertas": alertas_res.data or [],
-        "novedades": novedades, "whatsapp": cfg.get("whatsapp"),
+        "novedades": novedades, "whatsapp": cfg.get("whatsapp_estudio"),
         "deuda_total": deuda_total, "deuda_desc": deuda_desc,
         "deuda_art": deuda_art, "deuda_arca": deuda_arca,
         "estado_cuota": estado_cuota,
