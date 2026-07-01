@@ -2357,7 +2357,10 @@ function ViewConfig({ topes, onRefresh }) {
           </div>
           <div className="form-group">
             <label className="form-label">WhatsApp del estudio</label>
-            <input className="form-input" value={cfg.whatsapp_estudio||""} onChange={e=>setVal("whatsapp_estudio",e.target.value)} placeholder="2944xxxxxx"/>
+            <div style={{display:"flex",alignItems:"center",gap:"0"}}>
+              <span style={{padding:"0 10px",background:"var(--bg)",border:"1px solid var(--border)",borderRight:"none",borderRadius:"10px 0 0 10px",fontSize:"13px",color:"var(--muted)",height:"42px",display:"flex",alignItems:"center",flexShrink:0}}>+549</span>
+              <input className="form-input" style={{borderRadius:"0 10px 10px 0"}} value={cfg.whatsapp_estudio||""} onChange={e=>setVal("whatsapp_estudio",e.target.value)} placeholder="2920341169"/>
+            </div>
           </div>
           <div className="form-group">
             <label className="form-label">Email</label>
