@@ -2141,9 +2141,19 @@ function ViewConfig({ topes, onRefresh }) {
   const [cfg, setCfg]           = useState(null);
   const [guardandoKey, setGKey] = useState(null);
   const [okKey, setOkKey]       = useState(null);
-  const [importando, setImp]    = useState(null); // null | tipo string
-  const [importResults, setIRs] = useState({});   // { tipo: resultado }
-  const fileRefs = { topes_nacionales: useRef(null), componente_rio_negro: useRef(null), componente_neuquen: useRef(null), componente_buenos_aires: useRef(null) };
+  const [importando, setImp]    = useState(null);
+  const [importResults, setIRs] = useState({});
+  const [modalTabla, setModalTabla] = useState(false);
+  const [tipoTabla, setTipoTabla]   = useState("topes_nacionales");
+  const [comps, setComps]           = useState([]);
+  const fileRef = useRef(null);
+
+  const FORMAT_INFO = {
+    topes_nacionales:        "PDF o Excel — cols: Categoría, Tope Anual, Imp. Int. Serv., Imp. Int. Bienes, SIPA, Obra Social",
+    componente_rio_negro:    "PDF o Excel — cols: Categoría, Tipo (servicios/bienes/unico), Monto, Vigente desde",
+    componente_neuquen:      "PDF o Excel — cols: Categoría, Monto, Vigente desde",
+    componente_buenos_aires: "PDF o Excel — cols: Categoría, Tipo (servicios/bienes), Monto, Vigente desde",
+  };
 
   const DEFAULTS = {
     nombre_estudio:"Axenda Contable", whatsapp_estudio:"", email_estudio:"axendacontable@gmail.com",
@@ -2155,7 +2165,16 @@ function ViewConfig({ topes, onRefresh }) {
     apiFetch(`${BACKEND_URL}/configuracion`).then(r=>r.json())
       .then(d=>setCfg({...DEFAULTS,...d}))
       .catch(()=>setCfg(DEFAULTS));
+    cargarComps();
   },[]);
+
+  async function cargarComps() {
+    try {
+      const r = await apiFetch(`${BACKEND_URL}/componentes-provinciales/resumen`);
+      const d = await r.json();
+      setComps(d.componentes || []);
+    } catch {}
+  }
 
   function setVal(k,v){ setCfg(prev=>({...prev,[k]:v})); }
 
@@ -2177,11 +2196,11 @@ function ViewConfig({ topes, onRefresh }) {
       const fd=new FormData(); fd.append("file",file);
       const res=await apiFetch(`${BACKEND_URL}/configuracion/importar-tabla/${tipo}`,{method:"POST",body:fd});
       const d=await res.json();
-      if(d.ok){ setIRs(prev=>({...prev,[tipo]:d})); onRefresh(); }
+      if(d.ok){ setIRs(prev=>({...prev,[tipo]:d})); onRefresh(); cargarComps(); setModalTabla(false); }
       else alert("Error al importar: "+(d.detail||JSON.stringify(d)));
     } catch(e){ alert("Error: "+e.message); }
     setImp(null);
-    if(fileRefs[tipo]?.current) fileRefs[tipo].current.value="";
+    if(fileRef.current) fileRef.current.value="";
   }
 
   if (!cfg) return <div style={{padding:"40px",textAlign:"center",color:"var(--muted)"}}>Cargando configuración...</div>;
@@ -2211,51 +2230,106 @@ function ViewConfig({ topes, onRefresh }) {
       {/* ── Tab Topes ── */}
       {tab==="topes"&&(
         <div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:"14px",marginBottom:"24px"}}>
-            {[
-              {tipo:"topes_nacionales",      nombre:"Topes nacionales ARCA",          desc:"Actualiza tope anual, imp. integrado, SIPA y obra social para cat. A–K",  formato:"PDF o Excel — columnas: Categoría, Tope Anual, Imp. Integrado Servicios, Imp. Integrado Bienes, Aportes SIPA, Obra Social"},
-              {tipo:"componente_rio_negro",   nombre:"Componente provincial — Río Negro",  desc:"Actualiza componentes de IIBB de Río Negro en la tabla provincial",         formato:"PDF o Excel — columnas: Categoría, Tipo (servicios/bienes/unico), Monto, Vigente desde"},
-              {tipo:"componente_neuquen",     nombre:"Componente provincial — Neuquén",    desc:"Actualiza componentes de IIBB de Neuquén en la tabla provincial",           formato:"PDF o Excel — columnas: Categoría, Monto, Vigente desde"},
-              {tipo:"componente_buenos_aires",nombre:"Componente provincial — Buenos Aires",desc:"Actualiza componentes de IIBB de Buenos Aires (servicios y bienes)",      formato:"PDF o Excel — columnas: Categoría, Tipo (servicios/bienes), Monto, Vigente desde"},
-            ].map(({tipo,nombre,desc,formato})=>{
-              const res=importResults[tipo];
-              const cargando=importando===tipo;
-              return (
-                <div key={tipo} style={{background:"var(--card)",border:"1px solid var(--border)",borderRadius:"12px",padding:"18px",display:"flex",flexDirection:"column",gap:"10px"}}>
-                  <div style={{fontWeight:"600",fontSize:"13px",color:"var(--text)"}}>{nombre}</div>
-                  <div style={{fontSize:"12px",color:"var(--muted)",lineHeight:"1.5"}}>{desc}</div>
-                  <div style={{fontSize:"11px",color:"#6B7A96",background:"#F0F2F7",borderRadius:"7px",padding:"6px 10px",fontFamily:"'DM Mono',monospace"}}>{formato}</div>
-                  <div style={{display:"flex",alignItems:"center",gap:"10px",flexWrap:"wrap"}}>
-                    <input ref={fileRefs[tipo]} type="file" accept=".pdf,.xlsx" style={{display:"none"}} onChange={e=>importarTabla(tipo,e)}/>
-                    <button className="btn-primary" style={{fontSize:"12px",padding:"7px 14px"}} onClick={()=>fileRefs[tipo].current.click()} disabled={!!importando}>
-                      {cargando?"Procesando...":"↑ Subir archivo"}
+          <div style={{marginBottom:"20px",display:"flex",alignItems:"center",gap:"14px"}}>
+            <button className="btn-primary" style={{fontSize:"13px",padding:"9px 18px"}} onClick={()=>setModalTabla(true)}>↑ Cargar / Actualizar tabla</button>
+            {Object.entries(importResults).length>0&&(()=>{
+              const last=Object.entries(importResults).slice(-1)[0];
+              if(!last) return null;
+              const [tipo,res]=last;
+              return <span style={{fontSize:"12px",color:"var(--green)",fontWeight:"600"}}>✓ {res.actualizados||res.importados} {tipo==="topes_nacionales"?"cat. actualizadas":"registros importados"} ({tipo.replace(/_/g," ")})</span>;
+            })()}
+          </div>
+
+          {modalTabla&&(
+            <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setModalTabla(false)}>
+              <div className="modal">
+                <div className="modal-header">
+                  <div className="modal-title">Cargar / Actualizar tabla</div>
+                  <button className="modal-close" onClick={()=>setModalTabla(false)}>✕</button>
+                </div>
+                <div className="modal-body">
+                  <div className="form-group">
+                    <label className="form-label">Tabla a actualizar</label>
+                    <select className="form-input" value={tipoTabla} onChange={e=>setTipoTabla(e.target.value)}>
+                      <option value="topes_nacionales">Topes nacionales ARCA</option>
+                      <option value="componente_rio_negro">Componente provincial — Río Negro</option>
+                      <option value="componente_neuquen">Componente provincial — Neuquén</option>
+                      <option value="componente_buenos_aires">Componente provincial — Buenos Aires</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Archivo</label>
+                    <div style={{fontSize:"11px",color:"var(--muted)",marginBottom:"10px",fontFamily:"'DM Mono',monospace",background:"#F0F2F7",padding:"7px 10px",borderRadius:"7px",lineHeight:"1.5"}}>
+                      {FORMAT_INFO[tipoTabla]}
+                    </div>
+                    <input ref={fileRef} type="file" accept=".pdf,.xlsx" style={{display:"none"}} onChange={e=>importarTabla(tipoTabla,e)}/>
+                    <button className="btn-primary" style={{fontSize:"13px"}} onClick={()=>fileRef.current.click()} disabled={!!importando}>
+                      {importando?"Procesando...":"↑ Subir archivo"}
                     </button>
-                    {res&&<span style={{fontSize:"11px",color:"var(--green)",fontWeight:"600"}}>✓ {res.actualizados||res.importados} {tipo==="topes_nacionales"?"cat. actualizadas":"registros importados"}</span>}
+                    {importResults[tipoTabla]&&(
+                      <div style={{marginTop:"12px",fontSize:"12px",color:"var(--green)",fontWeight:"600"}}>
+                        ✓ {importResults[tipoTabla].actualizados||importResults[tipoTabla].importados} {tipoTabla==="topes_nacionales"?"categorías actualizadas":"registros importados"}
+                      </div>
+                    )}
                   </div>
                 </div>
-              );
-            })}
-          </div>
+              </div>
+            </div>
+          )}
+
           <div className="table-wrap">
             <div style={{padding:"12px 16px",borderBottom:"1px solid var(--border)",fontSize:"11px",fontWeight:"600",color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.09em",background:"#FAFBFD"}}>
-              Topes nacionales vigentes
+              Topes y componentes vigentes
             </div>
             <div style={{overflowX:"auto"}}>
-              <table className="data-table">
-                <thead><tr><th>Cat.</th><th>Tope anual</th><th>Imp. Int. Serv.</th><th>Imp. Int. Bienes</th><th>SIPA</th><th>Obra Social</th></tr></thead>
-                <tbody>
-                  {topes.map(t=>(
-                    <tr key={t.categoria}>
-                      <td style={{fontWeight:"700",fontFamily:"'DM Mono',monospace",fontSize:"17px",color:"var(--blue)",paddingLeft:"20px"}}>{t.categoria}</td>
-                      <td style={{fontFamily:"'DM Mono',monospace"}}>{$$(t.tope_anual)}</td>
-                      <td style={{fontFamily:"'DM Mono',monospace"}}>{t.imp_integrado_servicios?$$(t.imp_integrado_servicios):"—"}</td>
-                      <td style={{fontFamily:"'DM Mono',monospace"}}>{t.imp_integrado_bienes?$$(t.imp_integrado_bienes):"—"}</td>
-                      <td style={{fontFamily:"'DM Mono',monospace"}}>{t.aportes_sipa?$$(t.aportes_sipa):"—"}</td>
-                      <td style={{fontFamily:"'DM Mono',monospace"}}>{t.obra_social?$$(t.obra_social):"—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              {(()=>{
+                const compMap={};
+                comps.forEach(c=>{ compMap[`${c.provincia}|${c.categoria}|${c.tipo}`]=c.monto; });
+                function comp(prov,cat,tipo){
+                  return compMap[`${prov}|${cat}|${tipo}`]||null;
+                }
+                function compRN(cat){ return comp("Rio Negro",cat,"servicios")||comp("Rio Negro",cat,"unico")||comp("Rio Negro",cat,"bienes"); }
+                function compNQ(cat){ return comp("Neuquen",cat,"servicios")||comp("Neuquen",cat,"unico")||comp("Neuquen",cat,"bienes"); }
+                function compBAS(cat){ return comp("Buenos Aires",cat,"servicios")||comp("Buenos Aires",cat,"unico"); }
+                function compBAB(cat){ return comp("Buenos Aires",cat,"bienes"); }
+                return (
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Cat.</th>
+                        <th>Tope anual</th>
+                        <th>Imp. Int. Serv.</th>
+                        <th>Imp. Int. Bienes</th>
+                        <th>SIPA</th>
+                        <th>Obra Social</th>
+                        <th style={{borderLeft:"2px solid var(--border)"}}>Comp. Río Negro</th>
+                        <th>Comp. Neuquén</th>
+                        <th>Comp. BsAs Serv.</th>
+                        <th>Comp. BsAs Bienes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {topes.map(t=>{
+                        const rn=compRN(t.categoria), nq=compNQ(t.categoria), bas=compBAS(t.categoria), bab=compBAB(t.categoria);
+                        return (
+                          <tr key={t.categoria}>
+                            <td style={{fontWeight:"700",fontFamily:"'DM Mono',monospace",fontSize:"17px",color:"var(--blue)",paddingLeft:"20px"}}>{t.categoria}</td>
+                            <td style={{fontFamily:"'DM Mono',monospace"}}>{$$(t.tope_anual)}</td>
+                            <td style={{fontFamily:"'DM Mono',monospace"}}>{t.imp_integrado_servicios?$$(t.imp_integrado_servicios):"—"}</td>
+                            <td style={{fontFamily:"'DM Mono',monospace"}}>{t.imp_integrado_bienes?$$(t.imp_integrado_bienes):"—"}</td>
+                            <td style={{fontFamily:"'DM Mono',monospace"}}>{t.aportes_sipa?$$(t.aportes_sipa):"—"}</td>
+                            <td style={{fontFamily:"'DM Mono',monospace"}}>{t.obra_social?$$(t.obra_social):"—"}</td>
+                            <td style={{fontFamily:"'DM Mono',monospace",borderLeft:"2px solid var(--border)",color:rn?"var(--text)":"var(--muted)"}}>{rn?$$(rn):"—"}</td>
+                            <td style={{fontFamily:"'DM Mono',monospace",color:nq?"var(--text)":"var(--muted)"}}>{nq?$$(nq):"—"}</td>
+                            <td style={{fontFamily:"'DM Mono',monospace",color:bas?"var(--text)":"var(--muted)"}}>{bas?$$(bas):"—"}</td>
+                            <td style={{fontFamily:"'DM Mono',monospace",color:bab?"var(--text)":"var(--muted)"}}>{bab?$$(bab):"—"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                );
+              })()}
             </div>
           </div>
         </div>

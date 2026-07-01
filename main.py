@@ -332,6 +332,19 @@ async def completar_onboarding(data: dict, estudio_id: str = Depends(get_estudio
     db.from_("estudios").update({"nombre": nombre, "onboarding_completo": True}).eq("id", estudio_id).execute()
     return {"ok": True}
 
+@app.get("/componentes-provinciales/resumen")
+async def get_componentes_resumen(estudio_id: str = Depends(get_estudio_id)):
+    res = db.from_("componentes_provinciales").select("*") \
+        .lte("vigente_desde", datetime.date.today().isoformat()) \
+        .order("vigente_desde", desc=True).execute()
+    seen = {}
+    for r in (res.data or []):
+        key = (r["provincia"], r["categoria"], r["tipo"])
+        if key not in seen:
+            seen[key] = r
+    return {"ok": True, "componentes": list(seen.values())}
+
+
 @app.get("/componentes-provinciales/{provincia}/{categoria}")
 async def get_componente_provincial(provincia: str, categoria: str, tipo: str = "servicios"):
     res = db.from_("componentes_provinciales").select("*") \
