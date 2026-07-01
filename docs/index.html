@@ -385,12 +385,19 @@ function $$(n) {
   if (!n && n !== 0) return "$—";
   return "$" + Math.round(n).toLocaleString("es-AR");
 }
-function diasAlCorte() {
+function proximaRecategorizacion() {
   const hoy = new Date();
-  const año = hoy.getFullYear();
-  const julio = new Date(año, 6, 1);
-  const enero = new Date(año + 1, 0, 1);
-  return Math.ceil(((hoy < julio ? julio : enero) - hoy) / (1000*60*60*24));
+  const y = hoy.getFullYear();
+  const NOMBRES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+  const CORTOS  = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+  const candidatos = [new Date(y,1,1), new Date(y,7,1), new Date(y+1,1,1)];
+  const prox = candidatos.find(d => d > hoy);
+  return {
+    dias: Math.ceil((prox - hoy) / (1000*60*60*24)),
+    nombre: `Recategorización ${NOMBRES[prox.getMonth()]} ${prox.getFullYear()}`,
+    corto: `${CORTOS[prox.getMonth()]} ${prox.getFullYear()}`,
+    mes: prox.getMonth(),
+  };
 }
 function semaforoInfo(pct) {
   if (!pct || pct === 0) return { label:"SIN DATOS", clase:"pill-gris",    fillClass:"fill-verde",    color:"#6B7A96" };
@@ -521,6 +528,118 @@ function ModalCargarDocumento({ slug, onClose, onGuardado }) {
 }
 
 // ── Modal nuevo cliente ──
+function ModalEditarDatos({ cliente, topes, onClose, onGuardado }) {
+  const [provincia,setProvincia]         = useState(cliente.provincia||"Rio Negro");
+  const [iibbModalidad,setIibbModalidad] = useState(cliente.iibb_modalidad||"monotributo_unificado");
+  const [tipoActividad,setTipoActividad] = useState(cliente.tipo_actividad||"servicios");
+  const [enRelDep,setEnRelDep]           = useState(Boolean(cliente.en_relacion_dependencia));
+  const [cuota,setCuota]                 = useState(cliente.cuota?String(Math.round(cliente.cuota)):"");
+  const [sinDatosProv,setSinDatosProv]   = useState(false);
+  const [guardando,setGuardando]         = useState(false);
+
+  async function recalcularCuota(prov, tipo, relDep) {
+    const cat = cliente.categoria;
+    if (!cat) return;
+    const topeObj = topes.find(t=>t.categoria===cat);
+    if (!topeObj) return;
+    const impInt = tipo==="bienes"
+      ? (topeObj.imp_integrado_bienes||topeObj.cuota_bienes||0)
+      : (topeObj.imp_integrado_servicios||topeObj.cuota_servicios||0);
+    const sipa = relDep ? 0 : (topeObj.aportes_sipa||0);
+    const os   = relDep ? 0 : (topeObj.obra_social||0);
+    const nacional = Math.round(impInt + sipa + os);
+    try {
+      const r = await fetch(`${BACKEND_URL}/componentes-provinciales/${encodeURIComponent(prov)}/${cat}?tipo=${tipo}`);
+      const d = await r.json();
+      if (d.componente?.monto) {
+        setSinDatosProv(false);
+        setCuota(String(nacional + Math.round(d.componente.monto)));
+      } else {
+        setSinDatosProv(true);
+        if (nacional) setCuota(String(nacional));
+      }
+    } catch {
+      setSinDatosProv(false);
+      if (nacional) setCuota(String(nacional));
+    }
+  }
+
+  async function guardar() {
+    setGuardando(true);
+    try {
+      const res = await apiFetch(`${BACKEND_URL}/clientes/${cliente.slug}/datos`, {
+        method:"PATCH", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ provincia, iibb_modalidad:iibbModalidad, tipo_actividad:tipoActividad, en_relacion_dependencia:enRelDep, cuota:cuota?parseFloat(cuota):null }),
+      });
+      const d = await res.json();
+      if (d.ok) {
+        onGuardado({ provincia, iibb_modalidad:iibbModalidad, tipo_actividad:tipoActividad, en_relacion_dependencia:enRelDep, cuota:cuota?parseFloat(cuota):null });
+        onClose();
+      } else { alert("Error: "+JSON.stringify(d)); }
+    } catch(e) { alert("Error: "+e.message); }
+    setGuardando(false);
+  }
+
+  return (
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="modal">
+        <div className="modal-header">
+          <div className="modal-title">Editar datos — {cliente.nombre} {cliente.apellido}</div>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+        <div className="modal-body">
+          <div className="form-group">
+            <label className="form-label">Provincia</label>
+            <select className="form-input" value={provincia} onChange={e=>{setProvincia(e.target.value);recalcularCuota(e.target.value,tipoActividad,enRelDep);}}>
+              {PROVINCIAS.map(p=><option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Modalidad IIBB</label>
+            <select className="form-input" value={iibbModalidad} onChange={e=>setIibbModalidad(e.target.value)}>
+              {IIBB_MODALIDADES.map(m=><option key={m.valor} value={m.valor}>{m.label}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Tipo de actividad</label>
+            <select className="form-input" value={tipoActividad} onChange={e=>{setTipoActividad(e.target.value);recalcularCuota(provincia,e.target.value,enRelDep);}}>
+              <option value="servicios">Servicios</option>
+              <option value="bienes">Venta de bienes</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label style={{display:"flex",alignItems:"center",gap:"8px",cursor:"pointer",fontSize:"13px",fontWeight:"500",color:"var(--text)"}}>
+              <input type="checkbox" checked={enRelDep} onChange={e=>{setEnRelDep(e.target.checked);recalcularCuota(provincia,tipoActividad,e.target.checked);}} style={{width:"16px",height:"16px"}}/>
+              En relación de dependencia (excluye SIPA y obra social)
+            </label>
+          </div>
+          <div className="form-group">
+            <label className="form-label" style={{display:"flex",alignItems:"center",gap:"8px"}}>
+              Cuota mensual
+              {cliente.categoria&&(
+                <button type="button" style={{fontSize:"11px",padding:"2px 8px",background:"var(--blue)",color:"#fff",border:"none",borderRadius:"6px",cursor:"pointer"}}
+                  onClick={()=>recalcularCuota(provincia,tipoActividad,enRelDep)}>
+                  ↺ Recalcular
+                </button>
+              )}
+            </label>
+            <input className="form-input" type="number" value={cuota} onChange={e=>setCuota(e.target.value)} placeholder="ej: 95000"/>
+            {sinDatosProv&&(
+              <div style={{marginTop:"6px",padding:"8px 10px",background:"#E8A02015",border:"1px solid #E8A02030",borderRadius:"8px",fontSize:"12px",color:"#E8A020"}}>
+                ⚠ Sin componente provincial — se trata como IIBB local
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn-secondary" onClick={onClose}>Cancelar</button>
+          <button className="btn-primary" onClick={guardar} disabled={guardando}>{guardando?"Guardando…":"Guardar cambios"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ModalNuevoCliente({ onClose, onGuardado, topes }) {
   const [cuit,setCuit]=useState(""); const [nombre,setNombre]=useState(""); const [apellido,setApellido]=useState("");
   const [whatsapp,setWhatsapp]=useState(""); const [categoria,setCategoria]=useState(""); const [cuota,setCuota]=useState("");
@@ -851,7 +970,7 @@ function ModalNuevoPlan({ slug, onClose, onGuardado, initialData }) {
 }
 
 // ── Vista detalle cliente ──
-function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importando, onActualizarEstado, onPlanGuardado, onActualizarCuota }) {
+function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importando, onActualizarEstado, onPlanGuardado, onActualizarCuota, onActualizarDatos }) {
   const [tab, setTab]             = useState("facturacion");
   const [planes, setPlanes]       = useState(null);
   const [alertas, setAlertas]     = useState(null);
@@ -865,7 +984,8 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
   const [editandoCuota, setEditandoCuota] = useState(false);
   const [cuotaInput, setCuotaInput]       = useState("");
   const pdfPlanRef = useRef(null);
-  const dias = diasAlCorte();
+  const recat = proximaRecategorizacion();
+  const [modalEditar, setModalEditar] = useState(false);
 
   async function parsarPDF(e) {
     const file = e.target.files[0]; if (!file) return;
@@ -955,7 +1075,8 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
 
   const topeObj   = topes.find(t=>t.categoria===cliente.categoria);
   const tope_anual = topeObj?.tope_anual || 0;
-  const total_fac  = movs.reduce((a,b)=>a+(b.monto||0),0);
+  const _det12=new Date(),_detH12=[_det12.getFullYear()-1,_det12.getMonth()+1];
+  const total_fac  = movs.filter(f=>f.anio>_detH12[0]||(f.anio===_detH12[0]&&f.mes>=_detH12[1])).reduce((a,b)=>a+(b.monto||0),0);
   const pct        = tope_anual>0 ? Math.min(total_fac/tope_anual,1.05) : 0;
   const sem        = semaforoInfo(pct);
   const historial  = [...movs].filter(f=>f.monto>0).sort((a,b)=>a.anio===b.anio?a.mes-b.mes:a.anio-b.anio);
@@ -996,6 +1117,7 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
             ↑ {importando===cliente.slug?"Importando...":"Importar ARCA"}
           </button>
           <a className="action-chip" href={`${PORTAL_URL}/?cliente=${cliente.slug}`} target="_blank" rel="noopener">↗ Ver portal</a>
+          <button className="action-chip" onClick={()=>setModalEditar(true)}>✏ Editar datos</button>
         </div>
       </div>
 
@@ -1028,7 +1150,7 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
                 <div className={`bar-fill ${sem.fillClass}`} style={{width:`${Math.min(pct*100,100)}%`}}/>
               </div>
               <div style={{display:"flex",justifyContent:"space-between",fontSize:"11px",color:"var(--muted)",marginTop:"6px"}}>
-                <span>{dias} días al corte</span>
+                <span>{recat.dias} días para {recat.nombre}</span>
                 <span style={{color:pct>=1?"var(--red)":pct>=0.6?"var(--yellow)":"var(--green)",fontWeight:"500"}}>
                   {pct>=1?`${$$(total_fac-tope_anual)} en exceso`:`${$$(tope_anual-total_fac)} margen restante`}
                 </span>
@@ -1190,6 +1312,8 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
           {modalPlan&&<ModalNuevoPlan slug={cliente.slug} onClose={()=>setModalPlan(false)} onGuardado={recargarPlanes} initialData={planInicial}/>}
         </div>
       )}
+
+      {modalEditar&&<ModalEditarDatos cliente={cliente} topes={topes} onClose={()=>setModalEditar(false)} onGuardado={(datos)=>{onActualizarDatos&&onActualizarDatos(cliente,datos);}}/>}
 
       {/* Tab: Documentos */}
       {tab==="documentos"&&(
@@ -1753,8 +1877,8 @@ function CalendarioVencimientos({ planes, clientes, tareas }) {
   // Cuota monotributo — verde
   add(20,{tipo:"cuota",label:"Cuota"});
   // Cortes recategorización — rojo
-  if(mes===0)add(1,{tipo:"corte",label:"Corte recat."});
-  if(mes===6)add(1,{tipo:"corte",label:"Corte recat."});
+  if(mes===1)add(1,{tipo:"corte",label:"Recat. Feb"});
+  if(mes===7)add(1,{tipo:"corte",label:"Recat. Ago"});
   // Planes de pago del mes — verde
   planes.filter(p=>p.proximo_venc&&p.estado==="activo").forEach(p=>{
     try{
@@ -1808,7 +1932,8 @@ function CalendarioVencimientos({ planes, clientes, tareas }) {
 function ResumenMes({ clientes, factura, topes }) {
   const activos=clientes.filter(c=>c.activo);
   const topeMapa=Object.fromEntries(topes.map(t=>[t.categoria,t.tope_anual]));
-  function pct(c){const tot=(factura[c.id]||[]).reduce((a,b)=>a+(b.monto||0),0);const t=topeMapa[c.categoria]||0;return t>0?tot/t:0;}
+  const _rm12=new Date(),_rmH12=[_rm12.getFullYear()-1,_rm12.getMonth()+1];
+  function pct(c){const tot=(factura[c.id]||[]).filter(f=>f.anio>_rmH12[0]||(f.anio===_rmH12[0]&&f.mes>=_rmH12[1])).reduce((a,b)=>a+(b.monto||0),0);const t=topeMapa[c.categoria]||0;return t>0?tot/t:0;}
   const verde=activos.filter(c=>pct(c)>0&&pct(c)<0.6).length;
   const amarillo=activos.filter(c=>{const p=pct(c);return p>=0.6&&p<0.85;}).length;
   const rojo=activos.filter(c=>pct(c)>=0.85).length;
@@ -1950,7 +2075,8 @@ function ViewDashboard({ clientes, planes, factura, topes, onNavigate }) {
   },[]);
   const activos=clientes.filter(c=>c.activo);
   const topeMapa=Object.fromEntries(topes.map(t=>[t.categoria,t.tope_anual]));
-  function calcPct(c){const tot=(factura[c.id]||[]).reduce((a,b)=>a+(b.monto||0),0);const t=topeMapa[c.categoria]||0;return t>0?tot/t:0;}
+  const _vd12=new Date(),_vdH12=[_vd12.getFullYear()-1,_vd12.getMonth()+1];
+  function calcPct(c){const tot=(factura[c.id]||[]).filter(f=>f.anio>_vdH12[0]||(f.anio===_vdH12[0]&&f.mes>=_vdH12[1])).reduce((a,b)=>a+(b.monto||0),0);const t=topeMapa[c.categoria]||0;return t>0?tot/t:0;}
   const hoy=new Date(), hoyDia=hoy.getDate();
   const enCinco=new Date(hoy); enCinco.setDate(hoy.getDate()+5);
   const cuotasSemana=activos.filter(c=>c.cuota&&hoyDia>=15&&c.estado_pago!=="al_dia").length;
@@ -2427,7 +2553,7 @@ function App() {
   const [datosError,setDatosError]         = useState(null);
   const fileInputRef  = useRef(null);
   const importSlugRef = useRef(null);
-  const dias = diasAlCorte();
+  const recat = proximaRecategorizacion();
 
   async function cargarDatos(){
     setLoading(true);
@@ -2494,8 +2620,9 @@ function App() {
     setImportando(null);
   }
 
+  const _app12=new Date(),_appH12=[_app12.getFullYear()-1,_app12.getMonth()+1];
   function calcPct(c){
-    const total=(factura[c.id]||[]).reduce((a,b)=>a+(b.monto||0),0);
+    const total=(factura[c.id]||[]).filter(f=>f.anio>_appH12[0]||(f.anio===_appH12[0]&&f.mes>=_appH12[1])).reduce((a,b)=>a+(b.monto||0),0);
     const t=topes.find(t=>t.categoria===c.categoria);
     if(!t||!total) return 0;
     return Math.min(total/t.tope_anual,1.05);
@@ -2560,7 +2687,7 @@ function App() {
               : titulos[seccion]||"Dashboard"}
           </div>
           <div className="topbar-right">
-            <div style={{fontSize:"12px",color:"#E8A020",fontWeight:"500"}}>⏱ {dias} días al corte</div>
+            <div style={{fontSize:"12px",color:"#E8A020",fontWeight:"500"}}>⏱ {recat.dias}d · {recat.nombre}</div>
             <div className="topbar-date">{MESES[hoy.getMonth()]} {hoy.getFullYear()}</div>
           </div>
         </div>
@@ -2593,6 +2720,9 @@ function App() {
               }}
               onActualizarCuota={(c, nuevaCuota)=>{
                 setClientes(prev=>prev.map(x=>x.id===c.id?{...x,cuota:nuevaCuota}:x));
+              }}
+              onActualizarDatos={(c, datos)=>{
+                setClientes(prev=>prev.map(x=>x.id===c.id?{...x,...datos}:x));
               }}
             />
           ) : seccion==="dashboard" ? (
@@ -2655,7 +2785,7 @@ function App() {
                           <div>
                             <div className="cliente-cuota">{c.cuota?$$(c.cuota)+"/mes":"Cuota —"}</div>
                             <div style={{display:"flex",alignItems:"center",gap:"6px",marginTop:"4px",flexWrap:"wrap"}}>
-                              <div className="cliente-dias">{dias} días al corte</div>
+                              <div className="cliente-dias">{recat.dias}d · {recat.corto}</div>
                               <IIBBBadge modalidad={c.iibb_modalidad} small={true}/>
                               {c.en_relacion_dependencia&&<span style={{display:"inline-block",padding:"2px 7px",borderRadius:"20px",fontSize:"10px",fontWeight:"600",color:"#7C3AED",background:"#7C3AED15"}}>Rel. Dep.</span>}
                             </div>

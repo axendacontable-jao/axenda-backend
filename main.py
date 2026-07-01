@@ -472,6 +472,22 @@ async def actualizar_cuota(slug: str, data: dict, estudio_id: str = Depends(get_
     db.from_("clientes").update({"cuota": nueva_cuota}).eq("slug", slug).eq("estudio_id", estudio_id).execute()
     return {"ok": True, "cuota": nueva_cuota}
 
+@app.patch("/clientes/{slug}/datos")
+async def actualizar_datos_cliente(slug: str, data: dict, estudio_id: str = Depends(get_estudio_id)):
+    campos_permitidos = {"provincia", "iibb_modalidad", "en_relacion_dependencia", "tipo_actividad", "cuota"}
+    update = {k: v for k, v in data.items() if k in campos_permitidos}
+    if not update:
+        raise HTTPException(400, "Sin campos válidos")
+    try:
+        res = db.from_("clientes").select("id").eq("slug", slug).eq("estudio_id", estudio_id).single().execute()
+    except Exception:
+        raise HTTPException(404, "Cliente no encontrado")
+    if not res.data:
+        raise HTTPException(404, "Cliente no encontrado")
+    db.from_("clientes").update(update).eq("slug", slug).eq("estudio_id", estudio_id).execute()
+    return {"ok": True}
+
+
 @app.get("/clientes/{slug}/historial-cuotas")
 async def get_historial_cuotas(slug: str, meses: int = 6, estudio_id: str = Depends(get_estudio_id)):
     try:
@@ -719,9 +735,11 @@ async def datos_portal(slug: str):
         estado_cuota = "pendiente"
 
     facturacion = fac_res.data or []
-    montos = [f["monto"] for f in facturacion if f["monto"] > 0]
-    total_fac = sum(montos)
-    meses_cargados = len(montos) or 1
+    hoy_d = datetime.date.today()
+    hace_12m = (hoy_d.year - 1, hoy_d.month)
+    montos_12 = [f["monto"] for f in facturacion if f.get("monto", 0) > 0 and (f["anio"], f["mes"]) >= hace_12m]
+    total_fac = sum(montos_12)
+    meses_cargados = len(montos_12) or 1
     pct = min(total_fac / tope, 1.05) if tope > 0 else 0
     return {
         "cliente": cliente, "tope": tope, "facturacion": facturacion,
