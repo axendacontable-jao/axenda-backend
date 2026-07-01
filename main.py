@@ -1474,7 +1474,12 @@ async def importar_tabla(tipo: str, file: UploadFile, _: str = Depends(get_estud
 @app.get("/configuracion")
 async def obtener_configuracion(estudio_id: str = Depends(get_estudio_id)):
     result = db.from_("configuracion").select("clave,valor").eq("estudio_id", estudio_id).execute()
-    return {r["clave"]: r["valor"] for r in (result.data or [])}
+    cfg = {r["clave"]: r["valor"] for r in (result.data or [])}
+    if "nombre_estudio" not in cfg:
+        est = db.from_("estudios").select("nombre").eq("id", estudio_id).limit(1).execute()
+        if est.data:
+            cfg["nombre_estudio"] = est.data[0]["nombre"]
+    return cfg
 
 @app.post("/configuracion")
 async def guardar_configuracion(data: dict, estudio_id: str = Depends(get_estudio_id)):
