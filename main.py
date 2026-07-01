@@ -329,7 +329,10 @@ async def completar_onboarding(data: dict, estudio_id: str = Depends(get_estudio
         upd = db.from_("configuracion").update({"valor": valor}).eq("clave", clave).eq("estudio_id", estudio_id).execute()
         if not upd.data:
             db.from_("configuracion").insert({"clave": clave, "valor": valor, "estudio_id": estudio_id}).execute()
-    db.from_("estudios").update({"nombre": nombre, "onboarding_completo": True}).eq("id", estudio_id).execute()
+    try:
+        db.from_("estudios").update({"nombre": nombre, "onboarding_completo": True}).eq("id", estudio_id).execute()
+    except Exception:
+        db.from_("estudios").update({"nombre": nombre}).eq("id", estudio_id).execute()
     return {"ok": True}
 
 @app.get("/componentes-provinciales/resumen")
@@ -347,10 +350,13 @@ async def get_componentes_resumen(estudio_id: str = Depends(get_estudio_id)):
 
 @app.get("/componentes-provinciales/{provincia}/{categoria}")
 async def get_componente_provincial(provincia: str, categoria: str, tipo: str = "servicios"):
-    res = db.from_("componentes_provinciales").select("*") \
-        .eq("provincia", provincia).eq("categoria", categoria.upper()).eq("tipo", tipo) \
+    base = db.from_("componentes_provinciales").select("*") \
+        .eq("provincia", provincia).eq("categoria", categoria.upper()) \
         .lte("vigente_desde", datetime.date.today().isoformat()) \
-        .order("vigente_desde", desc=True).limit(1).execute()
+        .order("vigente_desde", desc=True)
+    res = base.eq("tipo", tipo).limit(1).execute()
+    if not res.data and tipo != "unico":
+        res = base.eq("tipo", "unico").limit(1).execute()
     return {"ok": True, "componente": res.data[0] if res.data else None}
 
 # Migración one-time: asigna todos los registros huérfanos al estudio del usuario
