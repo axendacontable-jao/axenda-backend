@@ -2041,11 +2041,8 @@ function AvisosWhatsApp({ clientes, planes, cfg }) {
 }
 
 // ── Feed pendientes del mes ──
-function PendientesFeed({ tareas }) {
+function PendientesFeed({ tareas, done, onToggle }) {
   const hoy=new Date();
-  const storageKey=`axenda_done_${hoy.getFullYear()}_${hoy.getMonth()+1}`;
-  const [done,setDone]=useState(()=>{try{return JSON.parse(localStorage.getItem(storageKey)||"[]");}catch{return [];}});
-  function toggle(label){const nd=done.includes(label)?done.filter(x=>x!==label):[...done,label];setDone(nd);localStorage.setItem(storageKey,JSON.stringify(nd));}
   if(!tareas)return <div style={{height:"80px",borderRadius:"8px"}} className="skeleton"/>;
   const sorted=[...tareas].sort((a,b)=>{
     if(a.dia&&!b.dia)return -1; if(!a.dia&&b.dia)return 1;
@@ -2055,7 +2052,7 @@ function PendientesFeed({ tareas }) {
     <div>
       {sorted.map((t,i)=>(
         <div key={i} className="tarea-item">
-          <div className={`tarea-check ${done.includes(t.label)?"done":""}`} onClick={()=>toggle(t.label)}>{done.includes(t.label)&&"✓"}</div>
+          <div className={`tarea-check ${done.includes(t.label)?"done":""}`} onClick={()=>onToggle(t.label)}>{done.includes(t.label)&&"✓"}</div>
           {t.dia&&<div style={{fontSize:"10px",fontFamily:"'DM Mono',monospace",color:"var(--yellow)",fontWeight:"600",flexShrink:0,minWidth:"36px"}}>día {t.dia}</div>}
           <div className={`tarea-label ${done.includes(t.label)?"done":""}`}>{t.label}</div>
         </div>
@@ -2069,11 +2066,24 @@ function PendientesFeed({ tareas }) {
 function ViewDashboard({ clientes, planes, factura, topes, onNavigate }) {
   const [tareas,setTareas]=useState(null);
   const [cfg,setCfg]=useState(null);
+  const _hoyVD=new Date();
+  const _doneServerKey=`tareas_done_${_hoyVD.getFullYear()}_${_hoyVD.getMonth()+1}`;
+  const _doneLsKey=`axenda_done_${_hoyVD.getFullYear()}_${_hoyVD.getMonth()+1}`;
+  const [done,setDone]=useState(()=>{try{return JSON.parse(localStorage.getItem(_doneLsKey)||"[]");}catch{return [];}});
   useEffect(()=>{
     apiFetch(`${BACKEND_URL}/configuracion`).then(r=>r.json())
-      .then(d=>{ setTareas(parseTareasArr(d.tareas_mensuales)); setCfg(d); })
+      .then(d=>{
+        setTareas(parseTareasArr(d.tareas_mensuales)); setCfg(d);
+        if(d[_doneServerKey]){try{setDone(JSON.parse(d[_doneServerKey]));}catch{}}
+      })
       .catch(()=>{ setTareas(TAREAS_DEFAULT); setCfg({}); });
   },[]);
+  function toggleTarea(label){
+    const nd=done.includes(label)?done.filter(x=>x!==label):[...done,label];
+    setDone(nd);
+    localStorage.setItem(_doneLsKey,JSON.stringify(nd));
+    apiFetch(`${BACKEND_URL}/configuracion`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({[_doneServerKey]:JSON.stringify(nd)})}).catch(()=>{});
+  }
   const activos=clientes.filter(c=>c.activo);
   const topeMapa=Object.fromEntries(topes.map(t=>[t.categoria,t.tope_anual]));
   const _vd12=new Date(),_vdH12=[_vd12.getFullYear()-1,_vd12.getMonth()+1];
@@ -2125,7 +2135,7 @@ function ViewDashboard({ clientes, planes, factura, topes, onNavigate }) {
         </div>
         <div className="dash-card">
           <div className="dash-card-title">Pendientes del mes</div>
-          <PendientesFeed tareas={tareas}/>
+          <PendientesFeed tareas={tareas} done={done} onToggle={toggleTarea}/>
         </div>
       </div>
     </div>
