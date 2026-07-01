@@ -408,6 +408,8 @@ async def crear_cliente(data: dict, estudio_id: str = Depends(get_estudio_id)):
         "cuota": data.get("cuota") or None, "activo": True,
         "provincia": data.get("provincia", "Rio Negro"),
         "iibb_modalidad": data.get("iibb_modalidad", "monotributo_unificado"),
+        "tipo_actividad": data.get("tipo_actividad", "servicios"),
+        "en_relacion_dependencia": bool(data.get("en_relacion_dependencia", False)),
         "estudio_id": estudio_id,
     }
     try:
@@ -1252,6 +1254,175 @@ async def importar_topes(file: UploadFile, _: str = Depends(get_estudio_id)):
             actualizados += 1
 
     return {"ok": True, "actualizados": actualizados, "categorias": list(seen.keys()), "detalle": list(seen.values())}
+
+@app.post("/configuracion/importar-tabla/{tipo}")
+async def importar_tabla(tipo: str, file: UploadFile, _: str = Depends(get_estudio_id)):
+    TIPOS_VALIDOS = {"topes_nacionales", "componente_rio_negro", "componente_neuquen", "componente_buenos_aires"}
+    if tipo not in TIPOS_VALIDOS:
+        raise HTTPException(400, f"Tipo inválido: {tipo}")
+    PROV_MAP = {
+        "componente_rio_negro":      "Rio Negro",
+        "componente_neuquen":        "Neuquen",
+        "componente_buenos_aires":   "Buenos Aires",
+    }
+    nombre = (file.filename or "").lower()
+    contenido = await file.read()
+    CATS = set("ABCDEFGHIJK")
+
+    def parse_num(v):
+        if v is None: return None
+        try:
+            return float(str(v).replace(".", "").replace(",", ".").strip())
+        except Exception:
+            return None
+
+    def detect_col(headers, *keywords):
+        for kw in keywords:
+            for j, h in enumerate(headers):
+                if kw in h.lower():
+                    return j
+        return None
+
+    if tipo == "topes_nacionales":
+        resultados = []
+        if nombre.endswith(".pdf"):
+            try:
+                import pdfplumber
+            except ImportError:
+                raise HTTPException(500, "pdfplumber no instalado")
+            with pdfplumber.open(io.BytesIO(contenido)) as pdf:
+                for page in pdf.pages:
+                    for table in (page.extract_tables() or []):
+                        if not table or len(table) < 2: continue
+                        for i, row in enumerate(table):
+                            if not row: continue
+                            row_l = [str(c or "").lower() for c in row]
+                            if any("categor" in c for c in row_l):
+                                hdr = row_l
+                                col_cat  = detect_col(hdr, "categor")
+                                col_tope = detect_col(hdr, "ingreso", "tope")
+                                col_is   = detect_col(hdr, "locacion", "servicio")
+                                col_ib   = detect_col(hdr, "mueble", "bien")
+                                col_sipa = detect_col(hdr, "sipa", "previsional", "jubil")
+                                col_os   = detect_col(hdr, "obra social", "salud", "os")
+                                for row2 in table[i + 1:]:
+                                    if not row2 or len(row2) <= (col_cat or 0): continue
+                                    cat = str(row2[col_cat] or "").strip().upper().split("\n")[0].strip()
+                                    if len(cat) != 1 or cat not in CATS: continue
+                                    g = lambda c: parse_num(row2[c]) if c is not None and len(row2) > c else None
+                                    resultados.append({"categoria": cat, "tope_anual": g(col_tope),
+                                        "imp_integrado_servicios": g(col_is), "imp_integrado_bienes": g(col_ib),
+                                        "aportes_sipa": g(col_sipa), "obra_social": g(col_os)})
+                                break
+        elif nombre.endswith((".xlsx", ".xls")):
+            df = pd.read_excel(io.BytesIO(contenido))
+            df.columns = [str(c).strip() for c in df.columns]
+            hdr = [c.lower() for c in df.columns]
+            col_cat  = next((c for c in df.columns if "categor" in c.lower()), None)
+            col_tope = next((c for c in df.columns if any(k in c.lower() for k in ["ingreso","tope"])), None)
+            col_is   = next((c for c in df.columns if any(k in c.lower() for k in ["locacion","servicio"])), None)
+            col_ib   = next((c for c in df.columns if any(k in c.lower() for k in ["mueble","bien"])), None)
+            col_sipa = next((c for c in df.columns if any(k in c.lower() for k in ["sipa","previsional","jubil"])), None)
+            col_os   = next((c for c in df.columns if any(k in c.lower() for k in ["obra","salud"])), None)
+            if col_cat is None:
+                raise HTTPException(400, "No se encontró columna de categorías A-K")
+            for _, row in df.iterrows():
+                cat = str(row[col_cat]).strip().upper()
+                if len(cat) != 1 or cat not in CATS: continue
+                g = lambda c: float(pd.to_numeric(row.get(c), errors="coerce")) if c and not pd.isna(pd.to_numeric(row.get(c), errors="coerce")) else None
+                resultados.append({"categoria": cat, "tope_anual": g(col_tope),
+                    "imp_integrado_servicios": g(col_is), "imp_integrado_bienes": g(col_ib),
+                    "aportes_sipa": g(col_sipa), "obra_social": g(col_os)})
+        else:
+            raise HTTPException(400, "Formato no soportado. Subí PDF o Excel (.xlsx)")
+
+        if not resultados:
+            raise HTTPException(400, "No se encontraron categorías A-K en el archivo")
+        seen: dict = {}
+        for r in resultados:
+            if r["categoria"] not in seen: seen[r["categoria"]] = r
+        actualizados = 0
+        for cat, r in seen.items():
+            update = {k: r[k] for k in ("tope_anual","imp_integrado_servicios","imp_integrado_bienes","aportes_sipa","obra_social") if r.get(k) is not None}
+            if update:
+                db.from_("topes_categoria").update(update).eq("categoria", cat).execute()
+                actualizados += 1
+        return {"ok": True, "tipo": tipo, "actualizados": actualizados, "categorias": list(seen.keys())}
+
+    else:
+        provincia = PROV_MAP[tipo]
+        resultados = []
+        if nombre.endswith(".pdf"):
+            try:
+                import pdfplumber
+            except ImportError:
+                raise HTTPException(500, "pdfplumber no instalado")
+            with pdfplumber.open(io.BytesIO(contenido)) as pdf:
+                for page in pdf.pages:
+                    for table in (page.extract_tables() or []):
+                        if not table or len(table) < 2: continue
+                        for i, row in enumerate(table):
+                            if not row: continue
+                            row_l = [str(c or "").lower() for c in row]
+                            if any("categor" in c for c in row_l):
+                                hdr = row_l
+                                col_cat   = detect_col(hdr, "categor")
+                                col_tipo  = detect_col(hdr, "tipo", "actividad")
+                                col_monto = detect_col(hdr, "monto", "cuota", "import")
+                                col_desde = detect_col(hdr, "desde", "vigente", "fecha")
+                                for row2 in table[i + 1:]:
+                                    if not row2 or len(row2) <= (col_cat or 0): continue
+                                    cat = str(row2[col_cat] or "").strip().upper().split("\n")[0].strip()
+                                    if len(cat) != 1 or cat not in CATS: continue
+                                    g = lambda c: str(row2[c]).strip() if c is not None and len(row2) > c else None
+                                    tipo_val = (g(col_tipo) or "servicios").lower()
+                                    if "bien" in tipo_val or "mueble" in tipo_val: tipo_val = "bienes"
+                                    elif "unico" in tipo_val or "único" in tipo_val: tipo_val = "unico"
+                                    else: tipo_val = "servicios"
+                                    monto = parse_num(g(col_monto))
+                                    desde = g(col_desde) or datetime.date.today().isoformat()
+                                    if monto: resultados.append({"categoria": cat, "tipo": tipo_val, "monto": monto, "vigente_desde": desde[:10]})
+                                break
+        elif nombre.endswith((".xlsx", ".xls")):
+            df = pd.read_excel(io.BytesIO(contenido))
+            df.columns = [str(c).strip() for c in df.columns]
+            col_cat   = next((c for c in df.columns if "categor" in c.lower()), None)
+            col_tipo  = next((c for c in df.columns if any(k in c.lower() for k in ["tipo","actividad"])), None)
+            col_monto = next((c for c in df.columns if any(k in c.lower() for k in ["monto","cuota","import"])), None)
+            col_desde = next((c for c in df.columns if any(k in c.lower() for k in ["desde","vigente","fecha"])), None)
+            if col_cat is None:
+                raise HTTPException(400, "No se encontró columna de categorías A-K")
+            for _, row in df.iterrows():
+                cat = str(row[col_cat]).strip().upper()
+                if len(cat) != 1 or cat not in CATS: continue
+                tipo_val = str(row.get(col_tipo) or "servicios").lower()
+                if "bien" in tipo_val or "mueble" in tipo_val: tipo_val = "bienes"
+                elif "unico" in tipo_val or "único" in tipo_val: tipo_val = "unico"
+                else: tipo_val = "servicios"
+                monto = float(pd.to_numeric(row.get(col_monto), errors="coerce")) if col_monto else None
+                if pd.isna(monto if monto else float("nan")): monto = None
+                desde_raw = row.get(col_desde) if col_desde else None
+                if pd.notna(desde_raw if desde_raw is not None else float("nan")):
+                    try: desde = str(pd.Timestamp(desde_raw).date())
+                    except Exception: desde = datetime.date.today().isoformat()
+                else: desde = datetime.date.today().isoformat()
+                if monto: resultados.append({"categoria": cat, "tipo": tipo_val, "monto": monto, "vigente_desde": desde})
+        else:
+            raise HTTPException(400, "Formato no soportado. Subí PDF o Excel (.xlsx)")
+
+        if not resultados:
+            raise HTTPException(400, "No se encontraron datos de componentes en el archivo")
+        importados = 0
+        for r in resultados:
+            upd = db.from_("componentes_provinciales").update({"monto": r["monto"], "vigente_desde": r["vigente_desde"]}) \
+                .eq("provincia", provincia).eq("categoria", r["categoria"]).eq("tipo", r["tipo"]).execute()
+            if not upd.data:
+                db.from_("componentes_provinciales").insert({
+                    "provincia": provincia, "categoria": r["categoria"],
+                    "tipo": r["tipo"], "monto": r["monto"], "vigente_desde": r["vigente_desde"],
+                }).execute()
+            importados += 1
+        return {"ok": True, "tipo": tipo, "provincia": provincia, "importados": importados, "detalle": resultados}
 
 # ─── Configuración ───────────────────────────────────────────────────────────
 
