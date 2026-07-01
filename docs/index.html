@@ -2094,11 +2094,7 @@ function ViewDashboard({ clientes, planes, factura, topes, onNavigate }) {
     <div className="empty-state" style={{padding:"80px 20px"}}>
       <div className="empty-icon">👥</div>
       <div className="empty-title">Todavía no tenés clientes</div>
-      <div className="empty-desc" style={{marginBottom:"20px"}}>Agregá el primero para ver el dashboard completo.</div>
-      <button onClick={()=>onNavigate("clientes")}
-        style={{background:"var(--green)",color:"#fff",border:"none",borderRadius:"10px",padding:"11px 28px",fontFamily:"inherit",fontWeight:"600",fontSize:"14px",cursor:"pointer"}}>
-        + Agregar primer cliente
-      </button>
+      <div className="empty-desc">Andá a la sección Clientes para dar de alta el primero.</div>
     </div>
   );
 
