@@ -350,13 +350,14 @@ async def get_componentes_resumen(estudio_id: str = Depends(get_estudio_id)):
 
 @app.get("/componentes-provinciales/{provincia}/{categoria}")
 async def get_componente_provincial(provincia: str, categoria: str, tipo: str = "servicios"):
-    base = db.from_("componentes_provinciales").select("*") \
-        .eq("provincia", provincia).eq("categoria", categoria.upper()) \
-        .lte("vigente_desde", datetime.date.today().isoformat()) \
-        .order("vigente_desde", desc=True)
-    res = base.eq("tipo", tipo).limit(1).execute()
+    def _q(t):
+        return db.from_("componentes_provinciales").select("*") \
+            .eq("provincia", provincia).eq("categoria", categoria.upper()).eq("tipo", t) \
+            .lte("vigente_desde", datetime.date.today().isoformat()) \
+            .order("vigente_desde", desc=True).limit(1).execute()
+    res = _q(tipo)
     if not res.data and tipo != "unico":
-        res = base.eq("tipo", "unico").limit(1).execute()
+        res = _q("unico")
     return {"ok": True, "componente": res.data[0] if res.data else None}
 
 # Migración one-time: asigna todos los registros huérfanos al estudio del usuario
