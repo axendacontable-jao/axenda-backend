@@ -640,8 +640,8 @@ function ModalEditarDatos({ cliente, topes, onClose, onGuardado }) {
   );
 }
 
-function ModalNuevoCliente({ onClose, onGuardado, topes }) {
-  const [cuit,setCuit]=useState(""); const [nombre,setNombre]=useState(""); const [apellido,setApellido]=useState("");
+function ModalNuevoCliente({ onClose, onGuardado, topes, cuitInicial="" }) {
+  const [cuit,setCuit]=useState(cuitInicial||""); const [nombre,setNombre]=useState(""); const [apellido,setApellido]=useState("");
   const [whatsapp,setWhatsapp]=useState(""); const [categoria,setCategoria]=useState(""); const [cuota,setCuota]=useState("");
   const [provincia,setProvincia]=useState("Rio Negro");
   const [iibb_modalidad,setIibbModalidad]=useState("monotributo_unificado");
@@ -649,6 +649,7 @@ function ModalNuevoCliente({ onClose, onGuardado, topes }) {
   const [enRelDep,setEnRelDep]=useState(false);
   const [buscando,setBuscando]=useState(false); const [padronOk,setPadronOk]=useState(false); const [guardando,setGuardando]=useState(false);
   const [sinDatosProv,setSinDatosProv]=useState(false);
+  useEffect(()=>{ if(cuitInicial&&cuitInicial.replace(/\D/g,"").length>=10) buscarEnArca(); },[]);
 
   async function sugerirCuota(cat, prov, tipo, relDep) {
     const topeObj=topes.find(t=>t.categoria===cat);
@@ -2183,8 +2184,13 @@ function ViewConfig({ topes, onRefresh }) {
     const payload={};
     claves.forEach(k=>{ payload[k]=cfg[k]??""; });
     try {
-      await apiFetch(`${BACKEND_URL}/configuracion`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
-      setOkKey(sKey); setTimeout(()=>setOkKey(null),2500);
+      const r = await apiFetch(`${BACKEND_URL}/configuracion`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+      const d = await r.json();
+      if (!r.ok || !d.ok) {
+        alert(`Error al guardar (${r.status}): ${d.errors?.join(", ")||d.detail||"Intentá de nuevo"}`);
+      } else {
+        setOkKey(sKey); setTimeout(()=>setOkKey(null),2500);
+      }
     } catch(e){ alert("Error al guardar: "+e.message); }
     setGKey(null);
   }
@@ -2821,7 +2827,6 @@ function App() {
                 {["todos","activos","inactivos"].map(f=>(
                   <button key={f} className={`filter-btn ${filtro===f?"active":""}`} onClick={()=>setFiltro(f)}>{f.charAt(0).toUpperCase()+f.slice(1)}</button>
                 ))}
-                <button className="add-btn" onClick={()=>setModal(true)}>+ Nuevo cliente</button>
               </div>
               {loading ? (
                 <div className="clientes-grid">{[1,2,3,4].map(i=><div key={i} style={{height:"160px",borderRadius:"14px"}} className="skeleton"/>)}</div>
@@ -2829,7 +2834,10 @@ function App() {
                 <div className="empty-state">
                   <div className="empty-icon">👥</div>
                   <div className="empty-title">{busqueda ? "Sin resultados" : "Todavía no tenés clientes"}</div>
-                  <div className="empty-desc">{busqueda ? `No se encontró "${busqueda}".` : "Agregá el primero con el botón de arriba."}</div>
+                  <div className="empty-desc">{busqueda ? `No se encontró "${busqueda}".` : "Ingresá un CUIT en la búsqueda para dar de alta un cliente."}</div>
+                  {/^\d{10,11}$/.test(busqueda.replace(/\D/g,""))&&(
+                    <button className="btn-primary" style={{marginTop:"16px"}} onClick={()=>setModal(true)}>Buscar en ARCA y dar de alta</button>
+                  )}
                 </div>
               ) : (
                 <div className="clientes-grid">
@@ -2885,7 +2893,7 @@ function App() {
         </div>
       </main>
 
-      {modal&&<ModalNuevoCliente onClose={()=>setModal(false)} topes={topes} onGuardado={slug=>{cargarDatos();mostrarToast(`Cliente agregado.`);}}/>}
+      {modal&&<ModalNuevoCliente onClose={()=>setModal(false)} topes={topes} cuitInicial={busqueda.replace(/\D/g,"")} onGuardado={slug=>{cargarDatos();mostrarToast(`Cliente agregado.`);}}/>}
       {importResult&&<ModalImportResult result={importResult} onClose={()=>setImportResult(null)}/>}
       <input ref={fileInputRef} type="file" accept=".xlsx" style={{display:"none"}} onChange={handleImportFile}/>
       {toast&&<div className="toast">{toast}</div>}

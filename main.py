@@ -1478,11 +1478,18 @@ async def obtener_configuracion(estudio_id: str = Depends(get_estudio_id)):
 
 @app.post("/configuracion")
 async def guardar_configuracion(data: dict, estudio_id: str = Depends(get_estudio_id)):
+    errors = []
     for clave, valor in data.items():
         val = str(valor) if valor is not None else ""
-        upd = db.from_("configuracion").update({"valor": val}).eq("clave", clave).eq("estudio_id", estudio_id).execute()
-        if not upd.data:
-            db.from_("configuracion").insert({"clave": clave, "valor": val, "estudio_id": estudio_id}).execute()
+        try:
+            upd = db.from_("configuracion").update({"valor": val}).eq("clave", clave).eq("estudio_id", estudio_id).execute()
+            if not upd.data:
+                db.from_("configuracion").insert({"clave": clave, "valor": val, "estudio_id": estudio_id}).execute()
+        except Exception as e:
+            errors.append(f"{clave}: {e}")
+            print(f"[configuracion] Error guardando {clave} para estudio {estudio_id}: {e}")
+    if errors:
+        return {"ok": False, "errors": errors}
     return {"ok": True}
 
 # ─── Alertas ─────────────────────────────────────────────────────────────────
