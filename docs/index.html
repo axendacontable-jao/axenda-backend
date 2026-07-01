@@ -781,7 +781,7 @@ function ModalNuevoCliente({ onClose, onGuardado, topes, cuitInicial="" }) {
           </label>
         </div>
         <div style={{background:"#EAF0F6",borderRadius:"9px",padding:"10px 14px",fontSize:"12px",color:"#6B7A96",marginBottom:"4px"}}>
-          <strong style={{color:"#1B2D4F"}}>Link del portal:</strong> {slug()?`${PORTAL_URL}/?cliente=${slug()}`:"—"}
+          <strong style={{color:"#1B2D4F"}}>Link del portal:</strong> {PORTAL_URL}
         </div>
         <div className="modal-actions">
           <button className="btn-secondary" onClick={onClose}>Cancelar</button>
@@ -1117,7 +1117,7 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
           <button className="action-chip" onClick={()=>onImportar(cliente.slug)} disabled={importando===cliente.slug}>
             ↑ {importando===cliente.slug?"Importando...":"Importar ARCA"}
           </button>
-          <a className="action-chip" href={`${PORTAL_URL}/?cliente=${cliente.slug}`} target="_blank" rel="noopener">↗ Ver portal</a>
+          <a className="action-chip" href={PORTAL_URL} target="_blank" rel="noopener">↗ Ver portal</a>
           <button className="action-chip" onClick={()=>setModalEditar(true)}>✏ Editar datos</button>
         </div>
       </div>
@@ -2882,7 +2882,7 @@ function App() {
                             </div>
                           </div>
                           <div style={{display:"flex",flexDirection:"column",gap:"6px",alignItems:"flex-end"}} onClick={e=>e.stopPropagation()}>
-                            <a className="cliente-link" href={`${PORTAL_URL}/?cliente=${c.slug}`} target="_blank" rel="noopener" onClick={e=>e.stopPropagation()}>Ver portal ↗</a>
+                            <a className="cliente-link" href={PORTAL_URL} target="_blank" rel="noopener" onClick={e=>e.stopPropagation()}>Ver portal ↗</a>
                             <button onClick={e=>{e.stopPropagation();abrirImport(c.slug);}} disabled={importando===c.slug} style={{fontSize:"11px",background:"none",border:"1px solid var(--border)",borderRadius:"6px",cursor:"pointer",fontFamily:"inherit",fontWeight:"500",color:"var(--muted)",padding:"3px 8px",opacity:importando===c.slug?0.6:1}}>{importando===c.slug?"Importando...":"↑ ARCA"}</button>
                             <button onClick={e=>{e.stopPropagation();toggleActivo(c);}} style={{fontSize:"11px",background:"none",border:"none",cursor:"pointer",fontFamily:"inherit",fontWeight:"500",color:c.activo?"#E04545":"#2BAF82"}}>{c.activo?"Desactivar":"Activar"}</button>
                           </div>
