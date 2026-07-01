@@ -595,14 +595,14 @@ function ModalNuevoCliente({ onClose, onGuardado, topes }) {
         <div className="form-group">
           <label className="form-label">CUIT</label>
           <div style={{display:"flex",gap:"8px"}}>
-            <input className="form-input" placeholder="20-12345678-9" value={cuit} onChange={e=>{setCuit(e.target.value);setPadronOk(false);}} style={{flex:1}}/>
+            <input className="form-input" placeholder="20-XXXXXXXX-X" value={cuit} onChange={e=>{setCuit(e.target.value);setPadronOk(false);}} style={{flex:1}}/>
             <button className="btn-primary" style={{flex:"0 0 auto",padding:"10px 16px",fontSize:"13px"}} onClick={buscarEnArca} disabled={buscando||cuit.replace(/\D/g,"").length<11}>{buscando?"...":"Buscar"}</button>
           </div>
           {padronOk&&<div className="arca-result"><div className="arca-result-label">✓ Encontrado en ARCA</div><div className="arca-result-val">{nombre} {apellido}</div></div>}
         </div>
         <div className="form-row">
-          <div className="form-group"><label className="form-label">Nombre</label><input className="form-input" value={nombre} onChange={e=>setNombre(e.target.value)} placeholder="Ignacio"/></div>
-          <div className="form-group"><label className="form-label">Apellido</label><input className="form-input" value={apellido} onChange={e=>setApellido(e.target.value)} placeholder="Celedon"/></div>
+          <div className="form-group"><label className="form-label">Nombre</label><input className="form-input" value={nombre} onChange={e=>setNombre(e.target.value)} placeholder="Nombre"/></div>
+          <div className="form-group"><label className="form-label">Apellido</label><input className="form-input" value={apellido} onChange={e=>setApellido(e.target.value)} placeholder="Apellido"/></div>
         </div>
         <div className="form-row">
           <div className="form-group">
@@ -636,7 +636,7 @@ function ModalNuevoCliente({ onClose, onGuardado, topes }) {
           )}
         </div>
         <div className="form-row">
-          <div className="form-group"><label className="form-label">WhatsApp</label><input className="form-input" value={whatsapp} onChange={e=>setWhatsapp(e.target.value)} placeholder="2944123456"/></div>
+          <div className="form-group"><label className="form-label">WhatsApp</label><input className="form-input" value={whatsapp} onChange={e=>setWhatsapp(e.target.value)} placeholder="2944XXXXXX"/></div>
           <div className="form-group">
             <label className="form-label">Modalidad IIBB</label>
             <select className="form-input" value={iibb_modalidad} onChange={e=>setIibbModalidad(e.target.value)}>
