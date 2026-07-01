@@ -294,7 +294,7 @@ async def health():
             cert_lines = len(f.readlines())
     openssl_ok = subprocess.run(["openssl", "version"], capture_output=True).returncode == 0
     return {
-        "status": "ok", "version": "1.4.0",
+        "status": "ok", "version": "1.5.0",
         "cert_ok": cert_ok, "key_ok": key_ok,
         "cert_lines": cert_lines, "openssl_ok": openssl_ok,
         "cuit_contador": CUIT_CONTADOR,
@@ -317,23 +317,30 @@ async def actualizar_estudio(data: dict, estudio_id: str = Depends(get_estudio_i
 
 @app.patch("/estudios/onboarding")
 async def completar_onboarding(data: dict, estudio_id: str = Depends(get_estudio_id)):
-    nombre = data.get("nombre", "Mi Estudio")
-    configs = {"nombre_estudio": nombre}
-    if data.get("provincia_principal"):
-        configs["provincia_principal"] = data["provincia_principal"]
-    if data.get("whatsapp"):
-        configs["whatsapp_estudio"] = data["whatsapp"]
-    if data.get("email_contacto"):
-        configs["email_estudio"] = data["email_contacto"]
-    for clave, valor in configs.items():
-        upd = db.from_("configuracion").update({"valor": valor}).eq("clave", clave).eq("estudio_id", estudio_id).execute()
-        if not upd.data:
-            db.from_("configuracion").insert({"clave": clave, "valor": valor, "estudio_id": estudio_id}).execute()
     try:
-        db.from_("estudios").update({"nombre": nombre, "onboarding_completo": True}).eq("id", estudio_id).execute()
-    except Exception:
-        db.from_("estudios").update({"nombre": nombre}).eq("id", estudio_id).execute()
-    return {"ok": True}
+        nombre = data.get("nombre", "Mi Estudio")
+        configs = {"nombre_estudio": nombre}
+        if data.get("provincia_principal"):
+            configs["provincia_principal"] = data["provincia_principal"]
+        if data.get("whatsapp"):
+            configs["whatsapp_estudio"] = data["whatsapp"]
+        if data.get("email_contacto"):
+            configs["email_estudio"] = data["email_contacto"]
+        for clave, valor in configs.items():
+            try:
+                upd = db.from_("configuracion").update({"valor": valor}).eq("clave", clave).eq("estudio_id", estudio_id).execute()
+                if not upd.data:
+                    db.from_("configuracion").insert({"clave": clave, "valor": valor, "estudio_id": estudio_id}).execute()
+            except Exception as e_cfg:
+                print(f"[onboarding] cfg {clave} error: {e_cfg}")
+        try:
+            db.from_("estudios").update({"nombre": nombre, "onboarding_completo": True}).eq("id", estudio_id).execute()
+        except Exception:
+            db.from_("estudios").update({"nombre": nombre}).eq("id", estudio_id).execute()
+        return {"ok": True}
+    except Exception as e:
+        print(f"[onboarding] error inesperado: {e}")
+        return {"ok": False, "error": str(e)}
 
 @app.get("/componentes-provinciales/resumen")
 async def get_componentes_resumen(estudio_id: str = Depends(get_estudio_id)):

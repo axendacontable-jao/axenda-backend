@@ -2537,10 +2537,15 @@ function OnboardingWizard({ onCompletado }) {
       const r=await apiFetch(`${BACKEND_URL}/estudios/onboarding`,{
         method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(form)
       });
+      if (!r.ok && r.status !== 200) {
+        const body = await r.text().catch(()=>"");
+        setError(`Error ${r.status}: ${body||"sin respuesta"}`);
+        return;
+      }
       const d=await r.json();
       if (d.ok) onCompletado();
-      else setError("Error al guardar. Intentá de nuevo.");
-    } catch(e){setError("Error: "+e.message);}
+      else setError("Error al guardar: "+(d.error||"intentá de nuevo."));
+    } catch(e){setError("Error de red: "+e.message+" — verificá tu conexión o avisá a soporte.");}
     setGuardando(false);
   }
   return (
