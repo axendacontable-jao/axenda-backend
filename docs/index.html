@@ -354,6 +354,32 @@ function parseTareasArr(raw){
   }catch{return TAREAS_DEFAULT;}
 }
 const TIPOS_DOC = ["constancia","comprobante","vep","exencion","plan_pago"];
+const PROVINCIAS = ["Rio Negro","Buenos Aires","Neuquen"];
+const IIBB_MODALIDADES = [
+  {valor:"monotributo_unificado", label:"Monotributo Unificado (IIBB incluido)"},
+  {valor:"local",                 label:"IIBB Local (paga por separado)"},
+  {valor:"convenio_multilateral", label:"Convenio Multilateral"},
+  {valor:"no_inscripto",          label:"No inscripto en IIBB"},
+];
+function iibbInfo(modalidad) {
+  switch(modalidad) {
+    case "monotributo_unificado": return {texto:"Unificado",  color:"#2BAF82", bg:"#2BAF8215"};
+    case "local":                 return {texto:"IIBB Local", color:"#1B2D4F", bg:"#1B2D4F15"};
+    case "convenio_multilateral": return {texto:"Convenio",   color:"#E8A020", bg:"#E8A02015"};
+    case "no_inscripto":          return {texto:"Sin IIBB",   color:"#6B7A96", bg:"#6B7A9615"};
+    default:                      return null;
+  }
+}
+function IIBBBadge({modalidad, small=false}) {
+  const info = iibbInfo(modalidad);
+  if (!info) return null;
+  return (
+    <span style={{display:"inline-block",padding:small?"2px 7px":"3px 9px",borderRadius:"20px",
+      fontSize:small?"10px":"11px",fontWeight:"600",color:info.color,background:info.bg}}>
+      {info.texto}
+    </span>
+  );
+}
 
 function $$(n) {
   if (!n && n !== 0) return "$—";
@@ -498,7 +524,30 @@ function ModalCargarDocumento({ slug, onClose, onGuardado }) {
 function ModalNuevoCliente({ onClose, onGuardado, topes }) {
   const [cuit,setCuit]=useState(""); const [nombre,setNombre]=useState(""); const [apellido,setApellido]=useState("");
   const [whatsapp,setWhatsapp]=useState(""); const [categoria,setCategoria]=useState(""); const [cuota,setCuota]=useState("");
+  const [provincia,setProvincia]=useState("Rio Negro");
+  const [iibb_modalidad,setIibbModalidad]=useState("monotributo_unificado");
+  const [tipoActividad,setTipoActividad]=useState("servicios");
   const [buscando,setBuscando]=useState(false); const [padronOk,setPadronOk]=useState(false); const [guardando,setGuardando]=useState(false);
+  const [sinDatosProv,setSinDatosProv]=useState(false);
+
+  async function sugerirCuota(cat, prov, tipo) {
+    const topeObj=topes.find(t=>t.categoria===cat);
+    const nacional = topeObj?.cuota_servicios ? Math.round(topeObj.cuota_servicios) : 0;
+    try {
+      const r=await fetch(`${BACKEND_URL}/componentes-provinciales/${encodeURIComponent(prov)}/${cat}?tipo=${tipo}`);
+      const d=await r.json();
+      if (d.componente?.monto) {
+        setSinDatosProv(false);
+        setCuota(String(nacional + Math.round(d.componente.monto)));
+      } else {
+        setSinDatosProv(true);
+        if (nacional) setCuota(String(nacional));
+      }
+    } catch {
+      setSinDatosProv(false);
+      if (nacional) setCuota(String(nacional));
+    }
+  }
 
   async function buscarEnArca() {
     if (cuit.replace(/\D/g,"").length<11) return;
@@ -511,19 +560,28 @@ function ModalNuevoCliente({ onClose, onGuardado, topes }) {
       const cat=(d.categoria||"").trim().charAt(0).toUpperCase();
       if (/^[A-K]$/.test(cat)) {
         setCategoria(cat);
-        const topeObj=topes.find(t=>t.categoria===cat);
-        if (topeObj?.cuota_servicios) setCuota(String(Math.round(topeObj.cuota_servicios)));
+        await sugerirCuota(cat, provincia, tipoActividad);
       }
     } catch(e){alert("Error consultando ARCA: "+e.message);}
     setBuscando(false);
   }
+
+  function handleProvinciaChange(e) {
+    const p=e.target.value; setProvincia(p);
+    if (categoria) sugerirCuota(categoria, p, tipoActividad);
+  }
+  function handleTipoActividadChange(e) {
+    const t=e.target.value; setTipoActividad(t);
+    if (categoria) sugerirCuota(categoria, provincia, t);
+  }
+
   function slug(){const a=apellido.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/\s+/g,"-");return `${a}-${cuit.replace(/\D/g,"")}`;}
   async function guardar(){
     if (!cuit||!nombre||!apellido) return;
     setGuardando(true);
     try {
       const res=await apiFetch(`${BACKEND_URL}/clientes`,{method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({nombre,apellido,cuit:cuit.replace(/\D/g,""),whatsapp,categoria:categoria.toUpperCase()||null,cuota:cuota?parseFloat(cuota):null})});
+        body:JSON.stringify({nombre,apellido,cuit:cuit.replace(/\D/g,""),whatsapp,categoria:categoria.toUpperCase()||null,cuota:cuota?parseFloat(cuota):null,provincia,iibb_modalidad})});
       const d=await res.json();
       if(d.ok){onGuardado(d.slug);onClose();}else alert("Error: "+JSON.stringify(d));
     }catch(e){alert("Error: "+e.message);}
@@ -554,9 +612,38 @@ function ModalNuevoCliente({ onClose, onGuardado, topes }) {
               {topes.map(t=><option key={t.categoria} value={t.categoria}>Cat. {t.categoria} — {$$(t.tope_anual)}/año</option>)}
             </select>
           </div>
-          <div className="form-group"><label className="form-label">Cuota mensual</label><input className="form-input" value={cuota} onChange={e=>setCuota(e.target.value)} placeholder="28400" type="number"/></div>
+          <div className="form-group">
+            <label className="form-label">Cuota mensual</label>
+            <input className="form-input" value={cuota} onChange={e=>setCuota(e.target.value)} placeholder="28400" type="number"/>
+            {sinDatosProv&&categoria&&<div style={{fontSize:"11px",color:"var(--yellow)",marginTop:"4px"}}>⚠ Sin componente provincial para {provincia} — cuota solo nacional</div>}
+          </div>
         </div>
-        <div className="form-group"><label className="form-label">WhatsApp</label><input className="form-input" value={whatsapp} onChange={e=>setWhatsapp(e.target.value)} placeholder="2944123456"/></div>
+        <div className="form-row">
+          <div className="form-group">
+            <label className="form-label">Provincia</label>
+            <select className="form-input" value={provincia} onChange={handleProvinciaChange}>
+              {PROVINCIAS.map(p=><option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+          {provincia==="Buenos Aires" && (
+            <div className="form-group">
+              <label className="form-label">Tipo de actividad</label>
+              <select className="form-input" value={tipoActividad} onChange={handleTipoActividadChange}>
+                <option value="servicios">Servicios</option>
+                <option value="bienes">Venta de bienes</option>
+              </select>
+            </div>
+          )}
+        </div>
+        <div className="form-row">
+          <div className="form-group"><label className="form-label">WhatsApp</label><input className="form-input" value={whatsapp} onChange={e=>setWhatsapp(e.target.value)} placeholder="2944123456"/></div>
+          <div className="form-group">
+            <label className="form-label">Modalidad IIBB</label>
+            <select className="form-input" value={iibb_modalidad} onChange={e=>setIibbModalidad(e.target.value)}>
+              {IIBB_MODALIDADES.map(m=><option key={m.valor} value={m.valor}>{m.label}</option>)}
+            </select>
+          </div>
+        </div>
         <div style={{background:"#EAF0F6",borderRadius:"9px",padding:"10px 14px",fontSize:"12px",color:"#6B7A96",marginBottom:"4px"}}>
           <strong style={{color:"#1B2D4F"}}>Link del portal:</strong> {slug()?`${PORTAL_URL}/?cliente=${slug()}`:"—"}
         </div>
@@ -878,6 +965,7 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
               <span style={{width:"6px",height:"6px",borderRadius:"50%",background:"currentColor",display:"inline-block"}}/>
               {sem.label}
             </div>
+            <IIBBBadge modalidad={cliente.iibb_modalidad}/>
             {!cliente.activo&&<span style={{fontSize:"11px",background:"#6B7A9614",color:"var(--muted)",padding:"4px 10px",borderRadius:"20px",fontWeight:"600"}}>INACTIVO</span>}
           </div>
         </div>
@@ -974,6 +1062,16 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
             </div>
             <div className="info-row"><div className="info-key">WhatsApp</div><div className="info-val">{cliente.whatsapp||"—"}</div></div>
             {cliente.email&&<div className="info-row"><div className="info-key">Email</div><div className="info-val" style={{fontSize:"12px"}}>{cliente.email}</div></div>}
+            <div className="info-row"><div className="info-key">Provincia</div><div className="info-val">{cliente.provincia||"Rio Negro"}</div></div>
+            <div className="info-row">
+              <div className="info-key">Modalidad IIBB</div>
+              <div className="info-val"><IIBBBadge modalidad={cliente.iibb_modalidad}/> <span style={{fontSize:"12px",color:"var(--muted)",marginLeft:"6px"}}>{IIBB_MODALIDADES.find(m=>m.valor===cliente.iibb_modalidad)?.label||"—"}</span></div>
+            </div>
+            {cliente.iibb_modalidad==="convenio_multilateral"&&(
+              <div style={{background:"#E8A02015",border:"1px solid #E8A02030",borderRadius:"9px",padding:"10px 14px",marginTop:"10px",fontSize:"12px",color:"#E8A020",fontWeight:"500"}}>
+                ⚠️ Este cliente está en Convenio Multilateral — gestión de IIBB por separado. Recordá las presentaciones de CM03 y CM05.
+              </div>
+            )}
           </div>
           {cliente.cuota&&(
             <div className="detail-section">
@@ -2192,10 +2290,65 @@ function LoginScreen({ onLogin }) {
   );
 }
 
+// ── Onboarding wizard ──
+function OnboardingWizard({ onCompletado }) {
+  const [form,setForm]=useState({nombre:"",provincia_principal:"Rio Negro",whatsapp:"",email_contacto:""});
+  const [guardando,setGuardando]=useState(false);
+  const [error,setError]=useState(null);
+  function set(k,v){setForm(p=>({...p,[k]:v}));}
+  async function guardar(){
+    if (!form.nombre.trim()){setError("El nombre del estudio es requerido.");return;}
+    setGuardando(true); setError(null);
+    try {
+      const r=await apiFetch(`${BACKEND_URL}/estudios/onboarding`,{
+        method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(form)
+      });
+      const d=await r.json();
+      if (d.ok) onCompletado();
+      else setError("Error al guardar. Intentá de nuevo.");
+    } catch(e){setError("Error: "+e.message);}
+    setGuardando(false);
+  }
+  return (
+    <div style={{minHeight:"100vh",background:"#F0F2F7",display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{background:"#fff",borderRadius:"16px",padding:"40px 48px",maxWidth:"480px",width:"100%",boxShadow:"0 8px 40px rgba(27,45,79,0.12)"}}>
+        <div style={{fontWeight:"700",fontSize:"22px",color:"#1B2D4F",marginBottom:"4px"}}>Configurá tu estudio</div>
+        <div style={{fontSize:"14px",color:"#6B7A96",marginBottom:"28px"}}>Completá estos datos para empezar a usar Axenda.</div>
+        <div className="form-group">
+          <label className="form-label">Nombre del estudio *</label>
+          <input className="form-input" value={form.nombre} onChange={e=>set("nombre",e.target.value)} placeholder="Estudio Contable García"/>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Provincia principal *</label>
+          <select className="form-input" value={form.provincia_principal} onChange={e=>set("provincia_principal",e.target.value)}>
+            {PROVINCIAS.map(p=><option key={p} value={p}>{p}</option>)}
+          </select>
+        </div>
+        <div className="form-row">
+          <div className="form-group">
+            <label className="form-label">WhatsApp del estudio</label>
+            <input className="form-input" value={form.whatsapp} onChange={e=>set("whatsapp",e.target.value)} placeholder="2944123456"/>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Email de contacto</label>
+            <input className="form-input" value={form.email_contacto} onChange={e=>set("email_contacto",e.target.value)} placeholder="estudio@gmail.com" type="email"/>
+          </div>
+        </div>
+        {error&&<div style={{color:"#E04545",fontSize:"13px",marginBottom:"12px"}}>{error}</div>}
+        <button className="btn-primary" style={{width:"100%",marginTop:"8px"}} onClick={guardar} disabled={guardando||!form.nombre.trim()}>
+          {guardando?"Guardando...":"Comenzar →"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   // ── Auth ──────────────────────────────────────────────────────────
   const [session,setSession]         = useState(null);
   const [authLoading,setAuthLoading] = useState(true);
+
+  const [onboarding,setOnboarding] = useState(null); // null=cargando, true=completo, false=pendiente
 
   useEffect(()=>{
     db.auth.getSession().then(({data:{session:s}})=>{
@@ -2209,6 +2362,13 @@ function App() {
     });
     return ()=>subscription.unsubscribe();
   },[]);
+
+  useEffect(()=>{
+    if (!session) { setOnboarding(null); return; }
+    apiFetch(`${BACKEND_URL}/estudios/me`).then(r=>r.json())
+      .then(d=>setOnboarding(d.onboarding_completo===true))
+      .catch(()=>setOnboarding(true));
+  },[session]);
 
   async function logout(){
     await db.auth.signOut();
@@ -2320,7 +2480,7 @@ function App() {
   const clienteSeleccionado = clienteDetalle ? clientes.find(c=>c.slug===clienteDetalle) : null;
 
   // ── Auth guards ──────────────────────────────────────────────────
-  if (authLoading) return (
+  if (authLoading || (session && onboarding===null)) return (
     <div style={{minHeight:"100vh",background:"#F0F2F7",display:"flex",alignItems:"center",justifyContent:"center"}}>
       <div style={{textAlign:"center",color:"#1B2D4F"}}>
         <div style={{fontSize:"22px",fontWeight:"700",letterSpacing:"0.06em",marginBottom:"8px"}}>AXENDA</div>
@@ -2329,6 +2489,7 @@ function App() {
     </div>
   );
   if (!session) return <LoginScreen onLogin={s=>{ _session=s; setSession(s); }}/>;
+  if (onboarding===false) return <OnboardingWizard onCompletado={()=>setOnboarding(true)}/>;
 
   return (
     <div className="layout">
@@ -2459,7 +2620,10 @@ function App() {
                         <div className="cliente-footer">
                           <div>
                             <div className="cliente-cuota">{c.cuota?$$(c.cuota)+"/mes":"Cuota —"}</div>
-                            <div className="cliente-dias">{dias} días al corte</div>
+                            <div style={{display:"flex",alignItems:"center",gap:"6px",marginTop:"4px"}}>
+                              <div className="cliente-dias">{dias} días al corte</div>
+                              <IIBBBadge modalidad={c.iibb_modalidad} small={true}/>
+                            </div>
                           </div>
                           <div style={{display:"flex",flexDirection:"column",gap:"6px",alignItems:"flex-end"}} onClick={e=>e.stopPropagation()}>
                             <a className="cliente-link" href={`${PORTAL_URL}/?cliente=${c.slug}`} target="_blank" rel="noopener" onClick={e=>e.stopPropagation()}>Ver portal ↗</a>

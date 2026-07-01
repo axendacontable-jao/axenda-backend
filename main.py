@@ -315,6 +315,31 @@ async def actualizar_estudio(data: dict, estudio_id: str = Depends(get_estudio_i
     db.from_("estudios").update(update).eq("id", estudio_id).execute()
     return {"ok": True}
 
+@app.patch("/estudios/onboarding")
+async def completar_onboarding(data: dict, estudio_id: str = Depends(get_estudio_id)):
+    nombre = data.get("nombre", "Mi Estudio")
+    configs = {"nombre_estudio": nombre}
+    if data.get("provincia_principal"):
+        configs["provincia_principal"] = data["provincia_principal"]
+    if data.get("whatsapp"):
+        configs["whatsapp_estudio"] = data["whatsapp"]
+    if data.get("email_contacto"):
+        configs["email_estudio"] = data["email_contacto"]
+    for clave, valor in configs.items():
+        upd = db.from_("configuracion").update({"valor": valor}).eq("clave", clave).eq("estudio_id", estudio_id).execute()
+        if not upd.data:
+            db.from_("configuracion").insert({"clave": clave, "valor": valor, "estudio_id": estudio_id}).execute()
+    db.from_("estudios").update({"nombre": nombre, "onboarding_completo": True}).eq("id", estudio_id).execute()
+    return {"ok": True}
+
+@app.get("/componentes-provinciales/{provincia}/{categoria}")
+async def get_componente_provincial(provincia: str, categoria: str, tipo: str = "servicios"):
+    res = db.from_("componentes_provinciales").select("*") \
+        .eq("provincia", provincia).eq("categoria", categoria.upper()).eq("tipo", tipo) \
+        .lte("vigente_desde", datetime.date.today().isoformat()) \
+        .order("vigente_desde", desc=True).limit(1).execute()
+    return {"ok": True, "componente": res.data[0] if res.data else None}
+
 # Migración one-time: asigna todos los registros huérfanos al estudio del usuario
 @app.post("/estudios/migrar-datos")
 async def migrar_datos(estudio_id: str = Depends(get_estudio_id)):
@@ -381,6 +406,8 @@ async def crear_cliente(data: dict, estudio_id: str = Depends(get_estudio_id)):
         "cuit": cuit, "whatsapp": data.get("whatsapp", ""), "email": data.get("email", ""),
         "categoria": (data.get("categoria") or "").upper() or None,
         "cuota": data.get("cuota") or None, "activo": True,
+        "provincia": data.get("provincia", "Rio Negro"),
+        "iibb_modalidad": data.get("iibb_modalidad", "monotributo_unificado"),
         "estudio_id": estudio_id,
     }
     try:
