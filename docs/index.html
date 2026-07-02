@@ -1079,32 +1079,36 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
   }
 
   useEffect(() => {
+    setPlanes(null); setAlertas(null); setDocs(null); setRecats(null);
+  }, [cliente?.slug]);
+
+  useEffect(() => {
     if (!cliente) return;
-    if (tab === "planes" && planes === null) {
+    if (tab === "planes") {
       setCargandoTab(true);
       apiFetch(`${BACKEND_URL}/planes/${cliente.slug}`)
         .then(r=>r.json()).then(d=>{ setPlanes(Array.isArray(d)?d:[]); setCargandoTab(false); })
         .catch(()=>{ setPlanes([]); setCargandoTab(false); });
     }
-    if (tab === "alertas" && alertas === null) {
+    if (tab === "alertas") {
       setCargandoTab(true);
       apiFetch(`${BACKEND_URL}/alertas/${cliente.slug}`)
         .then(r=>r.json()).then(d=>{ setAlertas(Array.isArray(d)?d:[]); setCargandoTab(false); })
         .catch(()=>{ setAlertas([]); setCargandoTab(false); });
     }
-    if (tab === "documentos" && docs === null) {
+    if (tab === "documentos") {
       setCargandoTab(true);
       db.from("documentos").select("*").eq("cliente_id", cliente.id).order("created_at",{ascending:false})
         .then(r=>{ setDocs(r.data||[]); setCargandoTab(false); })
         .catch(()=>{ setDocs([]); setCargandoTab(false); });
     }
-    if (tab === "recategorizacion" && recats === null) {
+    if (tab === "recategorizacion") {
       setCargandoTab(true);
       apiFetch(`${BACKEND_URL}/clientes/${cliente.slug}/recategorizaciones`)
         .then(r=>r.json()).then(d=>{ setRecats(Array.isArray(d)?d:[]); setCargandoTab(false); })
         .catch(()=>{ setRecats([]); setCargandoTab(false); });
     }
-  }, [tab, cliente]);
+  }, [tab, cliente?.slug]);
 
   useEffect(()=>{
     if(!cliente) return;
