@@ -683,6 +683,7 @@ async def datos_portal(slug: str):
     fac_res = db.from_("facturacion").select("*").eq("cliente_id", cliente["id"]).order("anio").order("mes").execute()
     planes_res = db.from_("planes_pago").select("*").eq("cliente_id", cliente["id"]).eq("estado", "activo").execute()
     docs_res = db.from_("documentos").select("*").eq("cliente_id", cliente["id"]).order("created_at", desc=True).execute()
+    gastos_res = db.from_("gastos").select("*").eq("cliente_id", cliente["id"]).order("anio").order("mes").execute()
     alertas_res = db.from_("alertas").select("*").eq("cliente_id", cliente["id"]).eq("leida", False).execute()
     try:
         estudio_id_portal = cliente.get("estudio_id")
@@ -766,6 +767,9 @@ async def datos_portal(slug: str):
     hace_12m = (hoy_d.year - 1, hoy_d.month)
     montos_12 = [f["monto"] for f in facturacion if f.get("monto", 0) > 0 and (f["anio"], f["mes"]) >= hace_12m]
     total_fac = sum(montos_12)
+    gastos_todos = gastos_res.data or []
+    gastos_12 = [g for g in gastos_todos if (g["anio"], g["mes"]) >= hace_12m]
+    total_gastos = sum(g.get("monto", 0) or 0 for g in gastos_12)
     meses_cargados = len(montos_12) or 1
     pct = min(total_fac / tope, 1.05) if tope > 0 else 0
 
@@ -800,6 +804,7 @@ async def datos_portal(slug: str):
         "deuda_art": deuda_art, "deuda_arca": deuda_arca,
         "estado_cuota": estado_cuota,
         "ultima_recat": ultima_recat, "recat_pendiente": recat_pendiente,
+        "gastos": gastos_12, "total_gastos": total_gastos,
     }
 
 
