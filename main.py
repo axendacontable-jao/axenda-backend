@@ -889,6 +889,54 @@ async def importar_comprobantes(slug: str, file: UploadFile, estudio_id: str = D
         log_actividad(cliente_id, f"Importación ARCA — {slug} — {len(registros)} meses", estudio_id)
     return {"ok": True, "meses_importados": len(registros), "detalle": registros}
 
+@app.post("/importar-gastos/{slug}")
+async def importar_gastos(slug: str, file: UploadFile, estudio_id: str = Depends(get_estudio_id)):
+    try:
+        cliente = db.from_("clientes").select("id").eq("slug", slug).eq("estudio_id", estudio_id).single().execute()
+    except Exception:
+        raise HTTPException(404, "Cliente no encontrado")
+    if not cliente.data:
+        raise HTTPException(404, "Cliente no encontrado")
+    cliente_id = cliente.data["id"]
+    contenido = await file.read()
+    df = pd.read_excel(io.BytesIO(contenido), header=1)
+    df = df[df["Fecha"].notna()].copy()
+    df["Fecha"] = pd.to_datetime(df["Fecha"], dayfirst=True, errors="coerce")
+    df = df[df["Fecha"].notna()]
+    df["Imp. Total"] = pd.to_numeric(df["Imp. Total"], errors="coerce").fillna(0)
+    if "Tipo" in df.columns:
+        es_nc = df["Tipo"].astype(str).str.contains("Nota de Cr", case=False, na=False)
+        df.loc[es_nc, "Imp. Total"] = -df.loc[es_nc, "Imp. Total"]
+    df["mes"] = df["Fecha"].dt.month
+    df["anio"] = df["Fecha"].dt.year
+    totales = df.groupby(["anio", "mes"])["Imp. Total"].sum().reset_index()
+    registros = []
+    for _, row in totales.iterrows():
+        registros.append({
+            "cliente_id": cliente_id,
+            "anio": int(row["anio"]),
+            "mes": int(row["mes"]),
+            "monto": float(row["Imp. Total"]),
+            "fuente": "arca_excel",
+            "estudio_id": estudio_id,
+        })
+    for r in registros:
+        db.from_("gastos").upsert(r, on_conflict="cliente_id,anio,mes").execute()
+    if registros:
+        log_actividad(cliente_id, f"Importación gastos ARCA — {slug} — {len(registros)} meses", estudio_id)
+    return {"ok": True, "meses_importados": len(registros), "detalle": registros}
+
+@app.get("/gastos/{slug}")
+async def gastos_cliente(slug: str, estudio_id: str = Depends(get_estudio_id)):
+    try:
+        cliente = db.from_("clientes").select("id").eq("slug", slug).eq("estudio_id", estudio_id).single().execute()
+    except Exception:
+        raise HTTPException(404, "Cliente no encontrado")
+    if not cliente.data:
+        raise HTTPException(404, "Cliente no encontrado")
+    result = db.from_("gastos").select("*").eq("cliente_id", cliente.data["id"]).order("anio").order("mes").execute()
+    return result.data or []
+
 # ─── Planes de pago ──────────────────────────────────────────────────────────
 
 @app.get("/planes")

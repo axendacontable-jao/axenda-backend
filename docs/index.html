@@ -1034,12 +1034,13 @@ function ModalNuevoPlan({ slug, onClose, onGuardado, initialData }) {
 }
 
 // ── Vista detalle cliente ──
-function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importando, onActualizarEstado, onPlanGuardado, onActualizarCuota, onActualizarDatos }) {
+function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, onImportarGastos, importando, importandoGastos, gastosVersion, onActualizarEstado, onPlanGuardado, onActualizarCuota, onActualizarDatos }) {
   const [tab, setTab]             = useState("facturacion");
   const [planes, setPlanes]       = useState(null);
   const [alertas, setAlertas]     = useState(null);
   const [docs, setDocs]           = useState(null);
   const [recats, setRecats]       = useState(null);
+  const [gastos, setGastos]       = useState(null);
   const [modalPlan, setModalPlan] = useState(false);
   const [planInicial, setPlanInicial] = useState(null);
   const [modalDoc, setModalDoc]   = useState(false);
@@ -1104,6 +1105,14 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
         .catch(()=>{ setRecats([]); setCargandoTab(false); });
     }
   }, [tab, cliente]);
+
+  useEffect(()=>{
+    if(!cliente) return;
+    setGastos(null);
+    apiFetch(`${BACKEND_URL}/gastos/${cliente.slug}`)
+      .then(r=>r.json()).then(d=>setGastos(Array.isArray(d)?d:[]))
+      .catch(()=>setGastos([]));
+  },[cliente?.slug, gastosVersion]);
 
   async function recargarPlanes() {
     const res = await apiFetch(`${BACKEND_URL}/planes/${cliente.slug}`);
@@ -1185,8 +1194,11 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
               💬 WhatsApp
             </button>
           )}
-          <button className="action-chip" onClick={()=>onImportar(cliente.slug)} disabled={importando===cliente.slug}>
-            ↑ {importando===cliente.slug?"Importando...":"Importar ARCA"}
+          <button className="action-chip" onClick={()=>onImportarFacturas(cliente.slug)} disabled={importando===cliente.slug}>
+            {importando===cliente.slug?"Importando...":"↑ Facturas emitidas"}
+          </button>
+          <button className="action-chip" onClick={()=>onImportarGastos(cliente.slug)} disabled={importandoGastos===cliente.slug}>
+            {importandoGastos===cliente.slug?"Importando...":"↑ Gastos"}
           </button>
           <a className="action-chip" href={PORTAL_URL} target="_blank" rel="noopener">↗ Ver portal</a>
           <button className="action-chip" onClick={()=>setModalEditar(true)}>✏ Editar datos</button>
@@ -1244,6 +1256,41 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
               </div>
             ))}
           </div>
+          <div className="detail-section">
+            <div className="section-title">Gastos</div>
+            {gastos===null ? (
+              <div style={{height:"60px",borderRadius:"8px"}} className="skeleton"/>
+            ) : gastos.length===0 ? (
+              <div style={{textAlign:"center",padding:"20px",color:"var(--muted)",fontSize:"13px"}}>Sin gastos importados. Usá el botón <strong>↑ Gastos</strong> para importar el Excel de Mis Comprobantes de ARCA.</div>
+            ) : (()=>{
+              const g12=gastos.filter(g=>g.anio>_detH12[0]||(g.anio===_detH12[0]&&g.mes>=_detH12[1]));
+              const totalG=g12.reduce((a,b)=>a+(b.monto||0),0);
+              const maxG=Math.max(...g12.map(g=>g.monto||0),1);
+              const ratio=total_fac>0?Math.round(totalG/total_fac*100):0;
+              return (
+                <>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:"14px"}}>
+                    <div>
+                      <div style={{fontSize:"26px",fontWeight:"300",fontFamily:"'DM Mono',monospace",lineHeight:1}}>{$$(totalG)}</div>
+                      <div style={{fontSize:"12px",color:"var(--muted)",marginTop:"4px"}}>total del período (12 meses)</div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontSize:"22px",fontWeight:"600",fontFamily:"'DM Mono',monospace",color:ratio>80?"var(--red)":ratio>50?"var(--yellow)":"var(--green)"}}>{ratio}%</div>
+                      <div style={{fontSize:"11px",color:"var(--muted)"}}>gastos / ingresos</div>
+                    </div>
+                  </div>
+                  {g12.sort((a,b)=>a.anio===b.anio?a.mes-b.mes:a.anio-b.anio).map((g,i)=>(
+                    <div key={i} className="month-row">
+                      <div className="month-label">{MESES[g.mes-1]} {g.anio}</div>
+                      <div className="month-bar-wrap"><div className="month-bar-track"><div className="month-bar-fill" style={{width:`${Math.round((g.monto/maxG)*100)}%`,background:"var(--yellow)"}}/></div></div>
+                      <div className="month-amount">{$$(g.monto)}</div>
+                    </div>
+                  ))}
+                </>
+              );
+            })()}
+          </div>
+
           <div className="detail-section">
             <div className="section-title">Datos del cliente</div>
             <div className="info-row"><div className="info-key">CUIT</div><div className="info-val" style={{fontFamily:"'DM Mono',monospace"}}>{cliente.cuit||"—"}</div></div>
@@ -2783,12 +2830,16 @@ function App() {
   const [modal,setModal]         = useState(false);
   const [toast,setToast]         = useState(null);
   const [importando,setImportando] = useState(null);
+  const [importandoGastos,setImportandoGastos] = useState(null);
+  const [gastosVersion,setGastosVersion] = useState(0);
   const [importResult,setImportResult] = useState(null);
   const [seccion,setSeccion]     = useState("dashboard");
   const [clienteDetalle,setClienteDetalle] = useState(null);
   const [datosError,setDatosError]         = useState(null);
-  const fileInputRef  = useRef(null);
-  const importSlugRef = useRef(null);
+  const fileInputRef        = useRef(null);
+  const importSlugRef       = useRef(null);
+  const fileGastosRef       = useRef(null);
+  const importGastosSlugRef = useRef(null);
   const recat = proximaRecategorizacion();
 
   async function cargarDatos(){
@@ -2841,7 +2892,8 @@ function App() {
     setClientes(prev=>prev.map(x=>x.id===c.id?{...x,estado_pago:nuevoEstado}:x));
     if(!silencioso) mostrarToast(`${c.nombre} → ${nuevoEstado==="al_dia"?"pagado ✓":"pendiente"}`);
   }
-  function abrirImport(slug){importSlugRef.current=slug;fileInputRef.current.value="";fileInputRef.current.click();}
+  function abrirImportFacturas(slug){importSlugRef.current=slug;fileInputRef.current.value="";fileInputRef.current.click();}
+  function abrirImportGastos(slug){importGastosSlugRef.current=slug;fileGastosRef.current.value="";fileGastosRef.current.click();}
   async function handleImportFile(e){
     const file=e.target.files[0]; if(!file) return;
     const slug=importSlugRef.current;
@@ -2854,6 +2906,19 @@ function App() {
       else alert("Error al importar: "+JSON.stringify(d));
     }catch(err){alert("Error al importar: "+err.message);}
     setImportando(null);
+  }
+  async function handleGastosFile(e){
+    const file=e.target.files[0]; if(!file) return;
+    const slug=importGastosSlugRef.current;
+    setImportandoGastos(slug);
+    try {
+      const fd=new FormData(); fd.append("file",file);
+      const res=await apiFetch(`${BACKEND_URL}/importar-gastos/${slug}`,{method:"POST",body:fd});
+      const d=await res.json();
+      if(d.ok){setGastosVersion(v=>v+1);mostrarToast(`Gastos importados: ${d.meses_importados} meses`);}
+      else alert("Error al importar gastos: "+JSON.stringify(d));
+    }catch(err){alert("Error al importar gastos: "+err.message);}
+    setImportandoGastos(null);
   }
 
   const _app12=new Date(),_appH12=[_app12.getFullYear()-1,_app12.getMonth()+1];
@@ -2950,8 +3015,11 @@ function App() {
               movs={factura[clienteSeleccionado?.id]||[]}
               topes={topes}
               onBack={()=>setClienteDetalle(null)}
-              onImportar={abrirImport}
+              onImportarFacturas={abrirImportFacturas}
+              onImportarGastos={abrirImportGastos}
               importando={importando}
+              importandoGastos={importandoGastos}
+              gastosVersion={gastosVersion}
               onActualizarEstado={actualizarEstadoPago}
               onPlanGuardado={async()=>{
                 const planRes=await apiFetch(`${BACKEND_URL}/planes`).then(r=>r.json()).catch(()=>[]);
@@ -3033,7 +3101,8 @@ function App() {
                           </div>
                           <div style={{display:"flex",flexDirection:"column",gap:"6px",alignItems:"flex-end"}} onClick={e=>e.stopPropagation()}>
                             <a className="cliente-link" href={PORTAL_URL} target="_blank" rel="noopener" onClick={e=>e.stopPropagation()}>Ver portal ↗</a>
-                            <button onClick={e=>{e.stopPropagation();abrirImport(c.slug);}} disabled={importando===c.slug} style={{fontSize:"11px",background:"none",border:"1px solid var(--border)",borderRadius:"6px",cursor:"pointer",fontFamily:"inherit",fontWeight:"500",color:"var(--muted)",padding:"3px 8px",opacity:importando===c.slug?0.6:1}}>{importando===c.slug?"Importando...":"↑ ARCA"}</button>
+                            <button onClick={e=>{e.stopPropagation();abrirImportFacturas(c.slug);}} disabled={importando===c.slug} style={{fontSize:"11px",background:"none",border:"1px solid var(--border)",borderRadius:"6px",cursor:"pointer",fontFamily:"inherit",fontWeight:"500",color:"var(--muted)",padding:"3px 8px",opacity:importando===c.slug?0.6:1}}>{importando===c.slug?"Importando...":"↑ Facturas"}</button>
+                            <button onClick={e=>{e.stopPropagation();abrirImportGastos(c.slug);}} disabled={importandoGastos===c.slug} style={{fontSize:"11px",background:"none",border:"1px solid var(--border)",borderRadius:"6px",cursor:"pointer",fontFamily:"inherit",fontWeight:"500",color:"var(--muted)",padding:"3px 8px",opacity:importandoGastos===c.slug?0.6:1}}>{importandoGastos===c.slug?"Importando...":"↑ Gastos"}</button>
                             <button onClick={e=>{e.stopPropagation();toggleActivo(c);}} style={{fontSize:"11px",background:"none",border:"none",cursor:"pointer",fontFamily:"inherit",fontWeight:"500",color:c.activo?"#E04545":"#2BAF82"}}>{c.activo?"Desactivar":"Activar"}</button>
                           </div>
                         </div>
@@ -3050,6 +3119,7 @@ function App() {
       {modal&&<ModalNuevoCliente onClose={()=>setModal(false)} topes={topes} cuitInicial={busqueda.replace(/\D/g,"")} onGuardado={slug=>{cargarDatos();mostrarToast(`Cliente agregado.`);}}/>}
       {importResult&&<ModalImportResult result={importResult} onClose={()=>setImportResult(null)}/>}
       <input ref={fileInputRef} type="file" accept=".xlsx" style={{display:"none"}} onChange={handleImportFile}/>
+      <input ref={fileGastosRef} type="file" accept=".xlsx" style={{display:"none"}} onChange={handleGastosFile}/>
       {toast&&<div className="toast">{toast}</div>}
     </div>
   );
