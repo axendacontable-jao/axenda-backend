@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "axenda-portal",
+      "runtimeExecutable": "C:\\Users\\julia\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+      "runtimeArgs": ["-m", "http.server", "3000", "--directory", "C:\\Users\\julia\\axenda-portal"],
+      "port": 3000
+    },
+    {
+      "name": "axenda-admin",
+      "runtimeExecutable": "C:\\Users\\julia\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+      "runtimeArgs": ["-m", "http.server", "3001", "--directory", "docs"],
+      "port": 3001
+    }
+  ]
+}

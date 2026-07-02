@@ -388,16 +388,26 @@ function $$(n) {
 function proximaRecategorizacion() {
   const hoy = new Date();
   const y = hoy.getFullYear();
-  const NOMBRES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
-  const CORTOS  = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
-  const candidatos = [new Date(y,1,1), new Date(y,7,1), new Date(y+1,1,1)];
-  const prox = candidatos.find(d => d > hoy);
-  return {
-    dias: Math.ceil((prox - hoy) / (1000*60*60*24)),
-    nombre: `Recategorización ${NOMBRES[prox.getMonth()]} ${prox.getFullYear()}`,
-    corto: `${CORTOS[prox.getMonth()]} ${prox.getFullYear()}`,
-    mes: prox.getMonth(),
-  };
+  const C = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+  // Ventanas: 20 Ene – 5 Feb (recat Febrero) y 20 Jul – 5 Ago (recat Agosto)
+  const ventanas = [
+    { ini: new Date(y,0,20), fin: new Date(y,1,5),  nombre:`Recategorización Febrero ${y}`,   corto:`Feb ${y}`,   mes:1, periodo:`Ene–Dic ${y-1}` },
+    { ini: new Date(y,6,20), fin: new Date(y,7,5),  nombre:`Recategorización Agosto ${y}`,    corto:`Ago ${y}`,   mes:7, periodo:`Jul ${y-1}–Jun ${y}` },
+    { ini: new Date(y+1,0,20), fin: new Date(y+1,1,5), nombre:`Recategorización Febrero ${y+1}`, corto:`Feb ${y+1}`, mes:1, periodo:`Ene–Dic ${y}` },
+  ];
+  const vent = (v) => `${v.ini.getDate()} ${C[v.ini.getMonth()]} – ${v.fin.getDate()} ${C[v.fin.getMonth()]}`;
+  // ¿Estamos dentro de una ventana abierta?
+  const abierta = ventanas.find(v => hoy >= v.ini && hoy <= v.fin);
+  if (abierta) {
+    return { abierta:true, dias:Math.ceil((abierta.fin-hoy)/86400000),
+      nombre:abierta.nombre, corto:abierta.corto, mes:abierta.mes,
+      periodo:abierta.periodo, ventanaLabel:vent(abierta) };
+  }
+  // Próxima ventana que aún no comenzó
+  const prox = ventanas.find(v => v.ini > hoy);
+  return { abierta:false, dias:Math.ceil((prox.ini-hoy)/86400000),
+    nombre:prox.nombre, corto:prox.corto, mes:prox.mes,
+    periodo:prox.periodo, ventanaLabel:vent(prox) };
 }
 function semaforoInfo(pct) {
   if (!pct || pct === 0) return { label:"SIN DATOS", clase:"pill-gris",    fillClass:"fill-verde",    color:"#6B7A96" };
@@ -488,15 +498,21 @@ function ChipEstadoCuota({ cliente, onChange }) {
 
 // ── Modal cargar documento ──
 function ModalCargarDocumento({ slug, onClose, onGuardado }) {
-  const [form,setForm]=useState({tipo:"constancia",nombre:"",fecha:"",url:""});
+  const [form,setForm]=useState({tipo:"constancia",nombre:"",fecha:""});
+  const [archivo,setArchivo]=useState(null);
   const [guardando,setGuardando]=useState(false);
   const set=(k,v)=>setForm(p=>({...p,[k]:v}));
   async function guardar(){
-    if (!form.nombre&&!form.url) return;
+    if (!form.nombre&&!archivo) return;
     setGuardando(true);
     try {
-      const payload={tipo:form.tipo,nombre:form.nombre||null,fecha:parseArgDate(form.fecha)||null,url:form.url||null};
-      const res=await apiFetch(`${BACKEND_URL}/documentos/${slug}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+      const fd=new FormData();
+      fd.append("tipo",form.tipo);
+      if(form.nombre) fd.append("nombre",form.nombre);
+      const fechaIso=parseArgDate(form.fecha);
+      if(fechaIso) fd.append("fecha",fechaIso);
+      if(archivo) fd.append("archivo",archivo);
+      const res=await apiFetch(`${BACKEND_URL}/documentos/${slug}`,{method:"POST",body:fd});
       const d=await res.json();
       if(d.ok){onGuardado();onClose();}else alert("Error: "+JSON.stringify(d));
     }catch(e){alert("Error: "+e.message);}
@@ -516,11 +532,58 @@ function ModalCargarDocumento({ slug, onClose, onGuardado }) {
         <div className="form-group"><label className="form-label">Nombre / descripción</label><input className="form-input" value={form.nombre} onChange={e=>set("nombre",e.target.value)} placeholder="Constancia de inscripción"/></div>
         <div className="form-row">
           <div className="form-group"><label className="form-label">Fecha (dd/mm/aaaa)</label><input className="form-input" value={form.fecha} onChange={e=>set("fecha",e.target.value)} placeholder="20/01/2026"/></div>
-          <div className="form-group"><label className="form-label">URL (opcional)</label><input className="form-input" value={form.url} onChange={e=>set("url",e.target.value)} placeholder="https://drive.google.com/..."/></div>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Archivo PDF</label>
+          <input type="file" accept=".pdf,application/pdf" className="form-input" style={{padding:"8px"}}
+            onChange={e=>setArchivo(e.target.files[0]||null)}/>
+          {archivo&&<div style={{fontSize:"12px",marginTop:"4px",color:"var(--green)"}}>✓ {archivo.name}</div>}
         </div>
         <div className="modal-actions">
           <button className="btn-secondary" onClick={onClose}>Cancelar</button>
-          <button className="btn-primary" onClick={guardar} disabled={(!form.nombre&&!form.url)||guardando}>{guardando?"Guardando...":"Cargar documento"}</button>
+          <button className="btn-primary" onClick={guardar} disabled={(!form.nombre&&!archivo)||guardando}>{guardando?"Subiendo...":"Cargar documento"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Modal registrar recategorización ──
+function ModalRegistrarRecat({ slug, catActual, onClose, onGuardado }) {
+  const [fecha,setFecha]=useState("");
+  const [catNueva,setCatNueva]=useState(catActual||"A");
+  const [guardando,setGuardando]=useState(false);
+  async function guardar(){
+    const f=parseArgDate(fecha); if(!f||!catNueva) return;
+    setGuardando(true);
+    try{
+      const res=await apiFetch(`${BACKEND_URL}/clientes/${slug}/recategorizar`,{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({fecha:f,categoria_anterior:catActual,categoria_nueva:catNueva})
+      });
+      const d=await res.json();
+      if(d.ok){onGuardado();onClose();}else alert("Error: "+JSON.stringify(d));
+    }catch(e){alert("Error: "+e.message);}
+    setGuardando(false);
+  }
+  return (
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="modal" style={{maxWidth:"360px"}}>
+        <div className="modal-title">Registrar recategorización</div>
+        <div className="form-group">
+          <label className="form-label">Fecha de presentación (dd/mm/aaaa)</label>
+          <input className="form-input" value={fecha} onChange={e=>setFecha(e.target.value)} placeholder="31/01/2026"/>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Categoría nueva</label>
+          <select className="form-input" value={catNueva} onChange={e=>setCatNueva(e.target.value)}>
+            {["A","B","C","D","E","F","G","H","I","J","K"].map(c=><option key={c}>{c}</option>)}
+          </select>
+        </div>
+        {catActual&&<div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"16px"}}>Categoría anterior: <strong>{catActual}</strong></div>}
+        <div className="modal-actions">
+          <button className="btn-secondary" onClick={onClose}>Cancelar</button>
+          <button className="btn-primary" onClick={guardar} disabled={!fecha||!catNueva||guardando}>{guardando?"Guardando...":"Registrar"}</button>
         </div>
       </div>
     </div>
@@ -976,9 +1039,11 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
   const [planes, setPlanes]       = useState(null);
   const [alertas, setAlertas]     = useState(null);
   const [docs, setDocs]           = useState(null);
+  const [recats, setRecats]       = useState(null);
   const [modalPlan, setModalPlan] = useState(false);
   const [planInicial, setPlanInicial] = useState(null);
   const [modalDoc, setModalDoc]   = useState(false);
+  const [modalRecat, setModalRecat] = useState(false);
   const [nuevaAlerta, setNuevaAlerta] = useState({ tipo:"vencimiento", mensaje:"" });
   const [cargandoTab, setCargandoTab] = useState(false);
   const [parsandoPlan, setParsandoPlan] = useState(false);
@@ -1031,6 +1096,12 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
       db.from("documentos").select("*").eq("cliente_id", cliente.id).order("created_at",{ascending:false})
         .then(r=>{ setDocs(r.data||[]); setCargandoTab(false); })
         .catch(()=>{ setDocs([]); setCargandoTab(false); });
+    }
+    if (tab === "recategorizacion" && recats === null) {
+      setCargandoTab(true);
+      apiFetch(`${BACKEND_URL}/clientes/${cliente.slug}/recategorizaciones`)
+        .then(r=>r.json()).then(d=>{ setRecats(Array.isArray(d)?d:[]); setCargandoTab(false); })
+        .catch(()=>{ setRecats([]); setCargandoTab(false); });
     }
   }, [tab, cliente]);
 
@@ -1124,9 +1195,9 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
 
       {/* Tabs */}
       <div className="tabs">
-        {["facturacion","planes","documentos","alertas"].map(t=>(
+        {["facturacion","planes","documentos","recategorizacion","alertas"].map(t=>(
           <button key={t} className={`tab-btn ${tab===t?"active":""}`} onClick={()=>setTab(t)}>
-            {t==="facturacion"?"Facturación":t==="planes"?"Planes de pago":t==="documentos"?"Documentos":"Alertas"}
+            {t==="facturacion"?"Facturación":t==="planes"?"Planes de pago":t==="documentos"?"Documentos":t==="recategorizacion"?"Recategorización":"Alertas"}
             {t==="planes"&&planes&&planes.filter(p=>p.estado==="activo").length>0&&(
               <span style={{marginLeft:"6px",background:"var(--blue)",color:"#fff",borderRadius:"10px",fontSize:"10px",fontWeight:"700",padding:"1px 7px"}}>{planes.filter(p=>p.estado==="activo").length}</span>
             )}
@@ -1151,7 +1222,10 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
                 <div className={`bar-fill ${sem.fillClass}`} style={{width:`${Math.min(pct*100,100)}%`}}/>
               </div>
               <div style={{display:"flex",justifyContent:"space-between",fontSize:"11px",color:"var(--muted)",marginTop:"6px"}}>
-                <span>{recat.dias} días para {recat.nombre}</span>
+                {recat.abierta
+                  ? <span style={{color:"var(--red)",fontWeight:"600"}}>⚠️ Ventana de recategorización abierta ({recat.ventanaLabel})</span>
+                  : <span>Faltan {recat.dias} días para la ventana ({recat.ventanaLabel})</span>
+                }
                 <span style={{color:pct>=1?"var(--red)":pct>=0.6?"var(--yellow)":"var(--green)",fontWeight:"500"}}>
                   {pct>=1?`${$$(total_fac-tope_anual)} en exceso`:`${$$(tope_anual-total_fac)} margen restante`}
                 </span>
@@ -1342,6 +1416,58 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportar, importan
       )}
 
       {modalDoc&&<ModalCargarDocumento slug={cliente.slug} onClose={()=>setModalDoc(false)} onGuardado={()=>{setModalDoc(false);setDocs(null);setTimeout(()=>setTab("documentos"),50);}}/>}
+
+      {/* Tab: Recategorización */}
+      {tab==="recategorizacion"&&(()=>{
+        const ventana = proximaRecategorizacion();
+        const ultima = recats&&recats[0];
+        const recatHecha = ultima && ventana.abierta
+          ? (()=>{ const f=new Date(ultima.fecha+"T12:00:00"); const ini=new Date(); ini.setMonth(ventana.mes===7?6:0); ini.setDate(20); return f>=ini; })()
+          : !!ultima;
+        return (
+          <div className="detail-section">
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"16px"}}>
+              <div className="section-title" style={{marginBottom:0}}>Recategorización</div>
+              <button className="add-btn" style={{fontSize:"12px",padding:"8px 14px"}} onClick={()=>setModalRecat(true)}>+ Registrar</button>
+            </div>
+            {cargandoTab ? (
+              <div style={{height:"60px",borderRadius:"8px"}} className="skeleton"/>
+            ) : (
+              <>
+                <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"20px",padding:"14px 16px",borderRadius:"10px",background:ventana.abierta&&!recatHecha?"#E0454508":"#2BAF8208",border:`1px solid ${ventana.abierta&&!recatHecha?"#E0454530":"#2BAF8230"}`}}>
+                  <div style={{fontSize:"20px"}}>{ventana.abierta&&!recatHecha?"⚠️":recatHecha?"✅":"📊"}</div>
+                  <div>
+                    <div style={{fontWeight:"600",fontSize:"13px",color:ventana.abierta&&!recatHecha?"var(--red)":recatHecha?"var(--green)":"var(--text)"}}>
+                      {ventana.abierta&&!recatHecha?"Pendiente — ventana abierta":recatHecha?"Hecha en esta ventana":"Sin ventana activa"}
+                    </div>
+                    <div style={{fontSize:"12px",color:"var(--muted)",marginTop:"2px"}}>
+                      {ventana.abierta?`Ventana: ${ventana.ventanaLabel} · ${ventana.dias} días restantes`:`Próxima ventana: ${ventana.ventanaLabel}`}
+                    </div>
+                  </div>
+                </div>
+                {!recats||recats.length===0 ? (
+                  <div style={{textAlign:"center",padding:"20px",color:"var(--muted)",fontSize:"13px"}}>Sin recategorizaciones registradas.</div>
+                ) : (
+                  <div>
+                    <div style={{fontSize:"11px",fontWeight:"600",color:"var(--muted)",textTransform:"uppercase",letterSpacing:".05em",marginBottom:"8px"}}>Historial</div>
+                    {recats.map((r,i)=>(
+                      <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",borderRadius:"8px",background:"var(--light)",marginBottom:"6px",fontSize:"13px"}}>
+                        <div>
+                          <span style={{fontWeight:"600"}}>{formatArgDate(r.fecha)}</span>
+                          {r.categoria_anterior&&r.categoria_nueva&&<span style={{color:"var(--muted)",marginLeft:"10px"}}>Cat. {r.categoria_anterior} → <strong style={{color:"var(--blue)"}}>{r.categoria_nueva}</strong></span>}
+                          {!r.categoria_anterior&&r.categoria_nueva&&<span style={{color:"var(--muted)",marginLeft:"10px"}}>Cat. <strong style={{color:"var(--blue)"}}>{r.categoria_nueva}</strong></span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        );
+      })()}
+
+      {modalRecat&&<ModalRegistrarRecat slug={cliente.slug} catActual={cliente.categoria} onClose={()=>setModalRecat(false)} onGuardado={()=>{setModalRecat(false);setRecats(null);setTimeout(()=>setTab("recategorizacion"),50);}}/>}
 
       {/* Tab: Alertas */}
       {tab==="alertas"&&(
@@ -1877,9 +2003,11 @@ function CalendarioVencimientos({ planes, clientes, tareas }) {
   function add(dia,ev){if(!eventos[dia])eventos[dia]=[];eventos[dia].push(ev);}
   // Cuota monotributo — verde
   add(20,{tipo:"cuota",label:"Cuota"});
-  // Cortes recategorización — rojo
-  if(mes===1)add(1,{tipo:"corte",label:"Recat. Feb"});
-  if(mes===7)add(1,{tipo:"corte",label:"Recat. Ago"});
+  // Ventanas de recategorización — inicio (20) y cierre (5 del mes siguiente)
+  if(mes===0) add(20,{tipo:"corte",label:"↑ Recat."});
+  if(mes===1) add(5,{tipo:"corte",label:"↓ Fin Recat. Feb"});
+  if(mes===6) add(20,{tipo:"corte",label:"↑ Recat."});
+  if(mes===7) add(5,{tipo:"corte",label:"↓ Fin Recat. Ago"});
   // Planes de pago del mes — verde
   planes.filter(p=>p.proximo_venc&&p.estado==="activo").forEach(p=>{
     try{
@@ -2461,12 +2589,26 @@ function LoginScreen({ onLogin }) {
       if (err) setError(err.message === "Invalid login credentials" ? "Email o contraseña incorrectos" : err.message);
       else onLogin(data.session);
     } else {
-      const { error: err } = await db.auth.signUp({
-        email, password,
-        options: { data: { nombre_estudio: nombre || "Mi Estudio" } }
-      });
-      if (err) setError(err.message);
-      else setModo("verify");
+      try {
+        const { data, error: err } = await db.auth.signUp({
+          email, password,
+          options: { data: { nombre_estudio: nombre || "Mi Estudio" } }
+        });
+        if (err) {
+          const msg = typeof err.message === "string" && err.message && err.message !== "{}" ? err.message : null;
+          if (!msg || msg.includes("confirmation email") || msg.includes("unexpected_failure")) {
+            setError("No se pudo enviar el email de confirmación. Verificá que el email sea correcto o avisá al administrador.");
+          } else {
+            setError(msg);
+          }
+        } else if (data?.session) {
+          onLogin(data.session);
+        } else {
+          setModo("verify");
+        }
+      } catch(e) {
+        setError("Error inesperado al registrarse: " + (e.message || "intentá de nuevo."));
+      }
     }
     setCargando(false);
   }
@@ -2781,7 +2923,10 @@ function App() {
               : titulos[seccion]||"Dashboard"}
           </div>
           <div className="topbar-right">
-            <div style={{fontSize:"12px",color:"#E8A020",fontWeight:"500"}}>⏱ {recat.dias}d · {recat.nombre}</div>
+            {recat.abierta
+              ? <div style={{fontSize:"12px",color:"var(--red)",fontWeight:"600"}}>🔴 Ventana recat. abierta</div>
+              : <div style={{fontSize:"12px",color:"#E8A020",fontWeight:"500"}}>⏱ {recat.dias}d · {recat.corto}</div>
+            }
             <div className="topbar-date">{MESES[hoy.getMonth()]} {hoy.getFullYear()}</div>
           </div>
         </div>
@@ -2879,7 +3024,9 @@ function App() {
                           <div>
                             <div className="cliente-cuota">{c.cuota?$$(c.cuota)+"/mes":"Cuota —"}</div>
                             <div style={{display:"flex",alignItems:"center",gap:"6px",marginTop:"4px",flexWrap:"wrap"}}>
-                              <div className="cliente-dias">{recat.dias}d · {recat.corto}</div>
+                              <div className="cliente-dias" style={recat.abierta?{color:"var(--red)",fontWeight:"600"}:{}}>
+                                {recat.abierta ? "⚠️ Recat. abierta" : `${recat.dias}d · ${recat.corto}`}
+                              </div>
                               <IIBBBadge modalidad={c.iibb_modalidad} small={true}/>
                               {c.en_relacion_dependencia&&<span style={{display:"inline-block",padding:"2px 7px",borderRadius:"20px",fontSize:"10px",fontWeight:"600",color:"#7C3AED",background:"#7C3AED15"}}>Rel. Dep.</span>}
                             </div>

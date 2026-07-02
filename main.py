@@ -2,7 +2,7 @@
 from pathlib import Path
 from dotenv import load_dotenv
 from lxml import etree
-from fastapi import FastAPI, HTTPException, UploadFile, Depends, Request
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Request
 import pandas as pd
 import io
 from fastapi.middleware.cors import CORSMiddleware
@@ -768,6 +768,28 @@ async def datos_portal(slug: str):
     total_fac = sum(montos_12)
     meses_cargados = len(montos_12) or 1
     pct = min(total_fac / tope, 1.05) if tope > 0 else 0
+
+    # Última recategorización y flag pendiente
+    try:
+        recat_res = db.from_("recategorizaciones").select("*").eq("cliente_id", cliente["id"]).order("fecha", desc=True).limit(1).execute()
+        ultima_recat = recat_res.data[0] if recat_res.data else None
+    except Exception:
+        ultima_recat = None
+    y_hoy = hoy_d.year
+    ventanas_recat = [
+        (datetime.date(y_hoy, 1, 20), datetime.date(y_hoy, 2, 5)),
+        (datetime.date(y_hoy, 7, 20), datetime.date(y_hoy, 8, 5)),
+    ]
+    ventana_actual = next((v for v in ventanas_recat if v[0] <= hoy_d <= v[1]), None)
+    if ventana_actual:
+        if ultima_recat:
+            ultima_fecha = datetime.date.fromisoformat(ultima_recat["fecha"])
+            recat_pendiente = ultima_fecha < ventana_actual[0]
+        else:
+            recat_pendiente = True
+    else:
+        recat_pendiente = False
+
     return {
         "cliente": cliente, "tope": tope, "facturacion": facturacion,
         "total_fac": total_fac, "promedio": total_fac / meses_cargados,
@@ -777,6 +799,7 @@ async def datos_portal(slug: str):
         "deuda_total": deuda_total, "deuda_desc": deuda_desc,
         "deuda_art": deuda_art, "deuda_arca": deuda_arca,
         "estado_cuota": estado_cuota,
+        "ultima_recat": ultima_recat, "recat_pendiente": recat_pendiente,
     }
 
 
@@ -1539,19 +1562,40 @@ async def eliminar_alerta(alerta_id: str, estudio_id: str = Depends(get_estudio_
 # ─── Documentos ──────────────────────────────────────────────────────────────
 
 @app.post("/documentos/{slug}")
-async def crear_documento(slug: str, data: dict, estudio_id: str = Depends(get_estudio_id)):
+async def crear_documento(
+    slug: str,
+    estudio_id: str = Depends(get_estudio_id),
+    tipo: str = Form(...),
+    nombre: str = Form(None),
+    fecha: str = Form(None),
+    archivo: UploadFile = File(None),
+):
     try:
         cliente = db.from_("clientes").select("id").eq("slug", slug).eq("estudio_id", estudio_id).single().execute()
     except Exception:
         raise HTTPException(404, "Cliente no encontrado")
     if not cliente.data:
         raise HTTPException(404, "Cliente no encontrado")
+    url = None
+    if archivo and archivo.filename:
+        try:
+            file_bytes = await archivo.read()
+            ext = archivo.filename.rsplit(".", 1)[-1].lower() if "." in archivo.filename else "pdf"
+            file_path = f"{cliente.data['id']}/{uuid.uuid4()}.{ext}"
+            db.storage.from_("documentos-axenda").upload(
+                path=file_path,
+                file=file_bytes,
+                file_options={"content-type": archivo.content_type or "application/pdf"},
+            )
+            url = db.storage.from_("documentos-axenda").get_public_url(file_path)
+        except Exception as e:
+            raise HTTPException(500, f"Error al subir archivo: {str(e)}")
     doc = {
         "cliente_id": cliente.data["id"],
-        "nombre":     data.get("nombre"),
-        "tipo":       data.get("tipo"),
-        "fecha":      data.get("fecha"),
-        "url":        data.get("url"),
+        "nombre":     nombre,
+        "tipo":       tipo,
+        "fecha":      fecha or None,
+        "url":        url,
         "estudio_id": estudio_id,
     }
     try:
@@ -1559,6 +1603,39 @@ async def crear_documento(slug: str, data: dict, estudio_id: str = Depends(get_e
     except Exception as e:
         raise HTTPException(500, f"Error al guardar documento: {str(e)}")
     return {"ok": True, "data": result.data}
+
+# ─── Recategorizaciones ───────────────────────────────────────────────────────
+
+@app.get("/clientes/{slug}/recategorizaciones")
+async def listar_recategorizaciones(slug: str, estudio_id: str = Depends(get_estudio_id)):
+    try:
+        cliente = db.from_("clientes").select("id").eq("slug", slug).eq("estudio_id", estudio_id).single().execute()
+    except Exception:
+        raise HTTPException(404, "Cliente no encontrado")
+    if not cliente.data:
+        raise HTTPException(404, "Cliente no encontrado")
+    result = db.from_("recategorizaciones").select("*").eq("cliente_id", cliente.data["id"]).order("fecha", desc=True).execute()
+    return result.data or []
+
+@app.post("/clientes/{slug}/recategorizar")
+async def registrar_recategorizacion(slug: str, data: dict, estudio_id: str = Depends(get_estudio_id)):
+    try:
+        cliente = db.from_("clientes").select("id,categoria").eq("slug", slug).eq("estudio_id", estudio_id).single().execute()
+    except Exception:
+        raise HTTPException(404, "Cliente no encontrado")
+    if not cliente.data:
+        raise HTTPException(404, "Cliente no encontrado")
+    registro = {
+        "cliente_id":         cliente.data["id"],
+        "estudio_id":         estudio_id,
+        "fecha":              data.get("fecha"),
+        "categoria_anterior": data.get("categoria_anterior"),
+        "categoria_nueva":    data.get("categoria_nueva"),
+    }
+    db.from_("recategorizaciones").insert({k: v for k, v in registro.items() if v is not None}).execute()
+    if data.get("categoria_nueva"):
+        db.from_("clientes").update({"categoria": data["categoria_nueva"]}).eq("id", cliente.data["id"]).execute()
+    return {"ok": True}
 
 if __name__ == "__main__":
     import uvicorn
