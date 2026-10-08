@@ -148,6 +148,11 @@ async function obtenerToken(servicio: string): Promise<Ticket> {
   return ticket
 }
 
+function falloArca(xml: string) {
+  const fault = tagText(xml, "faultstring")
+  if (fault) throw new Error(`ARCA: ${fault}`)
+}
+
 function soapPersona(ns: string, prefijo: string, auth: Ticket, cuit: string) {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
@@ -168,6 +173,7 @@ export async function buscarEnConstancia(cuit: string) {
   const auth = await obtenerToken("ws_sr_constancia_inscripcion")
   const r = await postSoap(A5_URL, soapPersona("http://a5.soap.ws.server.puc.sr/", "con", auth, cuit))
   const xml = r.text
+  falloArca(xml)
   const nombre = tagText(xml, "nombre") ?? ""
   const apellido = tagText(xml, "apellido") || tagText(xml, "razonSocial") || ""
   const estado = tagText(xml, "estadoClave") ?? ""
@@ -187,6 +193,7 @@ export async function buscarEnPadron(cuit: string) {
   const auth = await obtenerToken("ws_sr_padron_a13")
   const r = await postSoap(A13_URL, soapPersona("http://a13.soap.ws.server.puc.sr/", "a13", auth, cuit))
   const xml = r.text
+  falloArca(xml)
   const nombre = tagText(xml, "nombre") ?? ""
   const apellido = tagText(xml, "apellido") || tagText(xml, "razonSocial") || ""
   if (!nombre && !apellido) throw new Error("CUIT no encontrado en padron A13")
