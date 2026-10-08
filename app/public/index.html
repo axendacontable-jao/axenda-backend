@@ -307,10 +307,10 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 const { createClient } = supabase;
 const { useState, useEffect, useRef } = React;
 
-const BACKEND_URL  = "https://axenda-backend-production.up.railway.app";
+const BACKEND_URL  = "/api";
 const SUPABASE_URL = "https://mfzkcangoekzyadylaxi.supabase.co";
 const SUPABASE_KEY = "sb_publishable_XpIFC8TNibuit_o1LOtPbw_iPoyONEu";
-const PORTAL_URL   = "https://axendacontable-jao.github.io/Axenda-portal/";
+const PORTAL_URL   = `${location.origin}/portal/`;
 const db = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // ── Auth globals ─────────────────────────────────────────────────────────────

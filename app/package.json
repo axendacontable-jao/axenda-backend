@@ -1,0 +1,16 @@
+{
+  "name": "axenda-api",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@netlify/blobs": "8.1.0",
+    "@supabase/supabase-js": "2.45.4",
+    "jose": "5.9.6",
+    "node-forge": "1.3.1",
+    "unpdf": "0.12.1",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "devDependencies": {
+    "@netlify/functions": "2.8.2"
+  }
+}
