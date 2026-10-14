@@ -3,4 +3,4 @@
 
 [functions]
   node_bundler = "esbuild"
-  external_node_modules = ["node-forge", "@supabase/supabase-js"]
+  external_node_modules = ["node-forge", "@supabase/supabase-js", "playwright-core", "@sparticuz/chromium-min"]

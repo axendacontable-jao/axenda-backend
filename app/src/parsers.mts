@@ -85,9 +85,20 @@ export function fechaExcelIso(v: unknown): string | null {
 const buscarColumna = (columnas: string[], nombre: string) =>
   columnas.find((c) => c === nombre) ?? columnas.find((c) => c.trim().toLowerCase() === nombre.toLowerCase())
 
+// Fila del encabezado: la que tiene "Fecha" e "Imp. Total" (en la descarga manual es la 2ª).
+function filaEncabezadoComprobantes(buf: Uint8Array): number {
+  const wb = XLSX.read(buf, { type: "array", sheetRows: 10 })
+  const matriz = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: null })
+  const i = matriz.findIndex((fila) => {
+    const celdas = (fila as unknown[]).map((c) => String(c ?? "").trim().toLowerCase())
+    return celdas.includes("fecha") && celdas.includes("imp. total")
+  })
+  return i >= 0 ? i : 1
+}
+
 // Excel de "Mis Comprobantes" de ARCA: suma "Imp. Total" por mes (notas de crédito restan).
 export function totalesComprobantesPorMes(buf: Uint8Array) {
-  const { columnas, filas } = leerExcel(buf, 1)
+  const { columnas, filas } = leerExcel(buf, filaEncabezadoComprobantes(buf))
   const colFecha = buscarColumna(columnas, "Fecha")
   const colTotal = buscarColumna(columnas, "Imp. Total")
   const colTipo = buscarColumna(columnas, "Tipo")

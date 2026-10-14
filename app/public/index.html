@@ -328,7 +328,7 @@ const ORGANISMOS = ["ARCA","ART","ARERN","Otro"];
 // Componente provincial ART Río Negro por categoría — vigente desde 01/02/2026
 const ART_RIO_NEGRO_2026 = {"A":17773.24,"B":26330.15,"C":35038.48,"D":52992.43,"E":70657.51,"F":88097.78,"G":105032.36,"H":170242.95,"I":197256.01,"J":231453.81,"K":261120.28};
 const TIPOS_ALERTA = ["vencimiento","recategorizacion","deuda","manual"];
-const ICONO_ALERTA = { vencimiento:"⏰", recategorizacion:"📊", deuda:"💸", manual:"📌" };
+const ICONO_ALERTA = { vencimiento:"⏰", recategorizacion:"📊", deuda:"💸", manual:"📌", arca:"🏛️" };
 const TPL_VARS = {
   tpl_vencimiento_cuota: ["{nombre}", "{monto}", "{mes}", "{link_portal}"],
   tpl_alerta_limite:     ["{nombre}", "{porcentaje}", "{margen}", "{fecha_corte}", "{link_portal}"],
@@ -1041,6 +1041,11 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
   const [docs, setDocs]           = useState(null);
   const [recats, setRecats]       = useState(null);
   const [gastos, setGastos]       = useState(null);
+  const [arca, setArca]           = useState(null);
+  const [claveInput, setClaveInput] = useState("");
+  const [guardandoClave, setGuardandoClave] = useState(false);
+  const [sincronizando, setSincronizando]   = useState(false);
+  const [capturaArca, setCapturaArca]       = useState(null);
   const [modalPlan, setModalPlan] = useState(false);
   const [planInicial, setPlanInicial] = useState(null);
   const [modalDoc, setModalDoc]   = useState(false);
@@ -1080,7 +1085,51 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
 
   useEffect(() => {
     setPlanes(null); setAlertas(null); setDocs(null); setRecats(null);
+    setArca(null); setClaveInput(""); setCapturaArca(null);
   }, [cliente?.slug]);
+
+  function cargarArca() {
+    setCargandoTab(true);
+    apiFetch(`${BACKEND_URL}/clientes/${cliente.slug}/arca`)
+      .then(r=>r.json()).then(d=>{ setArca(d&&"clave_cargada" in d?d:{clave_cargada:false,sincronizaciones:[]}); setCargandoTab(false); })
+      .catch(()=>{ setArca({clave_cargada:false,sincronizaciones:[]}); setCargandoTab(false); });
+  }
+
+  async function guardarClaveFiscal(e) {
+    e.preventDefault();
+    if (!claveInput) return;
+    setGuardandoClave(true);
+    try {
+      const res = await apiFetch(`${BACKEND_URL}/clientes/${cliente.slug}/clave-fiscal`, {
+        method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify({clave:claveInput})
+      });
+      const d = await res.json();
+      if (d.ok) { setClaveInput(""); cargarArca(); } else alert("No se pudo guardar: "+(d.detail||JSON.stringify(d)));
+    } catch(err) { alert("Error: "+err.message); }
+    setGuardandoClave(false);
+  }
+
+  async function quitarClaveFiscal() {
+    if (!confirm("¿Quitar la clave fiscal? Los comprobantes de este cliente vuelven a cargarse a mano.")) return;
+    await apiFetch(`${BACKEND_URL}/clientes/${cliente.slug}/clave-fiscal`, {method:"DELETE"}).catch(()=>{});
+    cargarArca();
+  }
+
+  async function sincronizarArca() {
+    setSincronizando(true);
+    try {
+      const res = await apiFetch(`${BACKEND_URL}/clientes/${cliente.slug}/sincronizar-arca`, {method:"POST"});
+      const d = await res.json();
+      if (d.ok) alert(`Listo: el robot está trayendo ${MESES_FULL[d.mes-1]} ${d.anio} de ARCA. Tarda 1 o 2 minutos; después actualizá esta pestaña.`);
+      else alert("No se pudo iniciar: "+(d.detail||JSON.stringify(d)));
+    } catch(err) { alert("Error: "+err.message); }
+    setSincronizando(false);
+  }
+
+  async function verCapturaArca() {
+    const d = await apiFetch(`${BACKEND_URL}/clientes/${cliente.slug}/arca-captura`).then(r=>r.json()).catch(()=>({}));
+    if (d.captura) setCapturaArca(d.captura); else alert("No hay captura guardada.");
+  }
 
   useEffect(() => {
     if (!cliente) return;
@@ -1108,6 +1157,7 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
         .then(r=>r.json()).then(d=>{ setRecats(Array.isArray(d)?d:[]); setCargandoTab(false); })
         .catch(()=>{ setRecats([]); setCargandoTab(false); });
     }
+    if (tab === "arca") cargarArca();
   }, [tab, cliente?.slug]);
 
   useEffect(()=>{
@@ -1211,9 +1261,9 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
 
       {/* Tabs */}
       <div className="tabs">
-        {["facturacion","planes","documentos","recategorizacion","alertas"].map(t=>(
+        {["facturacion","planes","documentos","recategorizacion","arca","alertas"].map(t=>(
           <button key={t} className={`tab-btn ${tab===t?"active":""}`} onClick={()=>setTab(t)}>
-            {t==="facturacion"?"Facturación":t==="planes"?"Planes de pago":t==="documentos"?"Documentos":t==="recategorizacion"?"Recategorización":"Alertas"}
+            {t==="facturacion"?"Facturación":t==="planes"?"Planes de pago":t==="documentos"?"Documentos":t==="recategorizacion"?"Recategorización":t==="arca"?"ARCA":"Alertas"}
             {t==="planes"&&planes&&planes.filter(p=>p.estado==="activo").length>0&&(
               <span style={{marginLeft:"6px",background:"var(--blue)",color:"#fff",borderRadius:"10px",fontSize:"10px",fontWeight:"700",padding:"1px 7px"}}>{planes.filter(p=>p.estado==="activo").length}</span>
             )}
@@ -1519,6 +1569,82 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
       })()}
 
       {modalRecat&&<ModalRegistrarRecat slug={cliente.slug} catActual={cliente.categoria} onClose={()=>setModalRecat(false)} onGuardado={()=>{setModalRecat(false);setRecats(null);setTimeout(()=>setTab("recategorizacion"),50);}}/>}
+
+      {/* Tab: ARCA */}
+      {tab==="arca"&&(()=>{
+        const ESTADOS = { ok:["✅","var(--green)","OK"], clave_incorrecta:["🔑","var(--red)","Clave incorrecta"], requiere_2fa:["📱","var(--red)","Tiene verificación en dos pasos"], captcha:["🧩","var(--red)","ARCA pidió captcha"], arca_caido:["⏳","#E8A020","ARCA no respondió"], error:["⚠️","var(--red)","Error"] };
+        const ultimaFalla = arca?.sincronizaciones?.find(s=>s.estado!=="ok");
+        return (
+          <div className="detail-section">
+            <div className="section-title">Sincronización con ARCA</div>
+            {cargandoTab||!arca ? (
+              <div style={{height:"60px",borderRadius:"8px"}} className="skeleton"/>
+            ) : (
+              <>
+                <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"16px",padding:"14px 16px",borderRadius:"10px",background:arca.clave_cargada?"#2BAF8208":"var(--light)",border:`1px solid ${arca.clave_cargada?"#2BAF8230":"var(--border)"}`}}>
+                  <div style={{fontSize:"20px"}}>{arca.clave_cargada?"🔐":"🔓"}</div>
+                  <div>
+                    <div style={{fontWeight:"600",fontSize:"13px",color:arca.clave_cargada?"var(--green)":"var(--text)"}}>
+                      {arca.clave_cargada?"Clave fiscal cargada":"Sin clave fiscal: los comprobantes se cargan a mano"}
+                    </div>
+                    <div style={{fontSize:"12px",color:"var(--muted)",marginTop:"2px"}}>
+                      {arca.clave_cargada
+                        ? `Actualizada el ${formatArgDate(arca.actualizada_at)}. El día 2 de cada mes se traen solas las facturas y los gastos del mes anterior.`
+                        : "Cargala para que las facturas y los gastos se traigan solos el día 2 de cada mes."}
+                    </div>
+                  </div>
+                </div>
+
+                <form onSubmit={guardarClaveFiscal} style={{display:"flex",gap:"8px",flexWrap:"wrap",marginBottom:"12px"}}>
+                  <input className="form-input" type="password" autoComplete="new-password" style={{flex:"1 1 220px",marginBottom:0}}
+                    placeholder={arca.clave_cargada?"Nueva clave fiscal (para reemplazarla)":"Clave fiscal del cliente"}
+                    value={claveInput} onChange={e=>setClaveInput(e.target.value)}/>
+                  <button className="btn-primary" type="submit" disabled={!claveInput||guardandoClave}>
+                    {guardandoClave?"Guardando…":arca.clave_cargada?"Actualizar":"Guardar"}
+                  </button>
+                  {arca.clave_cargada&&<button type="button" className="btn-secondary" onClick={quitarClaveFiscal}>Quitar</button>}
+                </form>
+                <div style={{fontSize:"11px",color:"var(--muted)",marginBottom:"16px"}}>
+                  La clave se guarda cifrada y nunca se vuelve a mostrar. Si el cliente tiene verificación en dos pasos, el robot no puede entrar y queda para carga manual.
+                </div>
+
+                {arca.clave_cargada&&(
+                  <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginBottom:"20px"}}>
+                    <button className="action-chip" onClick={sincronizarArca} disabled={sincronizando}>{sincronizando?"Iniciando…":"↻ Traer el mes pasado ahora"}</button>
+                    <button className="action-chip" onClick={cargarArca}>Actualizar estado</button>
+                    {ultimaFalla&&<button className="action-chip" onClick={verCapturaArca}>Ver captura del último error</button>}
+                  </div>
+                )}
+
+                {capturaArca&&(
+                  <div style={{marginBottom:"20px"}}>
+                    <img src={capturaArca} alt="Pantalla de ARCA al fallar" style={{width:"100%",borderRadius:"8px",border:"1px solid var(--border)"}}/>
+                    <button className="action-chip" style={{marginTop:"6px"}} onClick={()=>setCapturaArca(null)}>Cerrar captura</button>
+                  </div>
+                )}
+
+                {arca.sincronizaciones?.length>0&&(
+                  <div>
+                    <div style={{fontSize:"11px",fontWeight:"600",color:"var(--muted)",textTransform:"uppercase",letterSpacing:".05em",marginBottom:"8px"}}>Últimas sincronizaciones</div>
+                    {arca.sincronizaciones.map((s,i)=>{
+                      const [ico,color,label] = ESTADOS[s.estado]||ESTADOS.error;
+                      return (
+                        <div key={i} style={{padding:"10px 14px",borderRadius:"8px",background:"var(--light)",marginBottom:"6px",fontSize:"13px"}}>
+                          <div style={{display:"flex",justifyContent:"space-between",gap:"10px"}}>
+                            <span><strong>{s.tipo==="emitidos"?"Facturas":"Gastos"} {String(s.mes).padStart(2,"0")}/{s.anio}</strong> <span style={{color}}>{ico} {label}</span></span>
+                            <span style={{color:"var(--muted)",fontSize:"12px",whiteSpace:"nowrap"}}>{tiempoRelativo(s.created_at)}</span>
+                          </div>
+                          {s.detalle&&<div style={{fontSize:"12px",color:"var(--muted)",marginTop:"4px",wordBreak:"break-word"}}>{s.detalle}</div>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Tab: Alertas */}
       {tab==="alertas"&&(

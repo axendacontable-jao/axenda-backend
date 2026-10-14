@@ -659,6 +659,14 @@ function getSession() {
 }
 function saveSession(s) { localStorage.setItem(SKEY, JSON.stringify({...s, exp: Date.now() + 30*86400000})); }
 function clearSession()  { localStorage.removeItem(SKEY); }
+const authHeaders = () => ({ Authorization: `Bearer ${SESSION?.token || ""}` });
+
+function sesionVencida() {
+  doLogout();
+  const errEl = document.getElementById("login-err");
+  errEl.textContent = "Por seguridad, volvé a ingresar con tu CUIT y contraseña.";
+  errEl.style.display = "block";
+}
 
 // ── SCREENS ────────────────────────────────────────────────────────────────────
 function showScreen(id) {
@@ -720,7 +728,7 @@ async function doLogin() {
       errEl.textContent = d.error || "Credenciales incorrectas";
       errEl.style.display = "block";
     } else {
-      SESSION = { slug:d.slug, nombre:d.nombre, apellido:d.apellido, cuit, activo:d.activo };
+      SESSION = { slug:d.slug, nombre:d.nombre, apellido:d.apellido, cuit, activo:d.activo, token:d.token };
       saveSession(SESSION);
       if (!d.activo) { showScreen("inactive-screen"); }
       else           { await cargarPortal(); }
@@ -747,7 +755,8 @@ async function cargarPortal() {
   showScreen("loading-screen");
 
   try {
-    const r = await fetch(`${API}/portal/${SESSION.slug}`);
+    const r = await fetch(`${API}/portal/${SESSION.slug}`, { headers: authHeaders() });
+    if (r.status === 401) { sesionVencida(); return; }
     if (!r.ok) throw new Error(r.status);
     DATOS   = await r.json();
     CLIENTE = DATOS.cliente;
@@ -937,8 +946,9 @@ async function marcarPagado() {
   if (btn) { btn.disabled = true; btn.textContent = "Actualizando…"; }
   try {
     const r = await fetch(`${API}/portal/${SESSION.slug}/marcar-pago`, {
-      method:"PATCH", headers:{"Content-Type":"application/json"},
+      method:"PATCH", headers:{"Content-Type":"application/json", ...authHeaders()},
     });
+    if (r.status === 401) { sesionVencida(); return; }
     if (r.ok) {
       DATOS.estado_cuota = "al_dia";
       renderStatCuotaBadge("al_dia");

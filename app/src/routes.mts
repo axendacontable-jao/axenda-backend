@@ -3,6 +3,9 @@ import {
   logActividad, pyStr, q, sumarMeses, fechaValida,
 } from "./core.mts"
 import { buscarEnConstancia, buscarEnPadron, certPem, cuitContador, keyPem, serviciosCacheados } from "./arca.mts"
+import { cifrarClave, exigirSesionPortal, firmarTokenPortal } from "./secretos.mts"
+import { TIPOS, despacharSincronizacion, mesAnterior } from "./sincronizacion.mts"
+import { getStore } from "@netlify/blobs"
 import {
   aNumero, fechaExcelIso, leerExcel, parseArNumber, parseNumPuntos, pdfTablas, pdfTexto,
   totalesComprobantesPorMes,
@@ -439,7 +442,8 @@ const gastosCliente: Handler = async ({ req, p }) => {
 
 // ── Portal del cliente (sin login de admin) ──────────────────────────────────
 
-const portalMarcarPago: Handler = async ({ p }) => {
+const portalMarcarPago: Handler = async ({ req, p }) => {
+  await exigirSesionPortal(req, p.slug)
   const filas = await q(db().from("clientes").select("id,nombre,apellido,estudio_id").eq("slug", p.slug))
   if (!filas?.length) throw new HttpError(404, "Cliente no encontrado")
   const cliente = filas[0]
@@ -459,11 +463,12 @@ const portalMarcarPago: Handler = async ({ p }) => {
 const desdeHace12 = (anio: number, mes: number, ref: { y: number; m: number }) =>
   anio > ref.y - 1 || (anio === ref.y - 1 && mes >= ref.m)
 
-const datosPortal: Handler = async ({ p }) => {
+const datosPortal: Handler = async ({ req, p }) => {
+  await exigirSesionPortal(req, p.slug)
   const d = db()
   const clientes = await q(d.from("clientes").select("*").eq("slug", p.slug))
   if (!clientes?.length) throw new HttpError(404, "Cliente no encontrado")
-  const cliente = clientes[0]
+  const { portal_password: _, ...cliente } = clientes[0]
   const topes = await q(d.from("topes_categoria").select("*").eq("categoria", cliente.categoria ?? ""))
   const tope = topes?.length ? topes[0].tope_anual : 0
   const [fac, planes, docs, gastosTodos, alertas] = await Promise.all([
@@ -599,7 +604,7 @@ const portalLogin: Handler = async ({ req }) => {
   if (password !== (cliente.portal_password || cuit)) return { ok: false, error: "Credenciales incorrectas" }
   return {
     ok: true, slug: cliente.slug, nombre: cliente.nombre ?? "", apellido: cliente.apellido ?? "",
-    activo: cliente.activo ?? true,
+    activo: cliente.activo ?? true, token: await firmarTokenPortal(cliente.slug, cliente.id),
   }
 }
 
@@ -1195,6 +1200,60 @@ const registrarRecategorizacion: Handler = async ({ req, p }) => {
   return { ok: true }
 }
 
+// ── ARCA: clave fiscal y sincronización automática ───────────────────────────
+
+const estadoArca: Handler = async ({ req, p }) => {
+  const estudioId = await getEstudioId(req)
+  const cliente = await clientePorSlug(p.slug, estudioId)
+  const [cred, sincronizaciones] = await Promise.all([
+    q(db().from("credenciales_arca").select("actualizada_at").eq("cliente_id", cliente.id).maybeSingle()),
+    q(db().from("sincronizaciones_arca").select("tipo,anio,mes,estado,detalle,created_at")
+      .eq("cliente_id", cliente.id).order("created_at", { ascending: false }).limit(10)),
+  ])
+  return { clave_cargada: !!cred, actualizada_at: cred?.actualizada_at ?? null, sincronizaciones: sincronizaciones ?? [] }
+}
+
+const guardarClaveFiscal: Handler = async ({ req, p }) => {
+  const estudioId = await getEstudioId(req)
+  const clave = (await body(req)).clave
+  if (typeof clave !== "string" || !clave || clave.length > 64) throw new HttpError(400, "Clave fiscal inválida")
+  const cliente = await clientePorSlug(p.slug, estudioId)
+  await actualizarOInsertar(
+    "credenciales_arca",
+    { clave_cifrada: cifrarClave(clave, cliente.id), estudio_id: estudioId, actualizada_at: ahoraIsoZ() },
+    { cliente_id: cliente.id },
+  )
+  await logActividad(cliente.id, "Clave fiscal cargada para la sincronización con ARCA", estudioId)
+  return { ok: true }
+}
+
+const borrarClaveFiscal: Handler = async ({ req, p }) => {
+  const estudioId = await getEstudioId(req)
+  const cliente = await clientePorSlug(p.slug, estudioId)
+  await q(db().from("credenciales_arca").delete().eq("cliente_id", cliente.id).eq("estudio_id", estudioId))
+  return { ok: true }
+}
+
+const sincronizarArcaAhora: Handler = async ({ req, p }) => {
+  const estudioId = await getEstudioId(req)
+  const cliente = await clientePorSlug(p.slug, estudioId)
+  const cred = await q(db().from("credenciales_arca").select("cliente_id").eq("cliente_id", cliente.id).maybeSingle())
+  if (!cred) throw new HttpError(400, "El cliente no tiene clave fiscal cargada")
+  const data = await body(req).catch(() => ({} as Record<string, any>))
+  const periodo = Number.isInteger(data.anio) && Number.isInteger(data.mes) && data.mes >= 1 && data.mes <= 12
+    ? { anio: data.anio as number, mes: data.mes as number }
+    : mesAnterior()
+  await despacharSincronizacion(new URL(req.url).origin, cliente.id, periodo.anio, periodo.mes, TIPOS)
+  return { ok: true, ...periodo }
+}
+
+const capturaArca: Handler = async ({ req, p }) => {
+  const estudioId = await getEstudioId(req)
+  const cliente = await clientePorSlug(p.slug, estudioId)
+  const captura = await getStore("arca-capturas").get(cliente.id).catch(() => null)
+  return { captura: captura ? `data:image/jpeg;base64,${captura}` : null }
+}
+
 // ── Tabla de rutas (las estáticas antes que las de parámetro) ────────────────
 
 export const rutas: [string, string, Handler][] = [
@@ -1223,6 +1282,11 @@ export const rutas: [string, string, Handler][] = [
   ["POST", "/clientes/:slug/deuda-manual", agregarDeudaManual],
   ["GET", "/clientes/:slug/recategorizaciones", listarRecategorizaciones],
   ["POST", "/clientes/:slug/recategorizar", registrarRecategorizacion],
+  ["GET", "/clientes/:slug/arca", estadoArca],
+  ["PUT", "/clientes/:slug/clave-fiscal", guardarClaveFiscal],
+  ["DELETE", "/clientes/:slug/clave-fiscal", borrarClaveFiscal],
+  ["POST", "/clientes/:slug/sincronizar-arca", sincronizarArcaAhora],
+  ["GET", "/clientes/:slug/arca-captura", capturaArca],
 
   ["PATCH", "/deuda-manual/:id/pagar", pagarDeudaManual],
   ["DELETE", "/deuda-manual/:id", eliminarDeudaManual],
