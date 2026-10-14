@@ -209,6 +209,78 @@ export function saldosPorPeriodo(tablas: string[][][]): Map<string, number> | nu
   return null
 }
 
+export type MesCcma = {
+  obligacion: number; pagos: number; intereses: number; saldo: number
+  vencimiento: string | null; impuestos: Record<string, number>
+}
+
+const redondear = (n: number) => Math.round(n * 100) / 100
+
+function fechaDdmmIso(s: string): string | null {
+  const m = s.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+  return m && fechaValida(+m[3], +m[2], +m[1]) ? isoDate(+m[3], +m[2], +m[1]) : null
+}
+
+// Detalle de la CCMA (Período | Impuesto | Concepto | Subcpto | Descripción | Fecha | Debe | Haber | Saldo):
+// por período, obligación del mes, pagos, intereses pendientes y saldo por impuesto (020 impositivo,
+// 021 jubilación, 024 obra social). Un saldo entre paréntesis es deuda.
+export function movimientosCcma(tablas: string[][][]): Map<string, MesCcma> | null {
+  for (const tabla of tablas) {
+    const iEnc = tabla.findIndex((f) =>
+      f.some((c) => /per[ií]odo/i.test(c)) && f.some((c) => /^debe$/i.test(c.trim())) && f.some((c) => /^saldo$/i.test(c.trim())))
+    if (iEnc < 0) continue
+    const enc = tabla[iEnc].map((c) => c.trim().toLowerCase())
+    const col = (re: RegExp) => enc.findIndex((c) => re.test(c))
+    const cPer = col(/per[ií]odo/), cImp = col(/impuesto/), cDesc = col(/descripci/), cFecha = col(/fecha/)
+    const cDebe = col(/^debe$/), cHaber = col(/^haber$/), cSaldo = col(/^saldo$/)
+
+    const meses = new Map<string, MesCcma>()
+    let impuesto = "?"
+    for (const fila of tabla.slice(iEnc + 1)) {
+      const per = leerPeriodo(fila[cPer] ?? "")
+      if (!per) continue
+      const k = `${per.anio}-${per.mes}`
+      const m = meses.get(k) ?? { obligacion: 0, pagos: 0, intereses: 0, saldo: 0, vencimiento: null, impuestos: {} }
+      const celda = (j: number) => (j >= 0 ? fila[j] ?? "" : "")
+
+      if (fila.some((c) => /^saldo$/i.test(c.trim()))) {
+        // Fila de cierre del período para el último impuesto listado.
+        const texto = celda(cSaldo) || fila.filter((c) => /\d/.test(c)).at(-1) || ""
+        const valor = parseMonto(texto) ?? 0
+        const debe = texto.includes("(") ? valor : -valor
+        m.saldo += debe
+        m.impuestos[impuesto] = redondear((m.impuestos[impuesto] ?? 0) + debe)
+      } else {
+        if (/^\d{3}$/.test(celda(cImp).trim())) impuesto = celda(cImp).trim()
+        const desc = celda(cDesc) || fila.join(" ")
+        const debe = parseMonto(celda(cDebe)) ?? 0
+        const haber = parseMonto(celda(cHaber)) ?? 0
+        if (/^pago/i.test(desc.trim())) {
+          if (/inter/i.test(desc)) m.intereses -= haber
+          else m.pagos += haber
+        } else if (/inter/i.test(desc)) {
+          m.intereses += debe - haber
+        } else if (/obligaci/i.test(desc)) {
+          m.obligacion += debe
+          const venc = fechaDdmmIso(celda(cFecha))
+          if (venc && (!m.vencimiento || venc < m.vencimiento)) m.vencimiento = venc
+        }
+      }
+      meses.set(k, m)
+    }
+    if (meses.size) {
+      for (const m of meses.values()) {
+        m.obligacion = redondear(m.obligacion)
+        m.pagos = redondear(m.pagos)
+        m.intereses = redondear(Math.max(m.intereses, 0))
+        m.saldo = redondear(m.saldo)
+      }
+      return meses
+    }
+  }
+  return null
+}
+
 // ── PDF ──────────────────────────────────────────────────────────────────────
 
 type Pieza ={ str: string; x: number; y: number; w: number; h: number }

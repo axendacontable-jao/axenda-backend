@@ -1663,6 +1663,11 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
                         {arca.deuda.monto>0?`Deuda en ARCA: ${$$(arca.deuda.monto)}`:"Sin deuda en ARCA"}
                       </div>
                       <div style={{fontSize:"12px",color:"var(--muted)",marginTop:"2px"}}>{arca.deuda.descripcion}</div>
+                      {arca.deuda.art_estimado>0&&(
+                        <div style={{fontSize:"12px",color:"var(--red)",marginTop:"2px"}}>
+                          + ART Río Negro (estimado, no figura en ARCA): {$$(arca.deuda.art_estimado)}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -2033,6 +2038,7 @@ function JurisdiccionesConvenio({ slug }) {
 // ── Historial cuotas mensuales ──
 function HistorialCuotas({ slug, cuota, categoria, onToggleMesActual, automatico }) {
   const [historial, setHistorial]       = useState([]);
+  const [arcaInfo, setArcaInfo]         = useState(null);
   const [deudaManual, setDeudaManual]   = useState([]);
   const [cargando, setCargando]         = useState(true);
   const [mostrarForm, setMostrarForm]   = useState(false);
@@ -2058,6 +2064,7 @@ function HistorialCuotas({ slug, cuota, categoria, onToggleMesActual, automatico
       apiFetch(`${BACKEND_URL}/clientes/${slug}/deuda-manual`).then(r=>r.json()),
     ]).then(([hd, dd])=>{
       setHistorial(hd.historial||[]);
+      setArcaInfo(hd.automatico ? hd : null);
       setDeudaManual(dd.deudas||[]);
       setCargando(false);
     }).catch(()=>setCargando(false));
@@ -2124,8 +2131,25 @@ function HistorialCuotas({ slug, cuota, categoria, onToggleMesActual, automatico
     <div>
       {/* Chip de deuda */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px"}}>
-        <div style={{fontSize:"11px",fontWeight:"600",color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.05em"}}>Últimos 6 meses · Cuota {$$(cuota)}{automatico&&" · según ARCA"}</div>
-        {deudaTotal>0 ? (
+        <div style={{fontSize:"11px",fontWeight:"600",color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.05em"}}>Últimos 6 meses · {arcaInfo?"según ARCA":`Cuota ${$$(cuota)}`}</div>
+        {arcaInfo&&arcaInfo.deuda_arca!==null ? (
+          (arcaInfo.deuda_arca+(arcaInfo.art_estimado||0))>0 ? (
+            <div style={{background:"#E0454510",border:"1px solid var(--red)",borderRadius:"8px",padding:"6px 12px"}}>
+              <div style={{display:"flex",gap:"8px",alignItems:"center",marginBottom:"4px"}}>
+                <span style={{fontSize:"11px",color:"var(--red)",fontWeight:"600"}}>Deuda</span>
+                <span style={{fontFamily:"'DM Mono',monospace",fontWeight:"700",color:"var(--red)",fontSize:"14px"}}>{$$(arcaInfo.deuda_arca+(arcaInfo.art_estimado||0))}</span>
+              </div>
+              <div style={{display:"flex",gap:"14px",fontSize:"11px",color:"var(--muted)",flexWrap:"wrap"}}>
+                <span>ARCA (real, al {formatArgDate(arcaInfo.deuda_actualizada_at)}): <b style={{color:"var(--red)"}}>{$$(arcaInfo.deuda_arca)}</b></span>
+                {arcaInfo.art_estimado>0&&<span>ART Río Negro (estimado): <b style={{color:"var(--red)"}}>{$$(arcaInfo.art_estimado)}</b></span>}
+              </div>
+            </div>
+          ) : (
+            <div style={{background:"#2BAF8210",border:"1px solid var(--green)",borderRadius:"8px",padding:"4px 12px"}}>
+              <span style={{fontSize:"11px",color:"var(--green)",fontWeight:"600"}}>Sin deuda en ARCA ✓</span>
+            </div>
+          )
+        ) : deudaTotal>0 ? (
           <div style={{background:"#E0454510",border:"1px solid var(--red)",borderRadius:"8px",padding:"6px 12px"}}>
             <div style={{display:"flex",gap:"8px",alignItems:"center",marginBottom:"4px"}}>
               <span style={{fontSize:"11px",color:"var(--red)",fontWeight:"600"}}>Deuda estimada</span>
@@ -2147,6 +2171,39 @@ function HistorialCuotas({ slug, cuota, categoria, onToggleMesActual, automatico
       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"8px"}}>
         {historial.map(h=>{
           const esMesActual = h.año===hoy.getFullYear()&&h.mes===hoy.getMonth()+1;
+          if (arcaInfo) {
+            // Lo que dice ARCA (CCMA) de cada mes.
+            const EST = {
+              pagada:   ["✓ Pagada","var(--green)","#2BAF8208"],
+              intereses:["✓ Cuota pagada","#E8A020","#E8A02008"],
+              vencida:  ["✗ Vencida","var(--red)","#E0454508"],
+              a_vencer: ["⏳ A vencer","var(--blue)","transparent"],
+            };
+            const [label,color,bg] = EST[h.estado] || ["Sin obligación en ARCA","var(--muted)","transparent"];
+            const artMes = arcaInfo.art_estimado>0 ? (ART_RIO_NEGRO_2026[categoria]||0) : 0;
+            return (
+              <div key={`${h.año}-${h.mes}`} style={{border:`1px solid ${h.estado?color:"var(--border)"}`,borderRadius:"8px",padding:"10px 12px",background:bg}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"5px"}}>
+                  <span style={{fontSize:"12px",fontWeight:"600"}}>{MESES_FULL[h.mes-1]} {h.año}</span>
+                  {esMesActual&&<span style={{fontSize:"10px",background:"var(--blue)",color:"#fff",borderRadius:"4px",padding:"1px 5px",fontWeight:"600"}}>Actual</span>}
+                </div>
+                <div style={{fontFamily:"'DM Mono',monospace",fontWeight:"700",fontSize:"13px",color}}>{label}</div>
+                {h.estado&&h.estado!=="pagada"&&(
+                  <div style={{fontSize:"12px",color,marginTop:"3px",fontWeight:"600"}}>
+                    {h.estado==="intereses"?"Intereses ":"Debe "}{$$(h.saldo)}
+                  </div>
+                )}
+                {h.estado&&(
+                  <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"3px"}}>
+                    Cuota {$$(h.obligacion)}{h.vencimiento?` · vence ${formatArgDate(h.vencimiento)}`:""}
+                  </div>
+                )}
+                {h.estado==="vencida"&&artMes>0&&(
+                  <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"2px"}}>+ ART Río Negro est. {$$(artMes)}</div>
+                )}
+              </div>
+            );
+          }
           return (
             <div key={`${h.año}-${h.mes}`} style={{border:`1px solid ${h.pagado?"var(--green)":"var(--border)"}`,borderRadius:"8px",padding:"10px 12px",background:h.pagado?"#2BAF8208":"transparent"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"5px"}}>

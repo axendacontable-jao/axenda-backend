@@ -1,5 +1,5 @@
 import type { Browser, Locator, Page } from "playwright-core"
-import { parseMonto, saldosPorPeriodo } from "./parsers.mts"
+import { type MesCcma, movimientosCcma, parseMonto, saldosPorPeriodo } from "./parsers.mts"
 
 // Debe coincidir con la versión de @sparticuz/chromium-min del package.json.
 const CHROMIUM_PACK = "https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.tar"
@@ -315,7 +315,10 @@ const tablasDe = (p: Page) =>
       [...(t as HTMLTableElement).rows].map((r) => [...r.cells].map((c) => (c as HTMLElement).innerText.replace(/\s+/g, " ").trim()))),
   ).catch(() => [] as string[][][])
 
-export type DeudaCcma = { monto: number; detalle: string; pantalla: string; saldos: Map<string, number> | null }
+export type DeudaCcma = {
+  monto: number; detalle: string; pantalla: string
+  saldos: Map<string, number> | null; meses: Map<string, MesCcma> | null
+}
 
 export async function consultarDeudaCcma(page: Page, cuit: string): Promise<DeudaCcma> {
   const resultado = await leerDeudaCcma(page, cuit)
@@ -329,9 +332,12 @@ export async function consultarDeudaCcma(page: Page, cuit: string): Promise<Deud
   if (detalle && !PROHIBIDO.test((await detalle.innerText().catch(() => "")) || "")) {
     await detalle.click()
     await ccma.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
-    const saldos = saldosPorPeriodo(await tablasDe(ccma))
+    const tablas = await tablasDe(ccma)
     const pantalla = (await textoVisible(ccma)).replace(/\s+/g, " ")
-    return { ...resultado, saldos, pantalla: `${resultado.pantalla} || DETALLE: ${pantalla}` }
+    return {
+      ...resultado, saldos: saldosPorPeriodo(tablas), meses: movimientosCcma(tablas),
+      pantalla: `${resultado.pantalla} || DETALLE: ${pantalla}`,
+    }
   }
   return resultado
 }
@@ -350,9 +356,11 @@ async function leerDeudaCcma(page: Page, cuit: string): Promise<DeudaCcma & { pa
   }
 
   const pantalla = (await textoVisible(ccma)).replace(/\s+/g, " ")
-  const saldos = saldosPorPeriodo(await tablasDe(ccma))
+  const tablas = await tablasDe(ccma)
+  const saldos = saldosPorPeriodo(tablas)
+  const meses = movimientosCcma(tablas)
   if (/no (registra|posee|tiene|existe[n]?) deudas?|sin deuda|no se registran (deudas|saldos)/i.test(pantalla)) {
-    return { monto: 0, detalle: "sin deuda", pantalla, saldos, pagina: ccma }
+    return { monto: 0, detalle: "sin deuda", pantalla, saldos, meses, pagina: ccma }
   }
   const m = pantalla.match(/(saldo deudor|total (de )?(la )?deuda|deuda total|total adeudado|saldo total)[^0-9$-]{0,40}\$?\s*(-?\d[\d.,]*\d)/i)
   const monto = m ? parseMonto(m[4]) : null
@@ -360,7 +368,7 @@ async function leerDeudaCcma(page: Page, cuit: string): Promise<DeudaCcma & { pa
     throw new FalloArca("error", `No encontré el total de deuda en la CCMA (${ccma.url()}). Pantalla: ${pantalla.slice(0, 400)} — Botones: ${await describirClickeables(ccma)}`)
   }
   const pesosAr = monto.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  return { monto, detalle: `${m[1]}: $${pesosAr}`, pantalla, saldos, pagina: ccma }
+  return { monto, detalle: `${m[1]}: $${pesosAr}`, pantalla, saldos, meses, pagina: ccma }
 }
 
 // Datos para diagnosticar un fallo: URL, texto visible y captura (nunca valores de campos).

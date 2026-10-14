@@ -75,6 +75,19 @@ const ART_RIO_NEGRO: Record<string, number> = {
 
 const pesos = (n: number) => "$" + String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ".")
 
+// ART Río Negro (monotributo unificado) no figura en la CCMA de ARCA: se estima como el componente
+// provincial de la categoría por cada mes cuya cuota de ARCA está vencida e impaga.
+function componenteArtEstimado(cliente: any, historial: any[]): number {
+  const rioNegro = /r[ií]o negro/i.test(cliente.provincia || "Rio Negro")
+  const unificado = !cliente.iibb_modalidad || cliente.iibb_modalidad === "monotributo_unificado"
+  if (!rioNegro || !unificado) return 0
+  const porMes = ART_RIO_NEGRO[String(cliente.categoria ?? "").toUpperCase()] ?? 0
+  const t = hoy()
+  const desde = t.y * 12 + (t.m - 1) - 11
+  return historial.filter((h) =>
+    h.fuente === "arca" && h.estado === "vencida" && h["año"] * 12 + (h.mes - 1) >= desde).length * porMes
+}
+
 // UPDATE y, si no tocó filas, INSERT (nunca upsert con on_conflict en estas tablas).
 async function actualizarOInsertar(
   tabla: string, valores: Record<string, unknown>, filtro: Record<string, unknown>,
@@ -326,18 +339,27 @@ function ultimosMeses(n: number) {
 const historialCuotas: Handler = async ({ req, p, query }) => {
   const estudioId = await getEstudioId(req)
   const meses = entero(query.get("meses") ?? "6", "meses")
-  const cliente = await clientePorSlug(p.slug, estudioId)
-  let existentes = new Map<string, any>()
+  const cliente = await clientePorSlug(
+    p.slug, estudioId, "id,categoria,provincia,iibb_modalidad,deuda_monto,deuda_actualizada_at",
+  )
+  let filas: any[] = []
   try {
-    const filas = await q(db().from("historial_cuotas").select("*").eq("cliente_id", cliente.id))
-    existentes = new Map((filas ?? []).map((r: any) => [`${r["año"]}-${r.mes}`, r]))
+    filas = (await q(db().from("historial_cuotas").select("*").eq("cliente_id", cliente.id))) ?? []
   } catch {
-    existentes = new Map()
+    filas = []
   }
+  const existentes = new Map(filas.map((r: any) => [`${r["año"]}-${r.mes}`, r]))
   const historial = ultimosMeses(meses).map(([y, m]) =>
     existentes.get(`${y}-${m}`) ?? { cliente_id: cliente.id, año: y, mes: m, pagado: false, fecha_pago: null, id: null },
   )
-  return { ok: true, historial }
+  const automatico = await tieneClaveFiscal(cliente.id)
+  return {
+    ok: true, historial, automatico,
+    // Con clave fiscal: deuda real de ARCA (todos los períodos) y ART Río Negro estimado aparte.
+    deuda_arca: automatico && cliente.deuda_actualizada_at ? Number(cliente.deuda_monto) || 0 : null,
+    deuda_actualizada_at: automatico ? cliente.deuda_actualizada_at : null,
+    art_estimado: automatico ? componenteArtEstimado(cliente, filas) : null,
+  }
 }
 
 const toggleHistorialCuota: Handler = async ({ req, p }) => {
@@ -517,6 +539,7 @@ const datosPortal: Handler = async ({ req, p }) => {
   const t = hoy()
   let pagadosDb: Set<string> | null = null
   let deudaTotal = 0, deudaDesc: string | null = null, deudaArt = 0, deudaArca = 0, deudaOtroMan = 0
+  let historialFilas: any[] = []
   try {
     const cat = String(cliente.categoria ?? "").toUpperCase()
     const cuotaMensual = cliente.cuota || 0
@@ -524,6 +547,7 @@ const datosPortal: Handler = async ({ req, p }) => {
 
     // Los meses sin registro en historial_cuotas también cuentan como no pagados (igual que el admin).
     const historial = (await q(d.from("historial_cuotas").select("*").eq("cliente_id", cliente.id))) ?? []
+    historialFilas = historial
     pagadosDb = new Set(historial.filter((h: any) => h.pagado).map((h: any) => `${h["año"]}-${h.mes}`))
     let vencidos = 0, sinVencer = 0
     for (const [y, m] of ultimosMeses(6)) {
@@ -556,14 +580,18 @@ const datosPortal: Handler = async ({ req, p }) => {
     deudaArca = 0
   }
 
-  // Con clave fiscal, la deuda es la de la CCMA (incluye el componente provincial del monotributo
-  // unificado e intereses); se suman solo las deudas manuales de otros organismos.
+  // Con clave fiscal, la deuda de ARCA es la real de la CCMA (cuotas e intereses). La CCMA no incluye
+  // el componente provincial de ART Río Negro: se estima con los meses cuya cuota de ARCA está vencida.
   const arcaAuto = await tieneClaveFiscal(cliente.id)
   if (arcaAuto && cliente.deuda_actualizada_at) {
     deudaArca = Number(cliente.deuda_monto) || 0
-    deudaArt = 0
-    deudaTotal = deudaArca + deudaOtroMan
-    const partes = [deudaArca > 0 && cliente.deuda_descripcion, deudaOtroMan > 0 && `Otros: ${pesos(deudaOtroMan)}`].filter(Boolean)
+    deudaArt = componenteArtEstimado(cliente, historialFilas)
+    deudaTotal = deudaArca + deudaArt + deudaOtroMan
+    const partes = [
+      deudaArca > 0 && `ARCA: ${pesos(deudaArca)}`,
+      deudaArt > 0 && `ART Río Negro (estimado): ${pesos(deudaArt)}`,
+      deudaOtroMan > 0 && `Otros: ${pesos(deudaOtroMan)}`,
+    ].filter(Boolean)
     deudaDesc = partes.length ? partes.join(" · ") : null
   }
 
@@ -1239,17 +1267,21 @@ const estadoArca: Handler = async ({ req, p }) => {
   const estudioId = await getEstudioId(req)
   const cliente = await clientePorSlug(
     p.slug, estudioId,
-    "id,categoria,estado_arca,situacion_arca_at,ultimos_comprobantes,deuda_monto,deuda_descripcion,deuda_actualizada_at",
+    "id,categoria,provincia,iibb_modalidad,estado_arca,situacion_arca_at,ultimos_comprobantes,deuda_monto,deuda_descripcion,deuda_actualizada_at",
   )
-  const [cred, sincronizaciones] = await Promise.all([
+  const [cred, sincronizaciones, historial] = await Promise.all([
     q(db().from("credenciales_arca").select("actualizada_at").eq("cliente_id", cliente.id).maybeSingle()),
     q(db().from("sincronizaciones_arca").select("tipo,anio,mes,estado,detalle,created_at")
       .eq("cliente_id", cliente.id).order("created_at", { ascending: false }).limit(12)),
+    q(db().from("historial_cuotas").select("año,mes,estado,fuente").eq("cliente_id", cliente.id)),
   ])
   return {
     clave_cargada: !!cred, actualizada_at: cred?.actualizada_at ?? null, sincronizaciones: sincronizaciones ?? [],
     deuda: cliente.deuda_actualizada_at
-      ? { monto: cliente.deuda_monto, descripcion: cliente.deuda_descripcion, actualizada_at: cliente.deuda_actualizada_at }
+      ? {
+        monto: Number(cliente.deuda_monto) || 0, descripcion: cliente.deuda_descripcion,
+        actualizada_at: cliente.deuda_actualizada_at, art_estimado: componenteArtEstimado(cliente, historial ?? []),
+      }
       : null,
     situacion: {
       categoria: cliente.categoria, estado: cliente.estado_arca, actualizada_at: cliente.situacion_arca_at,
