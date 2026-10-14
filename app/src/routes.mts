@@ -343,7 +343,7 @@ const historialCuotas: Handler = async ({ req, p, query }) => {
   const estudioId = await getEstudioId(req)
   const meses = entero(query.get("meses") ?? "6", "meses")
   const cliente = await clientePorSlug(
-    p.slug, estudioId, "id,categoria,provincia,iibb_modalidad,deuda_monto,deuda_actualizada_at,deuda_detalle",
+    p.slug, estudioId, "id,categoria,provincia,iibb_modalidad,deuda_monto,deuda_descripcion,deuda_actualizada_at,deuda_detalle",
   )
   let filas: any[] = []
   try {
@@ -363,6 +363,7 @@ const historialCuotas: Handler = async ({ req, p, query }) => {
     deuda_actualizada_at: automatico ? cliente.deuda_actualizada_at : null,
     art_estimado: automatico ? componenteArtEstimado(cliente, filas) : null,
     deuda_detalle: automatico ? cliente.deuda_detalle ?? null : null,
+    deuda_descripcion: automatico ? cliente.deuda_descripcion ?? null : null,
   }
 }
 

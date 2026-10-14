@@ -162,49 +162,62 @@ export async function sincronizarCliente(clienteId: string, anio: number, mes: n
     const t = hoyArgentina()
     const descripcion = `CCMA al ${ddmmaaaa(t.y, t.m, t.d)} — ${deuda.detalle}`
 
-    // A qué corresponde la deuda: cada período con saldo, por impuesto e intereses.
+    // A qué corresponde la deuda: cada período con saldo, por impuesto e intereses. El saldo deudor
+    // de la CCMA no incluye las cuotas que todavía no vencieron: se marcan aparte.
+    const hoyStr = isoDate(t.y, t.m, t.d)
     const detalle = deuda.meses
       ? [...deuda.meses]
         .filter(([, m]) => m.saldo > 1)
         .map(([k, m]) => {
           const [a, mes] = k.split("-").map(Number)
-          return { periodo: `${a}-${pad(mes)}`, ...m }
+          return { periodo: `${a}-${pad(mes)}`, ...m, a_vencer: !!m.vencimiento && m.vencimiento >= hoyStr }
         })
         .sort((x, y) => (x.periodo < y.periodo ? 1 : -1))
       : null
-    const sumaDetalle = detalle?.reduce((s, p) => s + p.saldo, 0) ?? 0
-    const cuadra = !detalle || Math.abs(sumaDetalle - deuda.monto) <= 1
+    const vencido = detalle?.filter((p) => !p.a_vencer).reduce((s, p) => s + p.saldo, 0) ?? 0
+    const aVencer = detalle?.filter((p) => p.a_vencer) ?? []
+    const cuadra = !detalle || Math.abs(vencido - deuda.monto) <= 1
 
     await q(d.from("clientes").update({
       deuda_monto: deuda.monto, deuda_descripcion: descripcion, deuda_actualizada_at: new Date().toISOString(),
       deuda_detalle: detalle,
     }).eq("id", clienteId))
+    const resumen = detalle
+      ? ` (${detalle.length - aVencer.length} períodos vencidos${aVencer.length
+        ? `; a vencer ${aVencer.map((p) => `${p.periodo.slice(5)}/${p.periodo.slice(0, 4)} ${pesos(p.saldo)}`).join(", ")}` : ""})`
+      : ""
     await registrar("ccma", "ok", cuadra
-      ? `${descripcion}${detalle ? ` (${detalle.length} períodos con saldo)` : ""}`
-      : `${descripcion} — ojo: los períodos suman ${pesos(sumaDetalle)}`, deuda.pantalla)
+      ? `${descripcion}${resumen}`
+      : `${descripcion}${resumen} — ojo: los períodos vencidos suman ${pesos(vencido)}`, deuda.pantalla)
     await logActividad(clienteId, `Deuda traída de ARCA — ${descripcion}`, cliente.estudio_id)
     await actualizarHistorialCuotas(deuda).catch((e) =>
       registrar("cuotas", "error", `No se pudo actualizar el historial de cuotas: ${e?.message ?? e}`))
   }
 
   // Planes de Mis Facilidades → planes_pago (se emparejan por número; nunca se borra nada).
+  // Si hay varias filas con el mismo número se actualiza la más reciente; los planes que se
+  // eliminaron a mano (estado "inactivo") no se vuelven a crear.
   async function traerFacilidades(page: Page) {
     const { planes, pantalla } = await consultarFacilidades(page, cliente.cuit)
-    const existentes = (await q(d.from("planes_pago").select("id,numero_plan").eq("cliente_id", clienteId))) ?? []
-    const porNumero = new Map(existentes.map((p: any) => [String(p.numero_plan ?? "").replace(/\W/g, "").toUpperCase(), p]))
+    const existentes = (await q(d.from("planes_pago").select("id,numero_plan,estado")
+      .eq("cliente_id", clienteId).order("created_at", { ascending: true }))) ?? []
+    const clave = (n: unknown) => String(n ?? "").replace(/\W/g, "").toUpperCase()
+    const vigentes = new Map(existentes.filter((p: any) => p.estado !== "inactivo").map((p: any) => [clave(p.numero_plan), p]))
+    const eliminados = new Set(existentes.filter((p: any) => p.estado === "inactivo").map((p: any) => clave(p.numero_plan)))
     const ahora = new Date().toISOString()
     let nuevos = 0
     for (const plan of planes) {
-      const estado = estadoPlan(plan.estado)
+      const estado = estadoPlan(plan.situacion) ?? estadoPlan(plan.estado)
       const datos: Record<string, unknown> = Object.fromEntries(Object.entries({
-        estado_arca: plan.estado, estado, nombre_plan: plan.tipo, fecha_consolidacion: plan.consolidacion,
+        estado_arca: [plan.estado, plan.situacion].filter(Boolean).join(" · ") || null, estado,
+        nombre_plan: plan.tipo, fecha_consolidacion: plan.consolidacion, monto_consolidado: plan.monto,
         total_cuotas: plan.cuotas, cuotas_pagas: plan.cuotasPagas, proximo_venc: plan.proximoVenc,
         arca_actualizado_at: ahora,
       }).filter(([, v]) => v !== null && v !== undefined))
-      const actual = porNumero.get(plan.numero.replace(/\W/g, "").toUpperCase())
+      const actual = vigentes.get(clave(plan.numero))
       if (actual) {
         await q(d.from("planes_pago").update(datos).eq("id", actual.id))
-      } else {
+      } else if (!eliminados.has(clave(plan.numero))) {
         await q(d.from("planes_pago").insert({
           ...datos, cliente_id: clienteId, estudio_id: cliente.estudio_id, numero_plan: plan.numero,
           organismo: "ARCA", fuente: "arca", estado: estado ?? "activo",
@@ -212,8 +225,10 @@ export async function sincronizarCliente(clienteId: string, anio: number, mes: n
         nuevos++
       }
     }
+    const describir = (p: (typeof planes)[number]) =>
+      `${p.numero}${p.situacion ? ` ${p.situacion}` : p.estado ? ` ${p.estado}` : ""}${p.monto ? ` (${pesos(p.monto)})` : ""}`
     await registrar("facilidades", "ok", planes.length
-      ? `${planes.length} planes en Mis Facilidades (${nuevos} nuevos): ${planes.map((p) => `${p.numero}${p.estado ? ` ${p.estado}` : ""}`).join(" · ")}`
+      ? `${planes.length} planes en Mis Facilidades (${nuevos} nuevos): ${planes.map(describir).join(" · ")}`
       : "Sin planes en Mis Facilidades", pantalla)
   }
 

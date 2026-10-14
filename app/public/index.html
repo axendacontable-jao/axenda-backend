@@ -1457,7 +1457,7 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
                       <div>
                         <div className="plan-num">{p.numero_plan||"—"}</div>
                         <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"2px"}}>Consolidado: {formatArgDate(p.fecha_consolidacion)}{p.nombre_plan?` · ${p.nombre_plan}`:""}</div>
-                        {p.fuente==="arca"&&(
+                        {(p.fuente==="arca"||p.arca_actualizado_at)&&(
                           <div style={{fontSize:"11px",color:"var(--blue)",marginTop:"2px"}}>🏛️ Mis Facilidades{p.estado_arca?`: ${p.estado_arca}`:""}{p.arca_actualizado_at?` · ${tiempoRelativo(p.arca_actualizado_at)}`:""}</div>
                         )}
                       </div>
@@ -1468,6 +1468,7 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
                       <div className="plan-meta-item">Próx. venc.: <strong>{formatArgDate(p.proximo_venc)}</strong></div>
                       {p.monto_primer_venc&&<div className="plan-meta-item">1ra cuota: <strong>{$$(p.monto_primer_venc)}</strong></div>}
                       {p.monto_segundo_venc&&<div className="plan-meta-item">2da cuota: <strong>{$$(p.monto_segundo_venc)}</strong></div>}
+                      {p.monto_consolidado&&<div className="plan-meta-item">Deuda consolidada: <strong>{$$(p.monto_consolidado)}</strong></div>}
                     </div>
                     {p.total_cuotas>0&&(
                       <div>
@@ -1495,11 +1496,16 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
                   {grupo.map(p=>(
                     <div key={p.id} className={`plan-card ${estado}`}>
                       <div className="plan-card-top">
-                        <div><div className="plan-num">{p.numero_plan||"—"}</div></div>
+                        <div>
+                          <div className="plan-num">{p.numero_plan||"—"}</div>
+                          {(p.fecha_consolidacion||p.nombre_plan)&&<div style={{fontSize:"11px",color:"var(--muted)",marginTop:"2px"}}>Consolidado: {formatArgDate(p.fecha_consolidacion)}{p.nombre_plan?` · ${p.nombre_plan}`:""}</div>}
+                          {p.arca_actualizado_at&&<div style={{fontSize:"11px",color:"var(--blue)",marginTop:"2px"}}>🏛️ Mis Facilidades{p.estado_arca?`: ${p.estado_arca}`:""} · {tiempoRelativo(p.arca_actualizado_at)}</div>}
+                        </div>
                         <span className="plan-org-badge">{p.organismo||"ARCA"}</span>
                       </div>
                       <div className="plan-meta">
                         <div className="plan-meta-item">Cuotas: <strong>{p.cuotas_pagas||0}/{p.total_cuotas||"?"}</strong></div>
+                        {p.monto_consolidado&&<div className="plan-meta-item">Deuda consolidada: <strong>{$$(p.monto_consolidado)}</strong></div>}
                       </div>
                       <div className="plan-actions" style={{marginTop:"10px"}}>
                         <button className="table-action" onClick={()=>cambiarEstadoPlan(p.id,"activo")}>↩ Reactivar</button>
@@ -2175,11 +2181,16 @@ function HistorialCuotas({ slug, cuota, categoria, onToggleMesActual, automatico
       {arcaInfo&&Array.isArray(arcaInfo.deuda_detalle)&&arcaInfo.deuda_detalle.length>0&&(()=>{
         const filas = arcaInfo.deuda_detalle;
         const imp = (p,c)=>p.impuestos&&p.impuestos[c]>0?$$(p.impuestos[c]):"—";
-        const total = filas.reduce((s,p)=>s+(p.saldo||0),0);
+        // El saldo deudor de ARCA no incluye las cuotas que todavía no vencieron.
+        const hoyIso = `${hoy.getFullYear()}-${String(hoy.getMonth()+1).padStart(2,"0")}-${String(hoy.getDate()).padStart(2,"0")}`;
+        const aVencer = p => p.a_vencer ?? (!!p.vencimiento && p.vencimiento >= hoyIso);
+        const total = filas.filter(p=>!aVencer(p)).reduce((s,p)=>s+(p.saldo||0),0);
+        const totalAVencer = filas.filter(aVencer).reduce((s,p)=>s+(p.saldo||0),0);
+        const vencidos = filas.filter(p=>!aVencer(p)).length;
         return (
           <div style={{marginBottom:"12px"}}>
             <button className="table-action" style={{fontSize:"11px"}} onClick={()=>setVerDetalleDeuda(v=>!v)}>
-              {verDetalleDeuda?"▲ Ocultar":"▼ Ver"} a qué corresponde la deuda de ARCA ({filas.length} {filas.length===1?"período":"períodos"})
+              {verDetalleDeuda?"▲ Ocultar":"▼ Ver"} a qué corresponde la deuda de ARCA ({vencidos} {vencidos===1?"período vencido":"períodos vencidos"}{totalAVencer>0?" + cuota a vencer":""})
             </button>
             {verDetalleDeuda&&(
               <div className="table-wrap" style={{marginTop:"8px"}}>
@@ -2188,9 +2199,9 @@ function HistorialCuotas({ slug, cuota, categoria, onToggleMesActual, automatico
                   <tbody>
                     {filas.map(p=>{
                       const [a,m]=p.periodo.split("-");
-                      const estado = p.obligacion>0&&p.pagos>=p.obligacion-1 ? "Cuota pagada, quedan intereses" : p.vencimiento&&new Date(p.vencimiento+"T23:59:59")<hoy ? "Cuota vencida" : "A vencer";
+                      const estado = p.obligacion>0&&p.pagos>=p.obligacion-1 ? "Cuota pagada, quedan intereses" : aVencer(p) ? `A vencer${p.vencimiento?` el ${formatArgDate(p.vencimiento)}`:""}` : "Cuota vencida";
                       return (
-                        <tr key={p.periodo}>
+                        <tr key={p.periodo} style={aVencer(p)?{opacity:0.7}:undefined}>
                           <td style={{fontWeight:"600",whiteSpace:"nowrap"}}>{m}/{a}</td>
                           <td style={{fontSize:"12px",color:"var(--muted)"}}>{estado}</td>
                           <td style={{fontFamily:"'DM Mono',monospace"}}>{imp(p,"020")}</td>
@@ -2201,9 +2212,14 @@ function HistorialCuotas({ slug, cuota, categoria, onToggleMesActual, automatico
                         </tr>
                       );
                     })}
-                    <tr><td colSpan="6" style={{textAlign:"right",fontWeight:"600"}}>Total ARCA</td><td style={{fontFamily:"'DM Mono',monospace",fontWeight:"700"}}>{$$(total)}</td></tr>
+                    <tr><td colSpan="6" style={{textAlign:"right",fontWeight:"600"}}>Total vencido (saldo deudor de ARCA)</td><td style={{fontFamily:"'DM Mono',monospace",fontWeight:"700"}}>{$$(total)}</td></tr>
+                    {totalAVencer>0&&<tr><td colSpan="6" style={{textAlign:"right",color:"var(--muted)"}}>A vencer (todavía no es deuda)</td><td style={{fontFamily:"'DM Mono',monospace",color:"var(--muted)"}}>{$$(totalAVencer)}</td></tr>}
                   </tbody>
                 </table>
+                {Math.abs(total-(arcaInfo.deuda_arca||0))>1&&(
+                  <div style={{fontSize:"11px",color:"#E8A020",marginTop:"4px"}}>⚠ Los períodos leídos suman {$$(total)} y ARCA informa {$$(arcaInfo.deuda_arca||0)}: puede haber períodos que no se pudieron leer. Volvé a tocar "↻ Actualizar desde ARCA".</div>
+                )}
+                {arcaInfo.deuda_descripcion&&<div style={{fontSize:"11px",color:"var(--muted)",marginTop:"4px"}}>{arcaInfo.deuda_descripcion}</div>}
                 <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"4px"}}>Cada columna de impuesto incluye sus intereses. ART Río Negro no figura en ARCA.</div>
               </div>
             )}

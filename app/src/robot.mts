@@ -153,7 +153,8 @@ export async function describirClickeables(page: Page): Promise<string> {
   return items.join(" | ")
 }
 
-const PIDE_PERSONA = /eleg[ií] una persona|a qui[eé]n (quer[eé]s )?represent|seleccion[aá]?r? (el |la |un |una )?(contribuyente|persona|cuit)/i
+// "Elegí una persona", "Selecciona la CUIT a representar" (CCMA), "Seleccione una de las Cuits asociadas" (Mis Facilidades).
+const PIDE_PERSONA = /eleg[ií] una persona|a qui[eé]n (quer[eé]s )?represent|seleccion\w*\s+(el |la |un |una de las |una )?(contribuyente|persona|cuit)/i
 
 // "Elegí una persona para ingresar": aparece cuando el CUIT puede representar a otros.
 // El CUIT también figura en el encabezado, así que se busca un elemento clickeable fuera de él.
@@ -328,6 +329,41 @@ const tablasDe = (p: Page) =>
 export type DeudaCcma = {
   monto: number; detalle: string; pantalla: string
   saldos: Map<string, number> | null; meses: Map<string, MesCcma> | null
+  // Resumen del encabezado: cuotas (obligación mensual) e intereses (accesorios) adeudados, y saldo a favor.
+  cuotas: number | null; intereses: number | null; aFavor: number | null
+}
+
+// La CCMA lista de a 12 períodos ("Mostrar 12 24 36 48 períodos"); con menos no se ve toda la deuda.
+async function mostrarTodosLosPeriodos(ccma: Page): Promise<string> {
+  const contar = async () => movimientosCcma(await tablasDe(ccma))?.size ?? 0
+  const antes = await contar()
+  if (!/mostrar[\s\d]*\b48\b/i.test((await textoVisible(ccma)).replace(/\s+/g, " "))) return ""
+  const conLista = ccma.locator("select").filter({ has: ccma.locator("option", { hasText: /^\s*48\s*$/ }) })
+  const el = (await conLista.count()) ? null : await primeroVisible([
+    ccma.getByRole("button", { name: /^\s*48\s*$/ }),
+    ccma.getByRole("link", { name: /^\s*48\s*$/ }),
+    ccma.getByRole("radio", { name: /^\s*48\s*$/ }),
+    ccma.getByText("48", { exact: true }),
+  ], 5000)
+  if (await conLista.count()) await conLista.first().selectOption({ label: "48" })
+  else if (el) await el.click()
+  else return `[no encontré el "48" de "Mostrar períodos": ${await describirClickeables(ccma)}]`
+  await ccma.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
+  let despues = await contar()
+  for (let i = 0; i < 4 && despues <= antes; i++) {
+    await ccma.waitForTimeout(1500)
+    despues = await contar()
+  }
+  if (despues <= antes) {
+    // Algunas vistas recién toman la cantidad al volver a consultar.
+    const buscar = await primeroVisible([ccma.getByRole("button", { name: /^\s*(buscar|filtrar|consultar|aplicar)\s*$/i })], 3000)
+    if (buscar) {
+      await buscar.click()
+      await ccma.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
+      despues = await contar()
+    }
+  }
+  return `[períodos: ${antes} → ${despues}] `
 }
 
 export async function consultarDeudaCcma(page: Page, cuit: string): Promise<DeudaCcma> {
@@ -365,20 +401,32 @@ async function leerDeudaCcma(page: Page, cuit: string): Promise<DeudaCcma & { pa
     await ccma.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
   }
 
-  const pantalla = (await textoVisible(ccma)).replace(/\s+/g, " ")
+  const periodos = await mostrarTodosLosPeriodos(ccma)
+  const pantalla = periodos + (await textoVisible(ccma)).replace(/\s+/g, " ")
   const tablas = await tablasDe(ccma)
   const saldos = saldosPorPeriodo(tablas)
   const meses = movimientosCcma(tablas)
+  // "Total Saldo Deudor: X Total Saldo Acreedor: Y Obligación Mensual: (deudor) Obligación Mensual: (acreedor)
+  // Accesorios: (deudor) Accesorios: (acreedor)": la primera aparición de cada rubro es la del deudor.
+  const rubro = (re: RegExp) => { const r = pantalla.match(re); return r ? parseMonto(r[1]) : null }
+  const resumen = {
+    cuotas: rubro(/obligaci[oó]n mensual:?\s*\$?\s*(-?\d[\d.,]*\d)/i),
+    intereses: rubro(/accesorios:?\s*\$?\s*(-?\d[\d.,]*\d)/i),
+    aFavor: rubro(/saldo acreedor:?\s*\$?\s*(-?\d[\d.,]*\d)/i),
+  }
   if (/no (registra|posee|tiene|existe[n]?) deudas?|sin deuda|no se registran (deudas|saldos)/i.test(pantalla)) {
-    return { monto: 0, detalle: "sin deuda", pantalla, saldos, meses, pagina: ccma }
+    return { monto: 0, detalle: "sin deuda", pantalla, saldos, meses, ...resumen, pagina: ccma }
   }
   const m = pantalla.match(/(saldo deudor|total (de )?(la )?deuda|deuda total|total adeudado|saldo total)[^0-9$-]{0,40}\$?\s*(-?\d[\d.,]*\d)/i)
   const monto = m ? parseMonto(m[4]) : null
   if (!m || monto === null) {
     throw new FalloArca("error", `No encontré el total de deuda en la CCMA (${ccma.url()}). Pantalla: ${pantalla.slice(0, 400)} — Botones: ${await describirClickeables(ccma)}`)
   }
-  const pesosAr = monto.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  return { monto, detalle: `${m[1]}: $${pesosAr}`, pantalla, saldos, meses, pagina: ccma }
+  const pesosAr = (n: number) => n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const partes = resumen.cuotas !== null && resumen.intereses !== null && monto > 0
+    ? ` (cuotas $${pesosAr(resumen.cuotas)} + intereses $${pesosAr(resumen.intereses)})` : ""
+  const aFavor = resumen.aFavor ? ` · saldo a favor $${pesosAr(resumen.aFavor)}` : ""
+  return { monto, detalle: `${m[1]}: $${pesosAr(monto)}${partes}${aFavor}`, pantalla, saldos, meses, ...resumen, pagina: ccma }
 }
 
 // Mis Facilidades: planes de pago del contribuyente (solo consulta).

@@ -284,15 +284,22 @@ export function movimientosCcma(tablas: string[][][]): Map<string, MesCcma> | nu
 // ── Mis Facilidades: lista de planes ─────────────────────────────────────────
 
 export type PlanArca = {
-  numero: string; tipo: string | null; estado: string | null; consolidacion: string | null
-  cuotas: number | null; cuotasPagas: number | null; monto: number | null; proximoVenc: string | null
+  numero: string; tipo: string | null; estado: string | null; situacion: string | null
+  consolidacion: string | null; cuotas: number | null; cuotasPagas: number | null
+  monto: number | null; proximoVenc: string | null
 }
 
+// "Presentaciones Enviadas" (Presentación | Número | Cuotas | Tipo | Consolidado($) | Estado | Situación).
+// El Estado es el de la presentación ("Aceptada"); la Situación es la del plan ("Plan Caduco").
+// Devuelve [] si está el encabezado pero no hay planes, y null si no encontró la tabla.
 export function leerPlanesFacilidades(tablas: string[][][]): PlanArca[] | null {
+  let hayEncabezado = false
   for (const tabla of tablas) {
+    const esEncabezado = (c: string, re: RegExp) => c.trim().length < 40 && re.test(c)
     const iEnc = tabla.findIndex((f) =>
-      f.some((c) => /n[uú]mero|nro|plan/i.test(c)) && f.some((c) => /estado|situaci[oó]n/i.test(c)))
+      f.some((c) => esEncabezado(c, /n[uú]mero|nro|plan/i)) && f.some((c) => esEncabezado(c, /estado|situaci[oó]n/i)))
     if (iEnc < 0) continue
+    hayEncabezado = true
     const enc = tabla[iEnc].map((c) => c.trim().toLowerCase())
     const col = (...res: RegExp[]) => {
       for (const re of res) {
@@ -303,10 +310,11 @@ export function leerPlanesFacilidades(tablas: string[][][]): PlanArca[] | null {
     }
     const cNum = col(/n[uú]mero|^nro/, /^plan$/, /plan/)
     const cTipo = col(/tipo|r[eé]gimen|descripci/)
-    const cEstado = col(/estado|situaci/)
+    const cEstado = col(/estado/, /situaci/)
+    const cSituacion = enc.findIndex((c, j) => j !== cEstado && /situaci/.test(c))
     const cCons = col(/consolidaci/, /presentaci/, /fecha/)
     const cCuotas = col(/cuotas/)
-    const cMonto = col(/deuda|monto|total|importe/)
+    const cMonto = col(/deuda|monto|total|importe|consolidado/)
     const cVenc = col(/pr[oó]x.*venc|vencimiento/)
     const celda = (fila: string[], j: number) => (j >= 0 ? (fila[j] ?? "").trim() : "")
 
@@ -320,6 +328,7 @@ export function leerPlanesFacilidades(tablas: string[][][]): PlanArca[] | null {
         numero,
         tipo: celda(fila, cTipo) || null,
         estado: celda(fila, cEstado) || null,
+        situacion: celda(fila, cSituacion) || null,
         consolidacion: fechaDdmmIso(celda(fila, cCons)),
         cuotas: pagasDeTotal ? Number(pagasDeTotal[2]) : /^\d+$/.test(cuotasTxt) ? Number(cuotasTxt) : null,
         cuotasPagas: pagasDeTotal ? Number(pagasDeTotal[1]) : null,
@@ -329,7 +338,7 @@ export function leerPlanesFacilidades(tablas: string[][][]): PlanArca[] | null {
     }
     if (planes.length) return planes
   }
-  return null
+  return hayEncabezado ? [] : null
 }
 
 // ── PDF ──────────────────────────────────────────────────────────────────────
