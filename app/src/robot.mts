@@ -169,21 +169,47 @@ export async function bajarComprobantes(
   mc: Page, tipo: TipoComprobantes, desde: string, hasta: string,
 ): Promise<Uint8Array | null> {
   const nombre = tipo === "emitidos" ? /emitidos/i : /recibidos/i
-  const boton = await primeroVisible([
+  const opciones = () => [
     mc.locator(tipo === "emitidos" ? "#btnEmitidos" : "#btnRecibidos"),
     mc.getByRole("link", { name: nombre }),
     mc.getByRole("button", { name: nombre }),
-  ])
+  ]
+  let boton = await primeroVisible(opciones(), 5000)
+  if (!boton) {
+    // Después de una consulta queda en la pantalla de resultados: volver al menú.
+    const menu = await primeroVisible([mc.getByRole("link", { name: /men[uú] principal/i })], 5000)
+    if (menu) {
+      await menu.click()
+      await mc.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
+      boton = await primeroVisible(opciones())
+    }
+  }
   if (!boton) {
     throw new FalloArca("error", `No encontré el botón "${tipo}" en Mis Comprobantes. Botones: ${await describirClickeables(mc)}`)
   }
   await boton.click()
 
+  const rango = `${desde} - ${hasta}`
   const fecha = mc.locator("#fechaEmision")
   await fecha.waitFor({ timeout: T })
-  await fecha.fill(`${desde} - ${hasta}`)
-  await fecha.press("Enter").catch(() => {})
-  await mc.locator(".daterangepicker .applyBtn").first().click({ timeout: 2000 }).catch(() => {})
+  // El daterangepicker ignora el texto tipeado: se usa su API (si no está, se escribe el valor).
+  await mc.evaluate(([d, h]) => {
+    const input = document.querySelector("#fechaEmision") as HTMLInputElement
+    const $ = (window as any).jQuery
+    const picker = $ && $(input).data("daterangepicker")
+    if (picker) {
+      picker.setStartDate(d)
+      picker.setEndDate(h)
+      picker.updateElement?.()
+    } else {
+      input.value = `${d} - ${h}`
+    }
+    input.dispatchEvent(new Event("change", { bubbles: true }))
+  }, [desde, hasta])
+  const cargado = await fecha.inputValue()
+  if (cargado.replace(/\s/g, "") !== rango.replace(/\s/g, "")) {
+    throw new FalloArca("error", `No se pudo poner el período ${rango} en el filtro (quedó "${cargado}")`)
+  }
 
   const buscar = await primeroVisible([mc.locator("#buscarComprobantes"), mc.getByRole("button", { name: /^\s*buscar\s*$/i })])
   if (!buscar) throw new FalloArca("error", `No encontré el botón Buscar en Mis Comprobantes. Botones: ${await describirClickeables(mc)}`)
@@ -194,6 +220,11 @@ export async function bajarComprobantes(
   const vacio = mc.getByText(/no se encontraron|ning[uú]n dato disponible|no hay (datos|comprobantes|registros)/i)
   const listo = await primeroVisible([excel, vacio], 60_000)
   if (!listo) throw new FalloArca("arca_caido", "Mis Comprobantes no devolvió resultados a tiempo")
+  const pantalla = (await textoVisible(mc)).replace(/\s+/g, " ")
+  if (!pantalla.includes(desde) || !pantalla.includes(hasta)) {
+    const filtro = pantalla.match(/Filtro Aplicado.{0,120}/)?.[0] ?? "sin filtro visible"
+    throw new FalloArca("error", `ARCA no aplicó el período ${rango}: ${filtro}`)
+  }
   if (!(await excel.first().isVisible().catch(() => false))) return null
 
   const [descarga] = await Promise.all([mc.waitForEvent("download", { timeout: 60_000 }), excel.first().click()])

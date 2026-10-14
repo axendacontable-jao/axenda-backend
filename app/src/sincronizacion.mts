@@ -76,12 +76,24 @@ export async function sincronizarComprobantes(clienteId: string, anio: number, m
       for (const tipo of [...pendientes]) {
         const excel = await bajarComprobantes(mc, tipo, desde, hasta)
         const totales = excel ? totalesComprobantesPorMes(excel) : []
-        const monto = totales.filter((t) => t.anio === anio && t.mes === mes).reduce((a, t) => a + t.monto, 0)
+        const etiqueta = tipo === "emitidos" ? "Facturación" : "Gastos"
+        const otros = totales.filter((t) => t.anio !== anio || t.mes !== mes)
+        if (otros.length) {
+          throw new FalloArca("error", `El Excel de ${etiqueta.toLowerCase()} trajo otros meses (${otros.map((t) => `${t.mes}/${t.anio}`).join(", ")}); no se guardó nada`)
+        }
+        const monto = totales.reduce((a, t) => a + t.monto, 0)
+        const existente = await q(
+          d.from(TABLA[tipo]).select("monto").eq("cliente_id", clienteId).eq("anio", anio).eq("mes", mes).maybeSingle(),
+        )
+        if (!totales.length && Number(existente?.monto) > 0) {
+          await registrar(tipo, "ok", `${etiqueta} ${pad(mes)}/${anio}: ARCA no muestra comprobantes; se mantiene lo cargado (${pesos(Number(existente.monto))})`)
+          pendientes.delete(tipo)
+          continue
+        }
         await q(d.from(TABLA[tipo]).upsert(
           { cliente_id: clienteId, estudio_id: cliente.estudio_id, anio, mes, monto, fuente: "arca_robot" },
           { onConflict: "cliente_id,anio,mes" },
         ))
-        const etiqueta = tipo === "emitidos" ? "Facturación" : "Gastos"
         await registrar(tipo, "ok", `${etiqueta} ${pad(mes)}/${anio}: ${pesos(monto)}`)
         await logActividad(clienteId, `${etiqueta} ${pad(mes)}/${anio} traída de ARCA — ${pesos(monto)}`, cliente.estudio_id)
         pendientes.delete(tipo)
