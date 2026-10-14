@@ -85,6 +85,12 @@ async function actualizarOInsertar(
   if (!filas?.length) await q(db().from(tabla).insert({ ...filtro, ...valores }))
 }
 
+// Con clave fiscal cargada, cuotas y deuda vienen de ARCA y no se marcan a mano.
+async function tieneClaveFiscal(clienteId: string) {
+  return !!(await q(db().from("credenciales_arca").select("cliente_id").eq("cliente_id", clienteId).maybeSingle()))
+}
+const SINCRONIZADO = "Este cliente se sincroniza con ARCA: las cuotas se actualizan solas"
+
 // ── Salud ────────────────────────────────────────────────────────────────────
 
 const salud: Handler = async () => {
@@ -228,7 +234,12 @@ const padron: Handler = async ({ p }) => {
 
 const listarClientes: Handler = async ({ req }) => {
   const estudioId = await getEstudioId(req)
-  return q(db().from("clientes").select("*").eq("estudio_id", estudioId).order("apellido"))
+  const [clientes, creds] = await Promise.all([
+    q(db().from("clientes").select("*").eq("estudio_id", estudioId).order("apellido")),
+    q(db().from("credenciales_arca").select("cliente_id").eq("estudio_id", estudioId)),
+  ])
+  const conClave = new Set((creds ?? []).map((c: any) => c.cliente_id))
+  return (clientes ?? []).map((c: any) => ({ ...c, arca_auto: conClave.has(c.id) }))
 }
 
 const crearCliente: Handler = async ({ req }) => {
@@ -270,6 +281,7 @@ const actualizarEstadoPago: Handler = async ({ req, p }) => {
     throw new HttpError(400, "Estado inválido: debe ser al_dia, debe o vencida")
   }
   const cliente = await clientePorSlug(p.slug, estudioId, "id,nombre,apellido")
+  if (await tieneClaveFiscal(cliente.id)) throw new HttpError(409, SINCRONIZADO)
   await q(db().from("clientes").update({ estado_pago: nuevo }).eq("slug", p.slug).eq("estudio_id", estudioId))
   if (nuevo === "al_dia") {
     const nombre = `${cliente.nombre ?? ""} ${cliente.apellido ?? ""}`.trim()
@@ -335,6 +347,7 @@ const toggleHistorialCuota: Handler = async ({ req, p }) => {
   const data = await body(req)
   const filas = await q(db().from("clientes").select("id").eq("slug", p.slug).eq("estudio_id", estudioId).limit(1))
   if (!filas?.length) throw new HttpError(404, "Cliente no encontrado")
+  if (await tieneClaveFiscal(filas[0].id)) throw new HttpError(409, SINCRONIZADO)
   const pagado = get(data, "pagado", true)
   const fechaPago = pagado ? ahoraIsoZ() : null
   try {
@@ -447,6 +460,7 @@ const portalMarcarPago: Handler = async ({ req, p }) => {
   const filas = await q(db().from("clientes").select("id,nombre,apellido,estudio_id").eq("slug", p.slug))
   if (!filas?.length) throw new HttpError(404, "Cliente no encontrado")
   const cliente = filas[0]
+  if (await tieneClaveFiscal(cliente.id)) throw new HttpError(409, SINCRONIZADO)
   const t = hoy()
   try {
     await actualizarOInsertar(
@@ -493,7 +507,7 @@ const datosPortal: Handler = async ({ req, p }) => {
   let cfg: Record<string, string> = {}
   try {
     const filas = await q(
-      d.from("configuracion").select("clave,valor").in("clave", ["whatsapp_estudio"]).eq("estudio_id", cliente.estudio_id ?? ""),
+      d.from("configuracion").select("clave,valor").in("clave", ["whatsapp_estudio", "cm05_vencimiento"]).eq("estudio_id", cliente.estudio_id ?? ""),
     )
     cfg = Object.fromEntries((filas ?? []).map((r: any) => [r.clave, r.valor]))
   } catch {
@@ -502,7 +516,7 @@ const datosPortal: Handler = async ({ req, p }) => {
 
   const t = hoy()
   let pagadosDb: Set<string> | null = null
-  let deudaTotal = 0, deudaDesc: string | null = null, deudaArt = 0, deudaArca = 0
+  let deudaTotal = 0, deudaDesc: string | null = null, deudaArt = 0, deudaArca = 0, deudaOtroMan = 0
   try {
     const cat = String(cliente.categoria ?? "").toUpperCase()
     const cuotaMensual = cliente.cuota || 0
@@ -525,7 +539,7 @@ const datosPortal: Handler = async ({ req, p }) => {
     const suma = (f: (x: any) => boolean) => deudasMan.filter(f).reduce((a: number, x: any) => a + (x.monto || 0), 0)
     const deudaArtMan = suma((x) => x.organismo === "ART")
     const deudaArcaMan = suma((x) => x.organismo === "ARCA")
-    const deudaOtroMan = suma((x) => x.organismo !== "ART" && x.organismo !== "ARCA")
+    deudaOtroMan = suma((x) => x.organismo !== "ART" && x.organismo !== "ARCA")
 
     deudaArt = deudaArtHist + deudaArtMan
     deudaArca = deudaArcaHist + deudaArcaMan
@@ -541,6 +555,22 @@ const datosPortal: Handler = async ({ req, p }) => {
     deudaArt = 0
     deudaArca = 0
   }
+
+  // Con clave fiscal, la deuda es la de la CCMA (incluye el componente provincial del monotributo
+  // unificado e intereses); se suman solo las deudas manuales de otros organismos.
+  const arcaAuto = await tieneClaveFiscal(cliente.id)
+  if (arcaAuto && cliente.deuda_actualizada_at) {
+    deudaArca = Number(cliente.deuda_monto) || 0
+    deudaArt = 0
+    deudaTotal = deudaArca + deudaOtroMan
+    const partes = [deudaArca > 0 && cliente.deuda_descripcion, deudaOtroMan > 0 && `Otros: ${pesos(deudaOtroMan)}`].filter(Boolean)
+    deudaDesc = partes.length ? partes.join(" · ") : null
+  }
+
+  const jurisdicciones = cliente.iibb_modalidad === "convenio_multilateral"
+    ? (await q(d.from("cliente_jurisdicciones").select("jurisdiccion,nro_inscripcion,alicuota,coeficiente,es_sede")
+      .eq("cliente_id", cliente.id).eq("activo", true).order("es_sede", { ascending: false }).order("jurisdiccion"))) ?? []
+    : []
 
   // Estado de la cuota del mes según historial_cuotas (no el campo manual)
   let estadoCuota = "pendiente"
@@ -586,6 +616,7 @@ const datosPortal: Handler = async ({ req, p }) => {
     estado_cuota: estadoCuota,
     ultima_recat: ultimaRecat, recat_pendiente: recatPendiente,
     gastos: gastos12, total_gastos: totalGastos,
+    arca_auto: arcaAuto, jurisdicciones, cm05_vencimiento: cfg.cm05_vencimiento ?? null,
   }
 }
 
@@ -1206,17 +1237,24 @@ const registrarRecategorizacion: Handler = async ({ req, p }) => {
 
 const estadoArca: Handler = async ({ req, p }) => {
   const estudioId = await getEstudioId(req)
-  const cliente = await clientePorSlug(p.slug, estudioId, "id,deuda_monto,deuda_descripcion,deuda_actualizada_at")
+  const cliente = await clientePorSlug(
+    p.slug, estudioId,
+    "id,categoria,estado_arca,situacion_arca_at,ultimos_comprobantes,deuda_monto,deuda_descripcion,deuda_actualizada_at",
+  )
   const [cred, sincronizaciones] = await Promise.all([
     q(db().from("credenciales_arca").select("actualizada_at").eq("cliente_id", cliente.id).maybeSingle()),
     q(db().from("sincronizaciones_arca").select("tipo,anio,mes,estado,detalle,created_at")
-      .eq("cliente_id", cliente.id).order("created_at", { ascending: false }).limit(10)),
+      .eq("cliente_id", cliente.id).order("created_at", { ascending: false }).limit(12)),
   ])
   return {
     clave_cargada: !!cred, actualizada_at: cred?.actualizada_at ?? null, sincronizaciones: sincronizaciones ?? [],
     deuda: cliente.deuda_actualizada_at
       ? { monto: cliente.deuda_monto, descripcion: cliente.deuda_descripcion, actualizada_at: cliente.deuda_actualizada_at }
       : null,
+    situacion: {
+      categoria: cliente.categoria, estado: cliente.estado_arca, actualizada_at: cliente.situacion_arca_at,
+      ultimos_comprobantes: cliente.ultimos_comprobantes,
+    },
   }
 }
 
@@ -1241,15 +1279,111 @@ const borrarClaveFiscal: Handler = async ({ req, p }) => {
   return { ok: true }
 }
 
-const sincronizarArcaAhora: Handler = async ({ req, p }) => {
+// "Actualizar desde ARCA": categoría y estado salen al instante del padrón (web service con el
+// certificado del estudio); facturas, gastos, deuda, cuotas y últimos comprobantes los trae el robot.
+const actualizarDesdeArca: Handler = async ({ req, p }) => {
+  const estudioId = await getEstudioId(req)
+  const cliente = await clientePorSlug(p.slug, estudioId, "id,cuit,categoria")
+
+  let constancia: Record<string, unknown> | null = null
+  let errorConstancia: string | null = null
+  try {
+    const datos = await buscarEnConstancia(cliente.cuit)
+    const update: Record<string, unknown> = { estado_arca: datos.estado || null, situacion_arca_at: ahoraIsoZ() }
+    const nueva = /^[A-K]$/.test(datos.categoria) ? datos.categoria : null
+    if (nueva && nueva !== cliente.categoria) update.categoria = nueva
+    await q(db().from("clientes").update(update).eq("id", cliente.id))
+    if (update.categoria) {
+      await logActividad(cliente.id, `Categoría actualizada desde ARCA: ${cliente.categoria ?? "—"} → ${nueva}`, estudioId)
+    }
+    constancia = {
+      categoria: nueva ?? cliente.categoria, estado: datos.estado || null,
+      categoria_cambio: !!update.categoria, categoria_anterior: cliente.categoria ?? null,
+    }
+  } catch (e: any) {
+    errorConstancia = String(e?.message ?? e)
+  }
+
+  const robot = await tieneClaveFiscal(cliente.id)
+  if (robot) {
+    const { anio, mes } = finPeriodoProximaRecategorizacion()
+    await despacharSincronizacion(new URL(req.url).origin, cliente.id, anio, mes, TAREAS)
+  }
+  return { ok: true, constancia, error_constancia: errorConstancia, robot }
+}
+
+// ── Convenio Multilateral: jurisdicciones ────────────────────────────────────
+
+// Acepta "3,5", "0,4523" o "0.4523" (la coma manda; si no hay coma, el punto es decimal).
+function numeroDecimal(v: unknown): number | null {
+  const s = String(v ?? "").trim()
+  const t = s.includes(",") ? s.replace(/\./g, "").replace(",", ".") : s
+  const n = Number(t)
+  return t !== "" && Number.isFinite(n) ? n : null
+}
+
+function datosJurisdiccion(data: Record<string, any>) {
+  const out: Record<string, unknown> = {}
+  if ("jurisdiccion" in data) {
+    const j = String(data.jurisdiccion ?? "").trim()
+    if (!j || j.length > 60) throw new HttpError(400, "Jurisdicción inválida")
+    out.jurisdiccion = j
+  }
+  if ("nro_inscripcion" in data) out.nro_inscripcion = String(data.nro_inscripcion ?? "").trim() || null
+  for (const campo of ["alicuota", "coeficiente"]) {
+    if (!(campo in data)) continue
+    const v = data[campo]
+    if (v === null || v === "") {
+      out[campo] = null
+      continue
+    }
+    const n = typeof v === "number" ? v : numeroDecimal(v)
+    if (n === null || n < 0 || (campo === "coeficiente" && n > 1)) throw new HttpError(400, `${campo} inválido`)
+    out[campo] = n
+  }
+  if ("es_sede" in data) out.es_sede = !!data.es_sede
+  if ("activo" in data) out.activo = !!data.activo
+  return out
+}
+
+// Una sola jurisdicción sede por cliente.
+async function dejarUnicaSede(clienteId: string, sedeId: string) {
+  await q(db().from("cliente_jurisdicciones").update({ es_sede: false }).eq("cliente_id", clienteId).neq("id", sedeId))
+}
+
+const listarJurisdicciones: Handler = async ({ req, p }) => {
   const estudioId = await getEstudioId(req)
   const cliente = await clientePorSlug(p.slug, estudioId)
-  const cred = await q(db().from("credenciales_arca").select("cliente_id").eq("cliente_id", cliente.id).maybeSingle())
-  if (!cred) throw new HttpError(400, "El cliente no tiene clave fiscal cargada")
-  // Lo mismo que el cron: comprobantes del período de la próxima recategorización y deuda CCMA.
-  const { anio, mes } = finPeriodoProximaRecategorizacion()
-  await despacharSincronizacion(new URL(req.url).origin, cliente.id, anio, mes, TAREAS)
-  return { ok: true, anio, mes }
+  return (await q(db().from("cliente_jurisdicciones").select("*").eq("cliente_id", cliente.id).eq("estudio_id", estudioId)
+    .order("es_sede", { ascending: false }).order("jurisdiccion"))) ?? []
+}
+
+const crearJurisdiccion: Handler = async ({ req, p }) => {
+  const estudioId = await getEstudioId(req)
+  const datos = datosJurisdiccion(await body(req))
+  if (!datos.jurisdiccion) throw new HttpError(400, "Falta la jurisdicción")
+  const cliente = await clientePorSlug(p.slug, estudioId)
+  const filas = await q(db().from("cliente_jurisdicciones").insert({ ...datos, cliente_id: cliente.id, estudio_id: estudioId }).select())
+  const fila = filas?.[0]
+  if (fila?.es_sede) await dejarUnicaSede(cliente.id, fila.id)
+  return { ok: true, jurisdiccion: fila ?? null }
+}
+
+const actualizarJurisdiccion: Handler = async ({ req, p }) => {
+  const estudioId = await getEstudioId(req)
+  const datos = datosJurisdiccion(await body(req))
+  if (!Object.keys(datos).length) throw new HttpError(400, "Sin campos válidos")
+  const filas = await q(db().from("cliente_jurisdicciones").update(datos).eq("id", p.id).eq("estudio_id", estudioId).select())
+  const fila = filas?.[0]
+  if (!fila) throw new HttpError(404, "Jurisdicción no encontrada")
+  if (fila.es_sede) await dejarUnicaSede(fila.cliente_id, fila.id)
+  return { ok: true, jurisdiccion: fila }
+}
+
+const eliminarJurisdiccion: Handler = async ({ req, p }) => {
+  const estudioId = await getEstudioId(req)
+  await q(db().from("cliente_jurisdicciones").delete().eq("id", p.id).eq("estudio_id", estudioId))
+  return { ok: true }
 }
 
 const capturaArca: Handler = async ({ req, p }) => {
@@ -1290,8 +1424,12 @@ export const rutas: [string, string, Handler][] = [
   ["GET", "/clientes/:slug/arca", estadoArca],
   ["PUT", "/clientes/:slug/clave-fiscal", guardarClaveFiscal],
   ["DELETE", "/clientes/:slug/clave-fiscal", borrarClaveFiscal],
-  ["POST", "/clientes/:slug/sincronizar-arca", sincronizarArcaAhora],
+  ["POST", "/clientes/:slug/actualizar-arca", actualizarDesdeArca],
   ["GET", "/clientes/:slug/arca-captura", capturaArca],
+  ["GET", "/clientes/:slug/jurisdicciones", listarJurisdicciones],
+  ["POST", "/clientes/:slug/jurisdicciones", crearJurisdiccion],
+  ["PATCH", "/jurisdicciones/:id", actualizarJurisdiccion],
+  ["DELETE", "/jurisdicciones/:id", eliminarJurisdiccion],
 
   ["PATCH", "/deuda-manual/:id/pagar", pagarDeudaManual],
   ["DELETE", "/deuda-manual/:id", eliminarDeudaManual],

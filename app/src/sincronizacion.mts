@@ -2,10 +2,10 @@ import type { Browser, Page } from "playwright-core"
 import { getStore } from "@netlify/blobs"
 import { db, diasEnMes, hoyArgentina, logActividad, q } from "./core.mts"
 import { descifrarClave, firmarTrabajo, trabajoValido } from "./secretos.mts"
-import { totalesComprobantesPorMes } from "./parsers.mts"
+import { type Comprobante, totalesComprobantesPorMes, ultimosComprobantes } from "./parsers.mts"
 import {
   FalloArca, abrirMisComprobantes, abrirNavegador, bajarComprobantes, capturarEstado, consultarDeudaCcma,
-  elegirContribuyente, ingresar, type EstadoSync, type TipoComprobantes,
+  elegirContribuyente, ingresar, type DeudaCcma, type EstadoSync, type TipoComprobantes,
 } from "./robot.mts"
 
 export type Tarea = TipoComprobantes | "ccma"
@@ -96,7 +96,7 @@ export async function sincronizarCliente(clienteId: string, anio: number, mes: n
   // Ningún mensaje que se guarde o se loguee puede contener la clave.
   const limpiar = (s: string) => (clave ? s.split(clave).join("***") : s)
 
-  const registrar = (tarea: Tarea, estado: EstadoSync, detalle: string, pantalla?: string) =>
+  const registrar = (tarea: Tarea | "cuotas", estado: EstadoSync, detalle: string, pantalla?: string) =>
     q(d.from("sincronizaciones_arca").insert({
       cliente_id: clienteId, estudio_id: cliente.estudio_id, tipo: tarea, anio, mes, estado, detalle: limpiar(detalle),
       pantalla: pantalla ? limpiar(pantalla).slice(0, 6000) : null,
@@ -109,9 +109,16 @@ export async function sincronizarCliente(clienteId: string, anio: number, mes: n
 
   async function traerComprobantes(mc: Page, tipo: TipoComprobantes) {
     const totales: { anio: number; mes: number; monto: number }[] = []
+    const recientes: Comprobante[] = []
     for (const tramo of periodo.tramos) {
       const excel = await bajarComprobantes(mc, tipo, tramo.desde, tramo.hasta)
-      if (excel) totales.push(...totalesComprobantesPorMes(excel))
+      if (!excel) continue
+      totales.push(...totalesComprobantesPorMes(excel))
+      if (tipo === "emitidos") recientes.push(...ultimosComprobantes(excel, 3))
+    }
+    if (tipo === "emitidos") {
+      const ultimos = recientes.sort((a, b) => (a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0)).slice(0, 3)
+      await q(d.from("clientes").update({ ultimos_comprobantes: ultimos }).eq("id", clienteId))
     }
     const etiqueta = tipo === "emitidos" ? "Facturación" : "Gastos"
     const fuera = totales.filter((t) => !enPeriodo(t.anio, t.mes))
@@ -144,6 +151,68 @@ export async function sincronizarCliente(clienteId: string, anio: number, mes: n
     }).eq("id", clienteId))
     await registrar("ccma", "ok", descripcion, deuda.pantalla)
     await logActividad(clienteId, `Deuda traída de ARCA — ${descripcion}`, cliente.estudio_id)
+    await actualizarHistorialCuotas(deuda).catch((e) =>
+      registrar("cuotas", "error", `No se pudo actualizar el historial de cuotas: ${e?.message ?? e}`))
+  }
+
+  // Con la clave fiscal cargada, ARCA dice qué meses se deben: el historial deja de ser manual.
+  async function actualizarHistorialCuotas(deuda: DeudaCcma) {
+    let adeudados: Set<string>
+    if (deuda.saldos) {
+      adeudados = new Set([...deuda.saldos].filter(([, saldo]) => saldo > 1).map(([k]) => k))
+    } else if (deuda.monto <= 0) {
+      adeudados = new Set()
+    } else {
+      await registrar("cuotas", "error", "La CCMA informa deuda pero no muestra el detalle por período: el historial de cuotas no se actualizó", deuda.pantalla)
+      return
+    }
+    if (deuda.monto > 1 && adeudados.size === 0) {
+      await registrar("cuotas", "error", "La CCMA informa deuda pero ningún período con saldo: el historial de cuotas no se actualizó", deuda.pantalla)
+      return
+    }
+
+    // Si la CCMA lista todos los períodos (incluidos los saldados en $0), los meses anteriores al
+    // primero que muestra no se conocen: no se tocan. Si lista solo los adeudados, los que no
+    // aparecen están pagos.
+    const indiceDe = (k: string) => { const [a, m] = k.split("-").map(Number); return a * 12 + (m - 1) }
+    const listadoCompleto = !!deuda.saldos && [...deuda.saldos.values()].some((s) => Math.abs(s) <= 1)
+    const desdeIndice = listadoCompleto ? Math.min(...[...deuda.saldos!.keys()].map(indiceDe)) : -Infinity
+
+    const t = hoyArgentina()
+    const existentes = new Map<string, any>(
+      ((await q(d.from("historial_cuotas").select("*").eq("cliente_id", clienteId))) ?? [])
+        .map((h: any) => [`${h["año"]}-${h.mes}`, h]),
+    )
+    const ahora = new Date().toISOString()
+    let cambios = 0
+    // Últimos 6 meses: lo que muestran el admin y el portal.
+    for (let i = 0; i < 6; i++) {
+      const idx = t.y * 12 + (t.m - 1) - i
+      if (idx < desdeIndice) continue
+      const anioMes = { anio: Math.floor(idx / 12), mes: (idx % 12) + 1 }
+      const k = `${anioMes.anio}-${anioMes.mes}`
+      const debe = adeudados.has(k)
+      // Mes en curso sin deuda antes del vencimiento (día 20): todavía no se sabe si lo va a pagar.
+      if (i === 0 && !debe && t.d <= 20) continue
+      const pagado = !debe
+      const actual = existentes.get(k)
+      if (actual && !!actual.pagado === pagado) continue
+      if (actual) {
+        await q(d.from("historial_cuotas").update({ pagado, fecha_pago: pagado ? ahora : null }).eq("id", actual.id))
+      } else {
+        await q(d.from("historial_cuotas").insert({ cliente_id: clienteId, año: anioMes.anio, mes: anioMes.mes, pagado, fecha_pago: pagado ? ahora : null }))
+      }
+      cambios++
+    }
+
+    const actualDebe = adeudados.has(`${t.y}-${t.m}`)
+    if (actualDebe || t.d > 20) {
+      await q(d.from("clientes").update({ estado_pago: actualDebe ? "debe" : "al_dia" }).eq("id", clienteId))
+    }
+    const meses = [...adeudados].map((k) => { const [a, m] = k.split("-"); return `${pad(Number(m))}/${a}` }).sort()
+    await registrar("cuotas", "ok", meses.length
+      ? `Según ARCA se deben ${meses.length} períodos: ${meses.join(", ")} (${cambios} meses actualizados)`
+      : `Según ARCA no hay cuotas adeudadas (${cambios} meses actualizados)`)
   }
 
   const pendientes = new Set(tareas)

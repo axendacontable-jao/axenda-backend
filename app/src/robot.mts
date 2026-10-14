@@ -1,5 +1,5 @@
 import type { Browser, Locator, Page } from "playwright-core"
-import { parseMonto } from "./parsers.mts"
+import { parseMonto, saldosPorPeriodo } from "./parsers.mts"
 
 // Debe coincidir con la versión de @sparticuz/chromium-min del package.json.
 const CHROMIUM_PACK = "https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.tar"
@@ -309,7 +309,34 @@ export async function bajarComprobantes(
 const PROHIBIDO = /vep|pagar|pago|generar|presentar|confirmar|eliminar|baja|adherir|plan de|volante/i
 
 // Cuenta Corriente de Monotributistas y Autónomos: saldo de deuda a la fecha.
-export async function consultarDeudaCcma(page: Page, cuit: string): Promise<{ monto: number; detalle: string; pantalla: string }> {
+const tablasDe = (p: Page) =>
+  p.evaluate(() =>
+    [...document.querySelectorAll("table")].map((t) =>
+      [...(t as HTMLTableElement).rows].map((r) => [...r.cells].map((c) => (c as HTMLElement).innerText.replace(/\s+/g, " ").trim()))),
+  ).catch(() => [] as string[][][])
+
+export type DeudaCcma = { monto: number; detalle: string; pantalla: string; saldos: Map<string, number> | null }
+
+export async function consultarDeudaCcma(page: Page, cuit: string): Promise<DeudaCcma> {
+  const resultado = await leerDeudaCcma(page, cuit)
+  if (resultado.monto <= 0 || resultado.saldos) return resultado
+  // Hay deuda pero esta pantalla no muestra el detalle por período: probar "Detalle" (solo consulta).
+  const ccma = resultado.pagina
+  const detalle = await primeroVisible([
+    ccma.getByRole("link", { name: /detalle|deuda por per[ií]odo|ver deuda/i }),
+    ccma.getByRole("button", { name: /detalle|deuda por per[ií]odo|ver deuda/i }),
+  ], 6000)
+  if (detalle && !PROHIBIDO.test((await detalle.innerText().catch(() => "")) || "")) {
+    await detalle.click()
+    await ccma.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
+    const saldos = saldosPorPeriodo(await tablasDe(ccma))
+    const pantalla = (await textoVisible(ccma)).replace(/\s+/g, " ")
+    return { ...resultado, saldos, pantalla: `${resultado.pantalla} || DETALLE: ${pantalla}` }
+  }
+  return resultado
+}
+
+async function leerDeudaCcma(page: Page, cuit: string): Promise<DeudaCcma & { pagina: Page }> {
   const ccma = await abrirServicio(page, /^\s*(CCMA|Cuenta Corriente de (Contribuyentes )?Monotributistas y Aut[oó]nomos)/i, "CCMA")
   await elegirContribuyente(ccma, cuit)
 
@@ -323,8 +350,9 @@ export async function consultarDeudaCcma(page: Page, cuit: string): Promise<{ mo
   }
 
   const pantalla = (await textoVisible(ccma)).replace(/\s+/g, " ")
+  const saldos = saldosPorPeriodo(await tablasDe(ccma))
   if (/no (registra|posee|tiene|existe[n]?) deudas?|sin deuda|no se registran (deudas|saldos)/i.test(pantalla)) {
-    return { monto: 0, detalle: "sin deuda", pantalla }
+    return { monto: 0, detalle: "sin deuda", pantalla, saldos, pagina: ccma }
   }
   const m = pantalla.match(/(saldo deudor|total (de )?(la )?deuda|deuda total|total adeudado|saldo total)[^0-9$-]{0,40}\$?\s*(-?\d[\d.,]*\d)/i)
   const monto = m ? parseMonto(m[4]) : null
@@ -332,7 +360,7 @@ export async function consultarDeudaCcma(page: Page, cuit: string): Promise<{ mo
     throw new FalloArca("error", `No encontré el total de deuda en la CCMA (${ccma.url()}). Pantalla: ${pantalla.slice(0, 400)} — Botones: ${await describirClickeables(ccma)}`)
   }
   const pesosAr = monto.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  return { monto, detalle: `${m[1]}: $${pesosAr}`, pantalla }
+  return { monto, detalle: `${m[1]}: $${pesosAr}`, pantalla, saldos, pagina: ccma }
 }
 
 // Datos para diagnosticar un fallo: URL, texto visible y captura (nunca valores de campos).

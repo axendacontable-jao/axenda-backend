@@ -132,9 +132,86 @@ export function totalesComprobantesPorMes(buf: Uint8Array) {
     .sort((a, b) => a.anio - b.anio || a.mes - b.mes)
 }
 
+const columnaQueCoincide = (columnas: string[], re: RegExp) => columnas.find((c) => re.test(c.trim()))
+
+export type Comprobante = { fecha: string; tipo: string; numero: string; contraparte: string; total: number }
+
+// Los n comprobantes más recientes del Excel de "Mis Comprobantes" (emitidos o recibidos).
+export function ultimosComprobantes(buf: Uint8Array, n = 3): Comprobante[] {
+  const { columnas, filas } = leerExcel(buf, filaEncabezadoComprobantes(buf))
+  const colFecha = buscarColumna(columnas, "Fecha")
+  const colTotal = buscarColumna(columnas, "Imp. Total")
+  if (!colFecha || !colTotal) return []
+  const colTipo = buscarColumna(columnas, "Tipo")
+  const colPv = columnaQueCoincide(columnas, /^punto de venta$/i)
+  const colNro = columnaQueCoincide(columnas, /^n[uú]mero( desde)?$/i)
+  const colContra = columnaQueCoincide(columnas, /^denominaci[oó]n (receptor|emisor)$/i)
+  const lista: Comprobante[] = []
+  for (const fila of filas) {
+    const f = fechaExcel(fila[colFecha])
+    if (!f) continue
+    const pv = colPv ? String(fila[colPv] ?? "").padStart(5, "0") : ""
+    const nro = colNro ? String(fila[colNro] ?? "").padStart(8, "0") : ""
+    lista.push({
+      fecha: isoDate(f.y, f.m, f.d),
+      tipo: colTipo ? String(fila[colTipo] ?? "").trim() : "",
+      numero: pv && nro ? `${pv}-${nro}` : nro || pv,
+      contraparte: colContra ? String(fila[colContra] ?? "").trim() : "",
+      total: Math.round((aNumero(fila[colTotal]) ?? 0) * 100) / 100,
+    })
+  }
+  return lista.sort((a, b) => (a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : b.numero.localeCompare(a.numero))).slice(0, n)
+}
+
+// ── CCMA: saldo por período ──────────────────────────────────────────────────
+
+const PERIODO = [
+  { re: /^(0?[1-9]|1[0-2])\s*[/-]\s*(20\d{2})$/, a: 2, m: 1 },
+  { re: /^(20\d{2})\s*[/-]\s*(0?[1-9]|1[0-2])$/, a: 1, m: 2 },
+  { re: /^(20\d{2})(0[1-9]|1[0-2])$/, a: 1, m: 2 },
+]
+
+function leerPeriodo(celda: string): { anio: number; mes: number } | null {
+  const t = celda.trim()
+  for (const p of PERIODO) {
+    const m = t.match(p.re)
+    if (m) return { anio: Number(m[p.a]), mes: Number(m[p.m]) }
+  }
+  return null
+}
+
+// Busca en las tablas de la pantalla una con columna de período y suma el saldo de cada uno
+// (puede haber varias filas por período: impositivo, previsional, obra social).
+// Devuelve null si ninguna tabla tiene períodos.
+export function saldosPorPeriodo(tablas: string[][][]): Map<string, number> | null {
+  for (const tabla of tablas) {
+    const iEnc = tabla.findIndex((fila) => fila.some((c) => /per[ií]odo/i.test(c)))
+    const enc = iEnc >= 0 ? tabla[iEnc].map((c) => c.toLowerCase()) : []
+    const colPer = enc.findIndex((c) => /per[ií]odo/.test(c))
+    const colMonto = [/saldo/, /deuda/, /total/, /importe/, /debe/]
+      .map((re) => enc.findIndex((c) => re.test(c)))
+      .find((j) => j >= 0) ?? -1
+
+    const saldos = new Map<string, number>()
+    for (const fila of tabla.slice(iEnc + 1)) {
+      const per = colPer >= 0 && fila[colPer] ? leerPeriodo(fila[colPer]) : fila.map(leerPeriodo).find(Boolean) ?? null
+      if (!per) continue
+      const celdaMonto = colMonto >= 0
+        ? fila[colMonto]
+        : [...fila].reverse().find((c) => /\d/.test(c) && !leerPeriodo(c))
+      const monto = celdaMonto ? parseMonto(celdaMonto) : null
+      if (monto === null) continue
+      const k = `${per.anio}-${per.mes}`
+      saldos.set(k, Math.round(((saldos.get(k) ?? 0) + monto) * 100) / 100)
+    }
+    if (saldos.size) return saldos
+  }
+  return null
+}
+
 // ── PDF ──────────────────────────────────────────────────────────────────────
 
-type Pieza = { str: string; x: number; y: number; w: number; h: number }
+type Pieza ={ str: string; x: number; y: number; w: number; h: number }
 type Celda = { x0: number; x1: number; texto: string }
 
 async function piezasPorPagina(buf: Uint8Array): Promise<Pieza[][]> {
