@@ -64,6 +64,8 @@ export async function sincronizarComprobantes(clienteId: string, anio: number, m
   const desde = `01/${pad(mes)}/${anio}`
   const hasta = `${diasEnMes(anio, mes)}/${pad(mes)}/${anio}`
   const pendientes = new Set(tipos)
+  const anterior = mesAnterior()
+  const esMesPasado = anterior.anio === anio && anterior.mes === mes
 
   for (let intento = 1; intento <= REINTENTOS && pendientes.size; intento++) {
     let browser: Browser | null = null
@@ -74,7 +76,7 @@ export async function sincronizarComprobantes(clienteId: string, anio: number, m
       const mc = await abrirMisComprobantes(page)
       await elegirContribuyente(mc, cliente.cuit)
       for (const tipo of [...pendientes]) {
-        const excel = await bajarComprobantes(mc, tipo, desde, hasta)
+        const excel = await bajarComprobantes(mc, tipo, desde, hasta, esMesPasado)
         const totales = excel ? totalesComprobantesPorMes(excel) : []
         const etiqueta = tipo === "emitidos" ? "Facturación" : "Gastos"
         const otros = totales.filter((t) => t.anio !== anio || t.mes !== mes)

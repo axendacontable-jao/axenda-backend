@@ -165,8 +165,58 @@ export async function elegirContribuyente(mc: Page, cuit: string) {
 }
 
 // Devuelve el Excel exportado por Mis Comprobantes, o null si no hubo comprobantes en el período.
+// El selector de fechas arranca en un solo día y el formulario solo toma el período cuando se
+// "aplica" (escribir en el campo no alcanza). Se intenta como lo haría una persona.
+async function ponerPeriodo(mc: Page, desde: string, hasta: string, esMesPasado: boolean) {
+  const fecha = mc.locator("#fechaEmision")
+  await fecha.waitFor({ timeout: T })
+  const rango = `${desde} - ${hasta}`
+  const quedo = async () => (await fecha.inputValue()).replace(/\s/g, "") === rango.replace(/\s/g, "")
+  const selector = ".daterangepicker:visible"
+  const aplicar = async () => {
+    const boton = mc.locator(`${selector} .applyBtn`)
+    if (await boton.isVisible().catch(() => false)) await boton.click()
+  }
+
+  if (esMesPasado) {
+    await fecha.click()
+    const atajo = mc.locator(`${selector} .ranges li`, { hasText: /^\s*Mes Pasado\s*$/i }).first()
+    if (await atajo.isVisible().catch(() => false)) {
+      await atajo.click()
+      await aplicar()
+      if (await quedo()) return
+    }
+  }
+
+  const conApi = await mc.evaluate(([d, h]) => {
+    const $ = (window as any).jQuery
+    const input = document.querySelector("#fechaEmision")
+    const picker = $ && input && $(input).data("daterangepicker")
+    if (!picker) return false
+    picker.setStartDate(d)
+    picker.setEndDate(h)
+    if (picker.clickApply) picker.clickApply()
+    else $(input).trigger("apply.daterangepicker", picker)
+    return true
+  }, [desde, hasta])
+  if (conApi && (await quedo())) return
+
+  await fecha.click()
+  await mc.locator(`${selector} .ranges li`, { hasText: /personalizado/i }).first().click({ timeout: 3000 }).catch(() => {})
+  for (const [nombre, valor] of [["daterangepicker_start", desde], ["daterangepicker_end", hasta]]) {
+    const campo = mc.locator(`${selector} input[name='${nombre}']`)
+    if (await campo.isVisible().catch(() => false)) {
+      await campo.fill(valor)
+      await campo.press("Tab").catch(() => {})
+    }
+  }
+  await aplicar()
+  if (await quedo()) return
+  throw new FalloArca("error", `No se pudo poner el período ${rango} (quedó "${await fecha.inputValue()}"; selector ${conApi ? "con" : "sin"} API)`)
+}
+
 export async function bajarComprobantes(
-  mc: Page, tipo: TipoComprobantes, desde: string, hasta: string,
+  mc: Page, tipo: TipoComprobantes, desde: string, hasta: string, esMesPasado = false,
 ): Promise<Uint8Array | null> {
   const nombre = tipo === "emitidos" ? /emitidos/i : /recibidos/i
   const opciones = () => [
@@ -190,26 +240,7 @@ export async function bajarComprobantes(
   await boton.click()
 
   const rango = `${desde} - ${hasta}`
-  const fecha = mc.locator("#fechaEmision")
-  await fecha.waitFor({ timeout: T })
-  // El daterangepicker ignora el texto tipeado: se usa su API (si no está, se escribe el valor).
-  await mc.evaluate(([d, h]) => {
-    const input = document.querySelector("#fechaEmision") as HTMLInputElement
-    const $ = (window as any).jQuery
-    const picker = $ && $(input).data("daterangepicker")
-    if (picker) {
-      picker.setStartDate(d)
-      picker.setEndDate(h)
-      picker.updateElement?.()
-    } else {
-      input.value = `${d} - ${h}`
-    }
-    input.dispatchEvent(new Event("change", { bubbles: true }))
-  }, [desde, hasta])
-  const cargado = await fecha.inputValue()
-  if (cargado.replace(/\s/g, "") !== rango.replace(/\s/g, "")) {
-    throw new FalloArca("error", `No se pudo poner el período ${rango} en el filtro (quedó "${cargado}")`)
-  }
+  await ponerPeriodo(mc, desde, hasta, esMesPasado)
 
   const buscar = await primeroVisible([mc.locator("#buscarComprobantes"), mc.getByRole("button", { name: /^\s*buscar\s*$/i })])
   if (!buscar) throw new FalloArca("error", `No encontré el botón Buscar en Mis Comprobantes. Botones: ${await describirClickeables(mc)}`)
