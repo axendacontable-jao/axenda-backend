@@ -1,5 +1,8 @@
-import type { Browser, Locator, Page } from "playwright-core"
-import { type MesCcma, type PlanArca, leerPlanesFacilidades, movimientosCcma, parseMonto, saldosPorPeriodo } from "./parsers.mts"
+import type { Browser, Frame, Locator, Page } from "playwright-core"
+import {
+  type AnticipoArt, type MesCcma, type PlanArca, leerCuentaCorrienteArt, leerPlanesFacilidades, movimientosCcma, parseMonto,
+  saldosPorPeriodo,
+} from "./parsers.mts"
 
 // Debe coincidir con la versión de @sparticuz/chromium-min del package.json.
 const CHROMIUM_PACK = "https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.tar"
@@ -40,7 +43,10 @@ export async function abrirNavegador(): Promise<Browser> {
   return pw.launch({ executablePath, args: chromium.args, headless: true })
 }
 
-const textoVisible = (page: Page) => page.locator("body").innerText({ timeout: 5000 }).catch(() => "")
+// Una pestaña o un marco (ART abre sus pantallas viejas dentro de marcos).
+type Lugar = Page | Frame
+
+const textoVisible = (page: Lugar) => page.locator("body").innerText({ timeout: 5000 }).catch(() => "")
 const resumen = (t: string) => t.replace(/\s+/g, " ").trim().slice(0, 300)
 
 async function primeroVisible(candidatos: Locator[], timeout = T): Promise<Locator | null> {
@@ -103,7 +109,7 @@ async function abrirServicio(page: Page, nombre: RegExp, busqueda: string): Prom
 
   let enlace = await primeroVisible([servicio()], 10_000)
   if (!enlace) {
-    const buscador = page.locator("input[type='search'], input[placeholder*='uscar' i]")
+    const buscador = page.locator("input[type='search'], input[placeholder*='usc' i]")
     if (await buscador.first().isVisible().catch(() => false)) {
       await buscador.first().fill(busqueda)
       enlace = await primeroVisible([servicio()], 10_000)
@@ -139,7 +145,7 @@ export async function abrirMisComprobantes(page: Page): Promise<Page> {
 const CLICKEABLES = "a, button, [onclick], [role='button'], input[type='submit'], input[type='button']"
 
 // Lista corta de lo que se puede tocar en pantalla, para diagnosticar cuando no aparece un botón.
-export async function describirClickeables(page: Page): Promise<string> {
+export async function describirClickeables(page: Lugar): Promise<string> {
   const items = await page.locator(CLICKEABLES).evaluateAll((els) =>
     els
       .filter((el) => (el as HTMLElement).offsetParent !== null)
@@ -320,7 +326,7 @@ export async function bajarComprobantes(
 const PROHIBIDO = /vep|pagar|pago|generar|presentar|confirmar|eliminar|baja|adherir|plan de|volante/i
 
 // Cuenta Corriente de Monotributistas y Autónomos: saldo de deuda a la fecha.
-const tablasDe = (p: Page) =>
+const tablasDe = (p: Lugar) =>
   p.evaluate(() =>
     [...document.querySelectorAll("table")].map((t) =>
       [...(t as HTMLTableElement).rows].map((r) => [...r.cells].map((c) => (c as HTMLElement).innerText.replace(/\s+/g, " ").trim()))),
@@ -452,6 +458,198 @@ export async function consultarFacilidades(page: Page, cuit: string): Promise<{ 
     throw new FalloArca("error", `No encontré la lista de planes en Mis Facilidades (${mf.url()}). Pantalla: ${pantalla.slice(0, 400)} — Botones: ${await describirClickeables(mf)}`)
   }
   return { planes, pantalla }
+}
+
+// ── ART Río Negro (se entra desde ARCA con la misma clave fiscal) ────────────
+
+// En ART solo se consulta: nunca se toca nada que presente, pague, emita boletas, modifique datos
+// o abra notificaciones (leerlas cuenta como notificarse).
+const ART_PROHIBIDO = /notificaci|emitir|boleta|generar|presentar|confirmar|eliminar|baja|adherir|solicitar|pagar|volante|ddjj|actualizar|modificar|retenci|percepci/i
+
+async function tocarEnArt(el: Locator, que: string) {
+  const texto = ((await el.innerText().catch(() => "")) || (await el.getAttribute("value").catch(() => "")) || "").trim()
+  if (ART_PROHIBIDO.test(texto)) throw new FalloArca("error", `Por seguridad no se tocó "${texto}" en ART (${que})`)
+  // Los ítems del menú lateral solo se ven al pasar el mouse: si no está a la vista se lo activa directo.
+  if (await el.isVisible().catch(() => false)) await el.click({ timeout: T })
+  else await el.evaluate((e) => (e as HTMLElement).click())
+}
+
+// Pestaña o marco que muestra el texto (ART abre la cuenta corriente en otra pantalla o en un marco).
+async function lugarCon(page: Page, texto: RegExp, timeout = T): Promise<Lugar | null> {
+  const limite = Date.now() + timeout
+  while (Date.now() < limite) {
+    for (const p of page.context().pages()) {
+      for (const f of p.frames()) {
+        if (texto.test(await textoVisible(f))) return f === p.mainFrame() ? p : f
+      }
+    }
+    await new Promise((r) => setTimeout(r, 700))
+  }
+  return null
+}
+
+// Textos de los enlaces del menú (incluidos los ocultos), para diagnosticar.
+const menuDe = (page: Lugar) =>
+  page.locator("a").evaluateAll((els) => [...new Set(els.map((e) => (e.textContent ?? "").replace(/\s+/g, " ").trim())
+    .filter((t) => t && t.length < 60))].slice(0, 80).join(" | ")).catch(() => "")
+
+// Entra a ART desde el portal de ARCA: elige el CUIT, cierra el aviso de notificaciones pendientes
+// (sin abrirlas) y queda en el panel principal.
+export async function ingresarArt(page: Page, cuit: string): Promise<Page> {
+  const art = await abrirServicio(page, /^\s*ART Provincia de R[ií]o Negro\s*$/i, "ART Provincia de Río Negro")
+  await art.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
+
+  // "Ingreso a Extranet": lista con los CUIT que representa la clave + INGRESAR.
+  const listas = art.locator("select")
+  let elegido = false
+  for (let i = 0, n = await listas.count(); i < n && !elegido; i++) {
+    const valor = await listas.nth(i).evaluate((el, c) =>
+      [...(el as HTMLSelectElement).options].find((o) => (o.text + o.value).replace(/\D/g, "").includes(c))?.value ?? null, cuit)
+    if (valor === null) continue
+    await listas.nth(i).selectOption(valor)
+    elegido = true
+  }
+  if (!elegido && (await listas.count())) {
+    throw new FalloArca("error", `ART no ofrece el CUIT ${cuit} para ingresar. Pantalla: ${resumen(await textoVisible(art))}`)
+  }
+  const ingresar = await primeroVisible([
+    art.getByRole("button", { name: /^\s*ingresar\s*$/i }), art.locator("input[value='INGRESAR' i]"), art.getByRole("link", { name: /^\s*ingresar\s*$/i }),
+  ], elegido ? 15_000 : 3000)
+  if (ingresar) {
+    await tocarEnArt(ingresar, "ingreso")
+    await art.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
+  }
+
+  // Aviso "Existen notificaciones electrónicas pendientes": "Aceptar" solo lo cierra.
+  const aviso = await primeroVisible([art.getByRole("button", { name: /^\s*aceptar\s*$/i })], 8000)
+  if (aviso && /alerta|notificaciones electr[oó]nicas pendientes/i.test(await textoVisible(art))) {
+    await aviso.click()
+    await art.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
+  }
+  await detectarBloqueos(art)
+  if (!(await art.locator("a").filter({ hasText: /cuenta corriente/i }).count())) {
+    throw new FalloArca("error", `No se pudo entrar al panel de ART (${art.url()}). Pantalla: ${resumen(await textoVisible(art))} — Menú: ${await menuDe(art)}`)
+  }
+  return art
+}
+
+export type CuentaArt = { anticipos: AnticipoArt[]; regimen: string | null; inscripcion: string | null; pantalla: string }
+
+const ddmmaaaa = (d: Date) =>
+  `${String(d.getUTCDate()).padStart(2, "0")}/${String(d.getUTCMonth() + 1).padStart(2, "0")}/${d.getUTCFullYear()}`
+
+// IIBB → Consultar Cuenta Corriente → Consultar → inscripción de Ingresos Brutos y fechas → Consultar.
+export async function consultarCuentaArt(art: Page, desdeAnio: number): Promise<CuentaArt> {
+  const menu = art.locator("a").filter({ hasText: /^\s*Consultar Cuenta Corriente\s*$/i })
+  if (!(await menu.count())) throw new FalloArca("error", `No encontré "Consultar Cuenta Corriente" en el menú de ART. Menú: ${await menuDe(art)}`)
+  await tocarEnArt(menu.first(), "menú IIBB")
+
+  const FORMULARIO = /consulta de cuenta corriente de iibb/i
+  let lugar = await lugarCon(art, /para efectuar consulta|consulta de cuenta corriente de iibb/i)
+  if (!lugar) throw new FalloArca("error", `No se abrió la cuenta corriente de ART (${art.url()}). Pantalla: ${resumen(await textoVisible(art))}`)
+  if (!FORMULARIO.test(await textoVisible(lugar))) {
+    // Pantalla intermedia: "Para efectuar consulta, Pulse: Consultar".
+    const consultar = await primeroVisible([lugar.getByRole("button", { name: /^\s*consultar\s*$/i }), lugar.locator("input[value='Consultar' i]")], 10_000)
+    if (!consultar) throw new FalloArca("error", `No encontré "Consultar" en ART. Botones: ${await describirClickeables(lugar)}`)
+    await tocarEnArt(consultar, "cuenta corriente")
+    lugar = await lugarCon(art, FORMULARIO)
+    if (!lugar) throw new FalloArca("error", `No apareció el formulario de cuenta corriente de ART. Pantalla: ${resumen(await textoVisible(art))}`)
+  }
+  const form = lugar
+
+  // Inscripción de Ingresos Brutos (la lista también trae "Sellos y Tasas").
+  const listas = form.locator("select")
+  let inscripcion: string | null = null
+  for (let i = 0, n = await listas.count(); i < n && !inscripcion; i++) {
+    const op = await listas.nth(i).evaluate((el) => {
+      const o = [...(el as HTMLSelectElement).options].find((x) => /ingr\w*\.?\s*brutos/i.test(x.text))
+      return o ? { valor: o.value, texto: o.text.trim() } : null
+    })
+    if (!op) continue
+    await listas.nth(i).selectOption(op.valor)
+    inscripcion = op.texto
+  }
+  if (!inscripcion) throw new FalloArca("error", `ART no muestra una inscripción de Ingresos Brutos. Pantalla: ${resumen(await textoVisible(form))}`)
+  await form.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
+  await new Promise((r) => setTimeout(r, 1500))
+
+  const valores = () => form.locator("input").evaluateAll((els) => els.map((e) => (e as HTMLInputElement).value ?? ""))
+  const regimen = (await valores()).find((v) => /r[eé]gimen/i.test(v))?.trim() ?? null
+  const ponerDesde = async (desde: string) => {
+    const i = (await valores()).findIndex((v) => /^\d{2}\/\d{2}\/\d{4}$/.test(v.trim()))
+    if (i >= 0) await form.locator("input").nth(i).fill(desde).catch(() => {})
+  }
+  const consultar = async () => {
+    const boton = await primeroVisible([form.getByRole("button", { name: /^\s*consultar\s*$/i }), form.locator("input[value='Consultar' i]")], 10_000)
+    if (!boton) throw new FalloArca("error", `No encontré "Consultar" en la cuenta corriente de ART. Botones: ${await describirClickeables(form)}`)
+    await tocarEnArt(boton, "cuenta corriente")
+    await form.waitForLoadState("networkidle", { timeout: 60_000 }).catch(() => {})
+    for (let i = 0; i < 20; i++) {
+      const leidos = leerCuentaCorrienteArt(await tablasDe(form))
+      if (leidos?.length) return leidos
+      if (/no (se encontraron|existen|hay|registra)|sin movimientos|falla al procesar|error/i.test(await textoVisible(form))) return leidos
+      await new Promise((r) => setTimeout(r, 1000))
+    }
+    return leerCuentaCorrienteArt(await tablasDe(form))
+  }
+
+  // Desde varios años atrás para ver toda la deuda; si ART no acepta el rango, el que trae por defecto.
+  await ponerDesde(ddmmaaaa(new Date(Date.UTC(desdeAnio, 0, 1))))
+  let anticipos = await consultar()
+  let pantalla = (await textoVisible(form)).replace(/\s+/g, " ")
+  if (!anticipos?.length && /falla|error|inv[aá]lid|rango|mayor|menor/i.test(pantalla)) {
+    await ponerDesde(ddmmaaaa(new Date(Date.UTC(new Date().getUTCFullYear(), 0, 1))))
+    anticipos = await consultar()
+    pantalla = `[rango corto] ${(await textoVisible(form)).replace(/\s+/g, " ")}`
+  }
+  if (!anticipos) {
+    throw new FalloArca("error", `No encontré la grilla de la cuenta corriente de ART. Pantalla: ${pantalla.slice(0, 400)}`)
+  }
+  return { anticipos, regimen, inscripcion, pantalla }
+}
+
+// Planes de pago de ART desde el menú lateral (solo consulta). Devuelve null si no encontró la lista.
+export async function consultarPlanesArt(art: Page, panel: string): Promise<{ planes: PlanArca[] | null; pantalla: string }> {
+  if (art.url() !== panel) {
+    await art.goto(panel, { timeout: T }).catch(() => {})
+    await art.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
+  }
+  const candidatos = art.locator("a").filter({ hasText: /planes?\b/i })
+  let elegido: Locator | null = null
+  for (let i = 0, n = await candidatos.count(); i < n; i++) {
+    const texto = ((await candidatos.nth(i).textContent().catch(() => "")) ?? "").replace(/\s+/g, " ").trim()
+    if (!texto || texto.length > 60 || ART_PROHIBIDO.test(texto) || /adhe|nuevo|reformul/i.test(texto)) continue
+    if (!elegido || /consult|mis planes|vigentes/i.test(texto)) elegido = candidatos.nth(i)
+    if (/consult/i.test(texto)) break
+  }
+  if (!elegido) {
+    throw new FalloArca("error", `No encontré la consulta de planes de pago en el menú de ART. Menú: ${await menuDe(art)}`)
+  }
+  const nombre = ((await elegido.textContent()) ?? "").replace(/\s+/g, " ").trim()
+  await tocarEnArt(elegido, "planes de pago")
+  await art.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
+
+  // La lista puede quedar en la misma pantalla, en un marco o en otra pestaña.
+  let planes: PlanArca[] | null = null
+  let pantalla = ""
+  for (let intento = 0; intento < 10 && !planes; intento++) {
+    await new Promise((r) => setTimeout(r, 1500))
+    for (const p of art.context().pages()) {
+      for (const f of p.frames()) {
+        const leidos = leerPlanesFacilidades(await tablasDe(f))
+        if (leidos && (!planes || leidos.length > planes.length)) {
+          planes = leidos
+          pantalla = (await textoVisible(f)).replace(/\s+/g, " ")
+        }
+      }
+    }
+  }
+  if (!planes) {
+    const textos = await Promise.all(art.context().pages().flatMap((p) => p.frames()).map((f) => textoVisible(f)))
+    pantalla = textos.map((t) => t.replace(/\s+/g, " ")).filter(Boolean).join(" || ")
+    if (/no (posee|tiene|registra|existen?|se encontraron) planes|sin planes/i.test(pantalla)) planes = []
+  }
+  return { planes, pantalla: `[menú: ${nombre}] ${pantalla}` }
 }
 
 // Datos para diagnosticar un fallo: URL, texto visible y captura (nunca valores de campos).

@@ -2,17 +2,19 @@ import type { Browser, Page } from "playwright-core"
 import { getStore } from "@netlify/blobs"
 import { db, diasEnMes, hoyArgentina, isoDate, logActividad, q } from "./core.mts"
 import { descifrarClave, firmarTrabajo, trabajoValido } from "./secretos.mts"
-import { type Comprobante, type MesCcma, totalesComprobantesPorMes, ultimosComprobantes } from "./parsers.mts"
+import { type Comprobante, type MesCcma, type PlanArca, totalesComprobantesPorMes, ultimosComprobantes } from "./parsers.mts"
 import {
-  FalloArca, abrirMisComprobantes, abrirNavegador, bajarComprobantes, capturarEstado, consultarDeudaCcma,
-  consultarFacilidades, elegirContribuyente, ingresar, type DeudaCcma, type EstadoSync, type TipoComprobantes,
+  FalloArca, abrirMisComprobantes, abrirNavegador, bajarComprobantes, capturarEstado, consultarCuentaArt, consultarDeudaCcma,
+  consultarFacilidades, consultarPlanesArt, elegirContribuyente, ingresar, ingresarArt, type DeudaCcma, type EstadoSync,
+  type TipoComprobantes,
 } from "./robot.mts"
 
-export type Tarea = TipoComprobantes | "ccma" | "facilidades"
-export const TAREAS: Tarea[] = ["emitidos", "recibidos", "ccma", "facilidades"]
+export type Tarea = TipoComprobantes | "ccma" | "facilidades" | "art" | "art_planes"
+export const TAREAS: Tarea[] = ["emitidos", "recibidos", "ccma", "facilidades", "art", "art_planes"]
 const TABLA: Record<TipoComprobantes, "facturacion" | "gastos"> = { emitidos: "facturacion", recibidos: "gastos" }
 const NOMBRE: Record<Tarea, string> = {
   emitidos: "facturación", recibidos: "gastos", ccma: "deuda CCMA", facilidades: "planes de Mis Facilidades",
+  art: "deuda de ART Río Negro", art_planes: "planes de ART Río Negro",
 }
 
 // Estado de un plan de Mis Facilidades → estados de planes_pago (null: no se sabe, no se cambia).
@@ -41,6 +43,7 @@ const ms = (a: number, m: number, d: number) => Date.UTC(a, m - 1, d)
 const ddmmaaaa = (a: number, m: number, d: number) => `${pad(d)}/${pad(m)}/${a}`
 const pesos = (n: number) => "$" + Math.round(n).toLocaleString("es-AR")
 const esperar = (milis: number) => new Promise((r) => setTimeout(r, milis))
+const redondear = (n: number) => Math.round(n * 100) / 100
 
 // 12 meses que terminan en (anio, mes), hasta hoy si el período no terminó. ARCA admite consultas de
 // hasta 365 días: si el período completo se pasa (año bisiesto), se consulta en dos tramos.
@@ -104,7 +107,7 @@ type Fallo = { fallo: FalloArca; pantalla: Awaited<ReturnType<typeof capturarEst
 
 export async function sincronizarCliente(clienteId: string, anio: number, mes: number, tareas: Tarea[]) {
   const d = db()
-  const cliente = await q(d.from("clientes").select("id,cuit,slug,estudio_id,nombre,apellido").eq("id", clienteId).single())
+  const cliente = await q(d.from("clientes").select("id,cuit,slug,estudio_id,nombre,apellido,provincia").eq("id", clienteId).single())
   const cred = await q(d.from("credenciales_arca").select("clave_cifrada").eq("cliente_id", clienteId).maybeSingle())
   if (!cred) return
   const clave = descifrarClave(cred.clave_cifrada, clienteId)
@@ -195,15 +198,25 @@ export async function sincronizarCliente(clienteId: string, anio: number, mes: n
   }
 
   // Planes de Mis Facilidades → planes_pago (se emparejan por número; nunca se borra nada).
-  // Si hay varias filas con el mismo número se actualiza la más reciente; los planes que se
-  // eliminaron a mano (estado "inactivo") no se vuelven a crear.
   async function traerFacilidades(page: Page) {
     const { planes, pantalla } = await consultarFacilidades(page, cliente.cuit)
+    const nuevos = await guardarPlanes(planes, "ARCA", "arca")
+    await registrar("facilidades", "ok", planes.length
+      ? `${planes.length} planes en Mis Facilidades (${nuevos} nuevos): ${planes.map(describirPlan).join(" · ")}`
+      : "Sin planes en Mis Facilidades", pantalla)
+  }
+
+  const describirPlan = (p: PlanArca) =>
+    `${p.numero}${p.situacion ? ` ${p.situacion}` : p.estado ? ` ${p.estado}` : ""}${p.monto ? ` (${pesos(p.monto)})` : ""}`
+
+  // Si hay varias filas con el mismo número se actualiza la más reciente; los planes que se
+  // eliminaron a mano (estado "inactivo") no se vuelven a crear. Devuelve cuántos planes son nuevos.
+  async function guardarPlanes(planes: PlanArca[], organismo: string, fuente: string) {
     const existentes = (await q(d.from("planes_pago").select("id,numero_plan,estado")
       .eq("cliente_id", clienteId).order("created_at", { ascending: true }))) ?? []
-    const clave = (n: unknown) => String(n ?? "").replace(/\W/g, "").toUpperCase()
-    const vigentes = new Map(existentes.filter((p: any) => p.estado !== "inactivo").map((p: any) => [clave(p.numero_plan), p]))
-    const eliminados = new Set(existentes.filter((p: any) => p.estado === "inactivo").map((p: any) => clave(p.numero_plan)))
+    const numeroPlan = (n: unknown) => String(n ?? "").replace(/\W/g, "").toUpperCase()
+    const vigentes = new Map(existentes.filter((p: any) => p.estado !== "inactivo").map((p: any) => [numeroPlan(p.numero_plan), p]))
+    const eliminados = new Set(existentes.filter((p: any) => p.estado === "inactivo").map((p: any) => numeroPlan(p.numero_plan)))
     const ahora = new Date().toISOString()
     let nuevos = 0
     for (const plan of planes) {
@@ -214,22 +227,74 @@ export async function sincronizarCliente(clienteId: string, anio: number, mes: n
         total_cuotas: plan.cuotas, cuotas_pagas: plan.cuotasPagas, proximo_venc: plan.proximoVenc,
         arca_actualizado_at: ahora,
       }).filter(([, v]) => v !== null && v !== undefined))
-      const actual = vigentes.get(clave(plan.numero))
+      const actual = vigentes.get(numeroPlan(plan.numero))
       if (actual) {
         await q(d.from("planes_pago").update(datos).eq("id", actual.id))
-      } else if (!eliminados.has(clave(plan.numero))) {
+      } else if (!eliminados.has(numeroPlan(plan.numero))) {
         await q(d.from("planes_pago").insert({
           ...datos, cliente_id: clienteId, estudio_id: cliente.estudio_id, numero_plan: plan.numero,
-          organismo: "ARCA", fuente: "arca", estado: estado ?? "activo",
+          organismo, fuente, estado: estado ?? "activo",
         }))
         nuevos++
       }
     }
-    const describir = (p: (typeof planes)[number]) =>
-      `${p.numero}${p.situacion ? ` ${p.situacion}` : p.estado ? ` ${p.estado}` : ""}${p.monto ? ` (${pesos(p.monto)})` : ""}`
-    await registrar("facilidades", "ok", planes.length
-      ? `${planes.length} planes en Mis Facilidades (${nuevos} nuevos): ${planes.map(describir).join(" · ")}`
-      : "Sin planes en Mis Facilidades", pantalla)
+    return nuevos
+  }
+
+  // ART Río Negro: anticipos de Ingresos Brutos (deuda real, ya no estimada) y su estado en el historial.
+  async function traerCuentaArt(art: Page) {
+    const t = hoyArgentina()
+    const hoyStr = isoDate(t.y, t.m, t.d)
+    const { anticipos, regimen, inscripcion, pantalla } = await consultarCuentaArt(art, t.y - 3)
+    const conEstado = anticipos.map((p) => {
+      const aVencer = !!p.vencimiento && p.vencimiento >= hoyStr
+      return { ...p, a_vencer: aVencer, estado: p.saldo <= 1 ? "pagada" : aVencer ? "a_vencer" : "vencida" }
+    })
+    const detalle = conEstado.filter((p) => p.saldo > 1)
+    const impagos = detalle.filter((p) => !p.a_vencer)
+    const deuda = redondear(impagos.reduce((s, p) => s + p.saldo, 0))
+    await q(d.from("clientes").update({
+      art_deuda_monto: deuda, art_deuda_detalle: detalle, art_actualizada_at: new Date().toISOString(), art_regimen: regimen,
+    }).eq("id", clienteId))
+
+    // Estado del anticipo de ART de cada mes (últimos 12), junto al de la cuota de ARCA.
+    const existentes = new Map<string, any>(
+      ((await q(d.from("historial_cuotas").select("id,año,mes").eq("cliente_id", clienteId))) ?? [])
+        .map((h: any) => [`${h["año"]}-${h.mes}`, h]),
+    )
+    for (let i = 0; i < 12; i++) {
+      const idx = t.y * 12 + (t.m - 1) - i
+      const anio = Math.floor(idx / 12)
+      const mes = (idx % 12) + 1
+      const p = conEstado.find((x) => x.periodo === `${anio}-${pad(mes)}`)
+      if (!p) continue
+      const fila = {
+        art_estado: p.estado, art_impuesto: p.impuesto, art_pagado: p.pagado, art_saldo: p.saldo, art_vencimiento: p.vencimiento,
+      }
+      const actual = existentes.get(`${anio}-${mes}`)
+      if (actual) await q(d.from("historial_cuotas").update(fila).eq("id", actual.id))
+      else await q(d.from("historial_cuotas").insert({ cliente_id: clienteId, año: anio, mes, ...fila }))
+    }
+
+    const periodo = (k: string) => `${k.slice(5)}/${k.slice(0, 4)}`
+    const resumen = impagos.length
+      ? `deuda ${pesos(deuda)} (${impagos.length} anticipos impagos: ${impagos.map((p) => periodo(p.periodo)).join(", ")})`
+      : "sin deuda"
+    const descripcion = `ART Río Negro al ${ddmmaaaa(t.y, t.m, t.d)} — ${inscripcion ?? "Ingresos Brutos"}: ${resumen}`
+    await registrar("art", "ok", `${descripcion}${regimen ? ` · ${regimen}` : ""} · ${anticipos.length} períodos leídos`, pantalla)
+    await logActividad(clienteId, descripcion, cliente.estudio_id)
+  }
+
+  async function traerPlanesArt(art: Page, panel: string) {
+    const { planes, pantalla } = await consultarPlanesArt(art, panel)
+    if (!planes) {
+      await registrar("art_planes", "error", `No encontré la lista de planes de pago de ART: ${pantalla.slice(0, 300)}`, pantalla)
+      return
+    }
+    const nuevos = await guardarPlanes(planes, "ART", "art")
+    await registrar("art_planes", "ok", planes.length
+      ? `${planes.length} planes en ART (${nuevos} nuevos): ${planes.map(describirPlan).join(" · ")}`
+      : "Sin planes de pago en ART", pantalla)
   }
 
   // Con la clave fiscal cargada, ARCA dice qué meses se deben: el historial deja de ser manual.
@@ -340,6 +405,11 @@ export async function sincronizarCliente(clienteId: string, anio: number, mes: n
   }
 
   const pendientes = new Set(tareas)
+  // ART solo para clientes de Río Negro (sin provincia cargada se asume Río Negro, como en el resto de la app).
+  if (!/r[ií]o negro/i.test(cliente.provincia || "Rio Negro")) {
+    pendientes.delete("art")
+    pendientes.delete("art_planes")
+  }
   const definitivos = new Map<Tarea, Fallo>()
 
   for (let intento = 1; intento <= REINTENTOS && pendientes.size; intento++) {
@@ -383,6 +453,31 @@ export async function sincronizarCliente(clienteId: string, anio: number, mes: n
           pendientes.delete("facilidades")
         } catch (e) {
           await fallar(["facilidades"], e)
+        }
+      }
+      const deArt = [...pendientes].filter((t) => t === "art" || t === "art_planes")
+      if (deArt.length) {
+        try {
+          const art = await ingresarArt(page, cliente.cuit)
+          const panel = art.url()
+          if (pendientes.has("art")) {
+            try {
+              await traerCuentaArt(art)
+              pendientes.delete("art")
+            } catch (e) {
+              await fallar(["art"], e)
+            }
+          }
+          if (pendientes.has("art_planes")) {
+            try {
+              await traerPlanesArt(art, panel)
+              pendientes.delete("art_planes")
+            } catch (e) {
+              await fallar(["art_planes"], e)
+            }
+          }
+        } catch (e) {
+          await fallar(deArt.filter((t) => pendientes.has(t)), e)
         }
       }
     } catch (e) {

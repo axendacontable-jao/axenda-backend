@@ -89,6 +89,14 @@ function componenteArtEstimado(cliente: any, historial: any[]): number {
     h.fuente === "arca" && h.estado === "vencida" && h["año"] * 12 + (h.mes - 1) >= desde).length * porMes
 }
 
+// Con la cuenta corriente de ART leída por el robot la deuda es la real; si no, la estimación.
+function deudaArtDe(cliente: any, historial: any[]) {
+  if (cliente.art_actualizada_at) {
+    return { monto: Number(cliente.art_deuda_monto) || 0, real: true, actualizada_at: cliente.art_actualizada_at }
+  }
+  return { monto: componenteArtEstimado(cliente, historial), real: false, actualizada_at: null }
+}
+
 // UPDATE y, si no tocó filas, INSERT (nunca upsert con on_conflict en estas tablas).
 async function actualizarOInsertar(
   tabla: string, valores: Record<string, unknown>, filtro: Record<string, unknown>,
@@ -343,7 +351,8 @@ const historialCuotas: Handler = async ({ req, p, query }) => {
   const estudioId = await getEstudioId(req)
   const meses = entero(query.get("meses") ?? "6", "meses")
   const cliente = await clientePorSlug(
-    p.slug, estudioId, "id,categoria,provincia,iibb_modalidad,deuda_monto,deuda_descripcion,deuda_actualizada_at,deuda_detalle",
+    p.slug, estudioId,
+    "id,categoria,provincia,iibb_modalidad,deuda_monto,deuda_descripcion,deuda_actualizada_at,deuda_detalle,art_deuda_monto,art_deuda_detalle,art_actualizada_at,art_regimen",
   )
   let filas: any[] = []
   try {
@@ -356,12 +365,15 @@ const historialCuotas: Handler = async ({ req, p, query }) => {
     existentes.get(`${y}-${m}`) ?? { cliente_id: cliente.id, año: y, mes: m, pagado: false, fecha_pago: null, id: null },
   )
   const automatico = await tieneClaveFiscal(cliente.id)
+  const art = automatico ? deudaArtDe(cliente, filas) : null
   return {
     ok: true, historial, automatico,
-    // Con clave fiscal: deuda real de ARCA (todos los períodos) y ART Río Negro estimado aparte.
+    // Con clave fiscal: deuda real de ARCA (todos los períodos) y de ART Río Negro (real o estimada).
     deuda_arca: automatico && cliente.deuda_actualizada_at ? Number(cliente.deuda_monto) || 0 : null,
     deuda_actualizada_at: automatico ? cliente.deuda_actualizada_at : null,
-    art_estimado: automatico ? componenteArtEstimado(cliente, filas) : null,
+    art_monto: art?.monto ?? null, art_real: art?.real ?? false, art_actualizada_at: art?.actualizada_at ?? null,
+    art_detalle: art?.real ? cliente.art_deuda_detalle ?? [] : null, art_regimen: art?.real ? cliente.art_regimen : null,
+    art_estimado: art && !art.real ? art.monto : null,
     deuda_detalle: automatico ? cliente.deuda_detalle ?? null : null,
     deuda_descripcion: automatico ? cliente.deuda_descripcion ?? null : null,
   }
@@ -585,16 +597,17 @@ const datosPortal: Handler = async ({ req, p }) => {
     deudaArca = 0
   }
 
-  // Con clave fiscal, la deuda de ARCA es la real de la CCMA (cuotas e intereses). La CCMA no incluye
-  // el componente provincial de ART Río Negro: se estima con los meses cuya cuota de ARCA está vencida.
+  // Con clave fiscal, la deuda de ARCA es la real de la CCMA (cuotas e intereses). ART Río Negro no
+  // figura en la CCMA: es la de su cuenta corriente si el robot ya la leyó, o una estimación.
   const arcaAuto = await tieneClaveFiscal(cliente.id)
   if (arcaAuto && cliente.deuda_actualizada_at) {
     deudaArca = Number(cliente.deuda_monto) || 0
-    deudaArt = componenteArtEstimado(cliente, historialFilas)
+    const art = deudaArtDe(cliente, historialFilas)
+    deudaArt = art.monto
     deudaTotal = deudaArca + deudaArt + deudaOtroMan
     const partes = [
       deudaArca > 0 && `ARCA: ${pesos(deudaArca)}`,
-      deudaArt > 0 && `ART Río Negro (estimado): ${pesos(deudaArt)}`,
+      deudaArt > 0 && `ART Río Negro${art.real ? "" : " (estimado)"}: ${pesos(deudaArt)}`,
       deudaOtroMan > 0 && `Otros: ${pesos(deudaOtroMan)}`,
     ].filter(Boolean)
     deudaDesc = partes.length ? partes.join(" · ") : null
@@ -1272,22 +1285,24 @@ const estadoArca: Handler = async ({ req, p }) => {
   const estudioId = await getEstudioId(req)
   const cliente = await clientePorSlug(
     p.slug, estudioId,
-    "id,categoria,provincia,iibb_modalidad,estado_arca,situacion_arca_at,ultimos_comprobantes,deuda_monto,deuda_descripcion,deuda_actualizada_at",
+    "id,categoria,provincia,iibb_modalidad,estado_arca,situacion_arca_at,ultimos_comprobantes,deuda_monto,deuda_descripcion,deuda_actualizada_at,art_deuda_monto,art_actualizada_at,art_regimen",
   )
   const [cred, sincronizaciones, historial] = await Promise.all([
     q(db().from("credenciales_arca").select("actualizada_at").eq("cliente_id", cliente.id).maybeSingle()),
     q(db().from("sincronizaciones_arca").select("tipo,anio,mes,estado,detalle,created_at")
-      .eq("cliente_id", cliente.id).order("created_at", { ascending: false }).limit(12)),
+      .eq("cliente_id", cliente.id).order("created_at", { ascending: false }).limit(20)),
     q(db().from("historial_cuotas").select("año,mes,estado,fuente").eq("cliente_id", cliente.id)),
   ])
+  const art = deudaArtDe(cliente, historial ?? [])
   return {
     clave_cargada: !!cred, actualizada_at: cred?.actualizada_at ?? null, sincronizaciones: sincronizaciones ?? [],
     deuda: cliente.deuda_actualizada_at
       ? {
         monto: Number(cliente.deuda_monto) || 0, descripcion: cliente.deuda_descripcion,
-        actualizada_at: cliente.deuda_actualizada_at, art_estimado: componenteArtEstimado(cliente, historial ?? []),
+        actualizada_at: cliente.deuda_actualizada_at, art_estimado: art.real ? 0 : art.monto,
       }
       : null,
+    art: art.real ? { monto: art.monto, actualizada_at: art.actualizada_at, regimen: cliente.art_regimen } : null,
     situacion: {
       categoria: cliente.categoria, estado: cliente.estado_arca, actualizada_at: cliente.situacion_arca_at,
       ultimos_comprobantes: cliente.ultimos_comprobantes,

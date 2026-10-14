@@ -341,6 +341,82 @@ export function leerPlanesFacilidades(tablas: string[][][]): PlanArca[] | null {
   return hayEncabezado ? [] : null
 }
 
+// ── ART Río Negro: cuenta corriente de Ingresos Brutos ───────────────────────
+
+export type AnticipoArt = {
+  periodo: string; concepto: string; vencimiento: string | null; plan: string | null
+  impuesto: number; deducciones: number; pagado: number; intereses: number; saldo: number
+}
+
+// Grilla "Consulta de Cuenta Corriente de IIBB": Concepto | Posic. Fiscal (2026/9) | Vencimiento |
+// Nro. Plan Pago | Impuesto | Deducciones(1) | Impuesto Pagado | … La grilla tiene scroll, así que el
+// encabezado puede venir en una tabla aparte: se alinea por la columna de posición fiscal.
+// Agrupa por período ("YYYY-MM"), del más reciente al más viejo. null si no está la grilla.
+export function leerCuentaCorrienteArt(tablas: string[][][]): AnticipoArt[] | null {
+  const esPosicion = (c: string) => /^\d{4}\s*\/\s*\d{1,2}$/.test(c.trim())
+  const esFecha = (c: string) => /^\d{2}\/\d{2}\/\d{4}$/.test(c.trim())
+  const corto = (c: string) => c.trim().length < 30
+  const esEncabezado = (f: string[]) => f.some((c) => corto(c) && /posic/i.test(c)) && f.some((c) => corto(c) && /vencim/i.test(c))
+
+  // La tabla con más filas de datos es la grilla (evita contar dos veces copias del encabezado fijo).
+  let filas: string[][] = []
+  let enc: string[] | null = null
+  for (const t of tablas) {
+    const datos = t.filter((f) => f.some(esPosicion) && f.some(esFecha))
+    if (datos.length > filas.length) {
+      filas = datos
+      enc = t.find(esEncabezado) ?? null
+    }
+  }
+  enc ??= tablas.flatMap((t) => t.filter(esEncabezado))[0] ?? null
+  if (!filas.length) return enc ? [] : null
+
+  const h = (enc ?? []).map((c) => c.trim().toLowerCase())
+  const col = (re: RegExp, excluir?: RegExp) => h.findIndex((c) => re.test(c) && !(excluir && excluir.test(c)))
+  const hPos = col(/posic/)
+  const cols = {
+    concepto: col(/concepto/), venc: col(/vencim/), plan: col(/plan/), impuesto: col(/impuesto/, /pagad/),
+    deducciones: col(/deducc/), pagado: col(/pagad/), intereses: col(/inter[eé]s|recargo/), saldo: col(/saldo/),
+  }
+
+  const meses = new Map<string, AnticipoArt>()
+  for (const fila of filas) {
+    const iPos = fila.findIndex(esPosicion)
+    const [a, m] = fila[iPos].split("/").map((x) => Number(x.trim()))
+    if (!fechaValida(a, m, 1)) continue
+    // Con encabezado se alinea por la posición fiscal; sin él, el orden de la grilla.
+    const iVenc = fila.findIndex((c, j) => j > iPos && esFecha(c))
+    const desplazo = hPos >= 0 ? iPos - hPos : 0
+    const en = (j: number, sinEnc: number) => {
+      const i = hPos >= 0 ? (j >= 0 ? j + desplazo : -1) : sinEnc
+      return i >= 0 ? (fila[i] ?? "").trim() : ""
+    }
+    const monto = (j: number, sinEnc: number) => parseMonto(en(j, sinEnc)) ?? 0
+    const impuesto = monto(cols.impuesto, iVenc + 2)
+    const deducciones = monto(cols.deducciones, iVenc + 3)
+    const pagado = monto(cols.pagado, iVenc + 4)
+    const intereses = monto(cols.intereses, -1)
+    const saldoTxt = en(cols.saldo, -1)
+    const saldo = saldoTxt ? (parseMonto(saldoTxt) ?? 0) : Math.max(impuesto - deducciones - pagado, 0) + intereses
+    const plan = en(cols.plan, iVenc + 1)
+    const vencimiento = fechaDdmmIso(en(cols.venc, iVenc))
+
+    const k = `${a}-${String(m).padStart(2, "0")}`
+    const p = meses.get(k) ?? { periodo: k, concepto: "", vencimiento: null, plan: null, impuesto: 0, deducciones: 0, pagado: 0, intereses: 0, saldo: 0 }
+    const concepto = en(cols.concepto, iPos - 1)
+    if (concepto && !p.concepto.includes(concepto)) p.concepto = p.concepto ? `${p.concepto} · ${concepto}` : concepto
+    if (vencimiento && (!p.vencimiento || vencimiento < p.vencimiento)) p.vencimiento = vencimiento
+    if (plan && !/^0*$/.test(plan)) p.plan ??= plan
+    p.impuesto = redondear(p.impuesto + impuesto)
+    p.deducciones = redondear(p.deducciones + deducciones)
+    p.pagado = redondear(p.pagado + pagado)
+    p.intereses = redondear(p.intereses + intereses)
+    p.saldo = redondear(p.saldo + saldo)
+    meses.set(k, p)
+  }
+  return [...meses.values()].sort((x, y) => (x.periodo < y.periodo ? 1 : -1))
+}
+
 // ── PDF ──────────────────────────────────────────────────────────────────────
 
 type Pieza ={ str: string; x: number; y: number; w: number; h: number }
