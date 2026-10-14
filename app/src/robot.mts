@@ -43,6 +43,9 @@ async function primeroVisible(candidatos: Locator[], timeout = T): Promise<Locat
 }
 
 async function detectarBloqueos(page: Page) {
+  if (page.url().startsWith("chrome-error")) {
+    throw new FalloArca("arca_caido", "La página de ARCA no cargó (problema de red o ARCA caído)")
+  }
   if (await page.locator("iframe[src*='recaptcha'], iframe[src*='hcaptcha'], [id*='captcha' i], [class*='captcha' i]").count()) {
     throw new FalloArca("captcha", "ARCA pidió un captcha: hay que cargar los comprobantes a mano este mes")
   }
@@ -148,7 +151,13 @@ export async function elegirContribuyente(mc: Page, cuit: string) {
   await mc.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
   if (!PIDE_PERSONA.test(await textoVisible(mc))) return
 
-  // Variante con lista desplegable + botón para continuar.
+  const continuar = async () => {
+    const seguir = await primeroVisible([mc.getByRole("button", { name: /continuar|aceptar|ingresar|seleccionar|elegir/i })], 5000)
+    if (seguir) await seguir.click()
+    await mc.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
+  }
+
+  // Variante con lista desplegable (CCMA: "Selecciona la CUIT a representar" + "Elegir CUIT").
   const selects = mc.locator("select")
   for (let i = 0, n = await selects.count(); i < n; i++) {
     const s = selects.nth(i)
@@ -156,10 +165,24 @@ export async function elegirContribuyente(mc: Page, cuit: string) {
       [...(el as HTMLSelectElement).options].find((o) => (o.text + o.value).replace(/\D/g, "").includes(c))?.value ?? null, cuit)
     if (valor === null) continue
     await s.selectOption(valor)
-    const seguir = await primeroVisible([mc.getByRole("button", { name: /continuar|aceptar|ingresar|seleccionar/i })], 5000)
-    if (seguir) await seguir.click()
-    await mc.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
-    return
+    return continuar()
+  }
+
+  // Variante con botones de opción: el CUIT tiene que estar en su valor, su etiqueta o en un
+  // contenedor propio (no en uno compartido con los otros CUIT).
+  const radios = mc.locator("input[type='radio']")
+  for (let i = 0, n = await radios.count(); i < n; i++) {
+    const r = radios.nth(i)
+    const esEste = await r.evaluate((el, c) => {
+      const inp = el as HTMLInputElement
+      const digitos = (s: string | null | undefined) => (s ?? "").replace(/\D/g, "")
+      if (digitos(inp.value).includes(c) || [...(inp.labels ?? [])].some((l) => digitos(l.innerText).includes(c))) return true
+      const cuits = (inp.parentElement?.innerText ?? "").match(/\d{2}-?\d{8}-?\d/g) ?? []
+      return cuits.length === 1 && digitos(cuits[0]) === c
+    }, cuit)
+    if (!esEste) continue
+    await r.check()
+    return continuar()
   }
 
   const candidatos = mc.locator(CLICKEABLES)
@@ -176,7 +199,7 @@ export async function elegirContribuyente(mc: Page, cuit: string) {
   if (!elegido) {
     // Tarjeta que contiene el CUIT (la más interna, que es la última en orden de documento).
     const fmt = `${cuit.slice(0, 2)}-${cuit.slice(2, 10)}-${cuit.slice(10)}`
-    const tarjetas = mc.locator("li, tr, form, .card, .panel, div").filter({ hasText: fmt })
+    const tarjetas = mc.locator("li, tr, form, .card, .panel, div").filter({ hasText: new RegExp(`${fmt}|${cuit}`) })
     const n = await tarjetas.count()
     if (n) {
       const tarjeta = tarjetas.nth(n - 1)

@@ -115,7 +115,9 @@ export function totalesComprobantesPorMes(buf: Uint8Array) {
     t.monto += monto
     totales.set(k, t)
   }
-  return [...totales.values()].sort((a, b) => a.anio - b.anio || a.mes - b.mes)
+  return [...totales.values()]
+    .map((t) => ({ ...t, monto: Math.round(t.monto * 100) / 100 }))
+    .sort((a, b) => a.anio - b.anio || a.mes - b.mes)
 }
 
 // ── PDF ──────────────────────────────────────────────────────────────────────
