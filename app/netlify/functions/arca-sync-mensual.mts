@@ -1,10 +1,11 @@
 import type { Config, Context } from "@netlify/functions"
 import { db, q } from "../../src/core.mts"
-import { despacharSincronizacion, mesActual } from "../../src/sincronizacion.mts"
+import { despacharSincronizacion, finPeriodoProximaRecategorizacion } from "../../src/sincronizacion.mts"
 
-// Día 2 de cada mes: trae de ARCA los últimos 12 meses de todos los clientes activos con clave fiscal.
+// Día 2 de cada mes: trae de ARCA el período de la próxima recategorización de todos los
+// clientes activos con clave fiscal.
 export default async (_req: Request, context: Context) => {
-  const { anio, mes } = mesActual()
+  const { anio, mes } = finPeriodoProximaRecategorizacion()
   const filas = (await q(
     db().from("credenciales_arca").select("cliente_id, clientes!inner(activo)").eq("clientes.activo", true),
   )) ?? []
@@ -13,7 +14,7 @@ export default async (_req: Request, context: Context) => {
     filas.map((f: any, i: number) => despacharSincronizacion(base!, f.cliente_id, anio, mes, undefined, (i * 20_000) % (12 * 60_000))),
   )
   const fallidos = resultados.filter((r) => r.status === "rejected").length
-  console.log(`[arca-sync-mensual] 12 meses hasta ${mes}/${anio}: ${filas.length} clientes, ${fallidos} sin despachar`)
+  console.log(`[arca-sync-mensual] período hasta ${mes}/${anio}: ${filas.length} clientes, ${fallidos} sin despachar`)
 }
 
 // Día 2 a las 09:00 UTC = 06:00 en Argentina.

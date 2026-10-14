@@ -12,24 +12,44 @@ export const TIPOS: TipoComprobantes[] = ["emitidos", "recibidos"]
 const TABLA: Record<TipoComprobantes, "facturacion" | "gastos"> = { emitidos: "facturacion", recibidos: "gastos" }
 const REINTENTOS = 3
 
-export function mesActual() {
-  const t = hoyArgentina()
-  return { anio: t.y, mes: t.m }
+// Último mes del período que evalúa la próxima recategorización. Ventanas: 20/01–05/02 (evalúa
+// enero a diciembre del año anterior) y 20/07–05/08 (julio del año anterior a junio).
+// De febrero a julio se apunta a la de agosto; de agosto a enero, a la de febrero.
+export function finPeriodoProximaRecategorizacion() {
+  const { y, m } = hoyArgentina()
+  if (m >= 2 && m <= 7) return { anio: y, mes: 6 }
+  if (m >= 8) return { anio: y, mes: 12 }
+  return { anio: y - 1, mes: 12 }
 }
 
-// Últimos 12 meses que terminan en (anio, mes): del día 1 de hace 11 meses hasta hoy (o fin de ese mes).
-// El selector de ARCA admite como máximo 365 días.
-function periodo12Meses(anio: number, mes: number) {
+const ms = (a: number, m: number, d: number) => Date.UTC(a, m - 1, d)
+const ddmmaaaa = (a: number, m: number, d: number) => `${pad(d)}/${pad(m)}/${a}`
+
+// 12 meses que terminan en (anio, mes), hasta hoy si el período no terminó. ARCA admite consultas de
+// hasta 365 días: si el período completo se pasa (año bisiesto), se consulta en dos tramos.
+export function periodoRecategorizacion(anio: number, mes: number) {
   const indice = anio * 12 + (mes - 1) - 11
   const inicio = { anio: Math.floor(indice / 12), mes: (indice % 12) + 1 }
   const t = hoyArgentina()
-  const ultimoDia = anio === t.y && mes === t.m ? t.d : diasEnMes(anio, mes)
-  return {
-    inicio,
-    desde: `01/${pad(inicio.mes)}/${inicio.anio}`,
-    hasta: `${pad(ultimoDia)}/${pad(mes)}/${anio}`,
-    texto: `${pad(inicio.mes)}/${inicio.anio} a ${pad(mes)}/${anio}`,
+  const finPeriodo = ms(anio, mes, diasEnMes(anio, mes))
+  const fin = finPeriodo < ms(t.y, t.m, t.d) ? { a: anio, m: mes, d: diasEnMes(anio, mes) } : { a: t.y, m: t.m, d: t.d }
+
+  const dias = (ms(fin.a, fin.m, fin.d) - ms(inicio.anio, inicio.mes, 1)) / 86_400_000 + 1
+  const tramos: { desde: string; hasta: string }[] = []
+  if (dias <= 365) {
+    tramos.push({ desde: ddmmaaaa(inicio.anio, inicio.mes, 1), hasta: ddmmaaaa(fin.a, fin.m, fin.d) })
+  } else {
+    const corte = indice + 6
+    const medio = { anio: Math.floor(corte / 12), mes: (corte % 12) + 1 }
+    const previo = corte - 1
+    const finPrimero = { anio: Math.floor(previo / 12), mes: (previo % 12) + 1 }
+    tramos.push({
+      desde: ddmmaaaa(inicio.anio, inicio.mes, 1),
+      hasta: ddmmaaaa(finPrimero.anio, finPrimero.mes, diasEnMes(finPrimero.anio, finPrimero.mes)),
+    })
+    tramos.push({ desde: ddmmaaaa(medio.anio, medio.mes, 1), hasta: ddmmaaaa(fin.a, fin.m, fin.d) })
   }
+  return { inicio, tramos, texto: `${pad(inicio.mes)}/${inicio.anio} a ${pad(mes)}/${anio}` }
 }
 
 const contenidoTrabajo = (clienteId: string, anio: number, mes: number, tipos: TipoComprobantes[]) =>
@@ -76,7 +96,7 @@ export async function sincronizarComprobantes(clienteId: string, anio: number, m
       cliente_id: clienteId, estudio_id: cliente.estudio_id, tipo, anio, mes, estado, detalle: limpiar(detalle),
     }))
 
-  const periodo = periodo12Meses(anio, mes)
+  const periodo = periodoRecategorizacion(anio, mes)
   const clave12 = (a: number, m: number) => a * 12 + m
   const enPeriodo = (a: number, m: number) =>
     clave12(a, m) >= clave12(periodo.inicio.anio, periodo.inicio.mes) && clave12(a, m) <= clave12(anio, mes)
@@ -91,8 +111,11 @@ export async function sincronizarComprobantes(clienteId: string, anio: number, m
       const mc = await abrirMisComprobantes(page)
       await elegirContribuyente(mc, cliente.cuit)
       for (const tipo of [...pendientes]) {
-        const excel = await bajarComprobantes(mc, tipo, periodo.desde, periodo.hasta)
-        const totales = excel ? totalesComprobantesPorMes(excel) : []
+        const totales: { anio: number; mes: number; monto: number }[] = []
+        for (const tramo of periodo.tramos) {
+          const excel = await bajarComprobantes(mc, tipo, tramo.desde, tramo.hasta)
+          if (excel) totales.push(...totalesComprobantesPorMes(excel))
+        }
         const etiqueta = tipo === "emitidos" ? "Facturación" : "Gastos"
         const fuera = totales.filter((t) => !enPeriodo(t.anio, t.mes))
         if (fuera.length) {

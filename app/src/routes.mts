@@ -4,7 +4,7 @@ import {
 } from "./core.mts"
 import { buscarEnConstancia, buscarEnPadron, certPem, cuitContador, keyPem, serviciosCacheados } from "./arca.mts"
 import { cifrarClave, exigirSesionPortal, firmarTokenPortal } from "./secretos.mts"
-import { TIPOS, despacharSincronizacion, mesActual } from "./sincronizacion.mts"
+import { TIPOS, despacharSincronizacion, finPeriodoProximaRecategorizacion } from "./sincronizacion.mts"
 import { getStore } from "@netlify/blobs"
 import {
   aNumero, fechaExcelIso, leerExcel, parseArNumber, parseNumPuntos, pdfTablas, pdfTexto,
@@ -1241,8 +1241,8 @@ const sincronizarArcaAhora: Handler = async ({ req, p }) => {
   const cliente = await clientePorSlug(p.slug, estudioId)
   const cred = await q(db().from("credenciales_arca").select("cliente_id").eq("cliente_id", cliente.id).maybeSingle())
   if (!cred) throw new HttpError(400, "El cliente no tiene clave fiscal cargada")
-  // Últimos 12 meses hasta hoy, igual que el cron.
-  const { anio, mes } = mesActual()
+  // El período de la próxima recategorización, igual que el cron.
+  const { anio, mes } = finPeriodoProximaRecategorizacion()
   await despacharSincronizacion(new URL(req.url).origin, cliente.id, anio, mes, TIPOS)
   return { ok: true, anio, mes }
 }

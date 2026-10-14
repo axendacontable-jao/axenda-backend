@@ -1120,7 +1120,7 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
     try {
       const res = await apiFetch(`${BACKEND_URL}/clientes/${cliente.slug}/sincronizar-arca`, {method:"POST"});
       const d = await res.json();
-      if (d.ok) alert("Listo: el robot está trayendo de ARCA los últimos 12 meses. Tarda 1 o 2 minutos; después tocá \"Actualizar estado\".");
+      if (d.ok) alert("Listo: el robot está trayendo de ARCA el período de la próxima recategorización. Tarda 1 o 2 minutos; después tocá \"Actualizar estado\".");
       else alert("No se pudo iniciar: "+(d.detail||JSON.stringify(d)));
     } catch(err) { alert("Error: "+err.message); }
     setSincronizando(false);
@@ -1589,8 +1589,8 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
                     </div>
                     <div style={{fontSize:"12px",color:"var(--muted)",marginTop:"2px"}}>
                       {arca.clave_cargada
-                        ? `Actualizada el ${formatArgDate(arca.actualizada_at)}. El día 2 de cada mes se traen solas las facturas y los gastos de los últimos 12 meses.`
-                        : "Cargala para que las facturas y los gastos de los últimos 12 meses se traigan solos el día 2 de cada mes."}
+                        ? `Actualizada el ${formatArgDate(arca.actualizada_at)}. El día 2 de cada mes se traen solas las facturas y los gastos del período de la próxima recategorización.`
+                        : "Cargala para que las facturas y los gastos del período de la próxima recategorización se traigan solos el día 2 de cada mes."}
                     </div>
                   </div>
                 </div>
@@ -1610,7 +1610,7 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
 
                 {arca.clave_cargada&&(
                   <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginBottom:"20px"}}>
-                    <button className="action-chip" onClick={sincronizarArca} disabled={sincronizando}>{sincronizando?"Iniciando…":"↻ Traer últimos 12 meses ahora"}</button>
+                    <button className="action-chip" onClick={sincronizarArca} disabled={sincronizando}>{sincronizando?"Iniciando…":"↻ Traer período de recategorización ahora"}</button>
                     <button className="action-chip" onClick={cargarArca}>Actualizar estado</button>
                     {ultimaFalla&&<button className="action-chip" onClick={verCapturaArca}>Ver captura del último error</button>}
                   </div>
