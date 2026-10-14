@@ -1,5 +1,5 @@
 import type { Config } from "@netlify/functions"
-import { pedidoValido, sincronizarComprobantes } from "../../src/sincronizacion.mts"
+import { pedidoValido, sincronizarCliente } from "../../src/sincronizacion.mts"
 
 // Corre el robot de ARCA para un cliente. Lo disparan el cron mensual o el botón del admin.
 export default async (req: Request) => {
@@ -12,7 +12,7 @@ export default async (req: Request) => {
   const demora = Math.min(Math.max(Number(pedido.demoraMs) || 0, 0), 12 * 60_000)
   if (demora) await new Promise((r) => setTimeout(r, demora))
   try {
-    await sincronizarComprobantes(pedido.clienteId, pedido.anio, pedido.mes, pedido.tipos)
+    await sincronizarCliente(pedido.clienteId, pedido.anio, pedido.mes, pedido.tipos)
   } catch (e: any) {
     console.error(`[arca-sync] cliente ${pedido.clienteId}: ${String(e?.message ?? e).split("\n")[0]}`)
   }

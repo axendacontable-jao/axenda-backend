@@ -4,7 +4,7 @@ import {
 } from "./core.mts"
 import { buscarEnConstancia, buscarEnPadron, certPem, cuitContador, keyPem, serviciosCacheados } from "./arca.mts"
 import { cifrarClave, exigirSesionPortal, firmarTokenPortal } from "./secretos.mts"
-import { TIPOS, despacharSincronizacion, finPeriodoProximaRecategorizacion } from "./sincronizacion.mts"
+import { TAREAS, despacharSincronizacion, finPeriodoProximaRecategorizacion } from "./sincronizacion.mts"
 import { getStore } from "@netlify/blobs"
 import {
   aNumero, fechaExcelIso, leerExcel, parseArNumber, parseNumPuntos, pdfTablas, pdfTexto,
@@ -1206,13 +1206,18 @@ const registrarRecategorizacion: Handler = async ({ req, p }) => {
 
 const estadoArca: Handler = async ({ req, p }) => {
   const estudioId = await getEstudioId(req)
-  const cliente = await clientePorSlug(p.slug, estudioId)
+  const cliente = await clientePorSlug(p.slug, estudioId, "id,deuda_monto,deuda_descripcion,deuda_actualizada_at")
   const [cred, sincronizaciones] = await Promise.all([
     q(db().from("credenciales_arca").select("actualizada_at").eq("cliente_id", cliente.id).maybeSingle()),
     q(db().from("sincronizaciones_arca").select("tipo,anio,mes,estado,detalle,created_at")
       .eq("cliente_id", cliente.id).order("created_at", { ascending: false }).limit(10)),
   ])
-  return { clave_cargada: !!cred, actualizada_at: cred?.actualizada_at ?? null, sincronizaciones: sincronizaciones ?? [] }
+  return {
+    clave_cargada: !!cred, actualizada_at: cred?.actualizada_at ?? null, sincronizaciones: sincronizaciones ?? [],
+    deuda: cliente.deuda_actualizada_at
+      ? { monto: cliente.deuda_monto, descripcion: cliente.deuda_descripcion, actualizada_at: cliente.deuda_actualizada_at }
+      : null,
+  }
 }
 
 const guardarClaveFiscal: Handler = async ({ req, p }) => {
@@ -1241,9 +1246,9 @@ const sincronizarArcaAhora: Handler = async ({ req, p }) => {
   const cliente = await clientePorSlug(p.slug, estudioId)
   const cred = await q(db().from("credenciales_arca").select("cliente_id").eq("cliente_id", cliente.id).maybeSingle())
   if (!cred) throw new HttpError(400, "El cliente no tiene clave fiscal cargada")
-  // El período de la próxima recategorización, igual que el cron.
+  // Lo mismo que el cron: comprobantes del período de la próxima recategorización y deuda CCMA.
   const { anio, mes } = finPeriodoProximaRecategorizacion()
-  await despacharSincronizacion(new URL(req.url).origin, cliente.id, anio, mes, TIPOS)
+  await despacharSincronizacion(new URL(req.url).origin, cliente.id, anio, mes, TAREAS)
   return { ok: true, anio, mes }
 }
 

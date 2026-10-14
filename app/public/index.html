@@ -1120,7 +1120,7 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
     try {
       const res = await apiFetch(`${BACKEND_URL}/clientes/${cliente.slug}/sincronizar-arca`, {method:"POST"});
       const d = await res.json();
-      if (d.ok) alert("Listo: el robot está trayendo de ARCA el período de la próxima recategorización. Tarda 1 o 2 minutos; después tocá \"Actualizar estado\".");
+      if (d.ok) alert("Listo: el robot está trayendo de ARCA las facturas y los gastos del período de la próxima recategorización, y la deuda de la CCMA. Tarda 2 o 3 minutos; después tocá \"Actualizar estado\".");
       else alert("No se pudo iniciar: "+(d.detail||JSON.stringify(d)));
     } catch(err) { alert("Error: "+err.message); }
     setSincronizando(false);
@@ -1589,8 +1589,8 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
                     </div>
                     <div style={{fontSize:"12px",color:"var(--muted)",marginTop:"2px"}}>
                       {arca.clave_cargada
-                        ? `Actualizada el ${formatArgDate(arca.actualizada_at)}. El día 2 de cada mes se traen solas las facturas y los gastos del período de la próxima recategorización.`
-                        : "Cargala para que las facturas y los gastos del período de la próxima recategorización se traigan solos el día 2 de cada mes."}
+                        ? `Actualizada el ${formatArgDate(arca.actualizada_at)}. El día 2 de cada mes se traen solas las facturas y los gastos del período de la próxima recategorización, y la deuda de la CCMA.`
+                        : "Cargala para que las facturas, los gastos y la deuda se traigan solos de ARCA el día 2 de cada mes."}
                     </div>
                   </div>
                 </div>
@@ -1608,9 +1608,21 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
                   La clave se guarda cifrada y nunca se vuelve a mostrar. Si el cliente tiene verificación en dos pasos, el robot no puede entrar y queda para carga manual.
                 </div>
 
+                {arca.deuda&&(
+                  <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"16px",padding:"14px 16px",borderRadius:"10px",background:arca.deuda.monto>0?"#E0454508":"#2BAF8208",border:`1px solid ${arca.deuda.monto>0?"#E0454530":"#2BAF8230"}`}}>
+                    <div style={{fontSize:"20px"}}>{arca.deuda.monto>0?"💸":"✅"}</div>
+                    <div>
+                      <div style={{fontWeight:"600",fontSize:"13px",color:arca.deuda.monto>0?"var(--red)":"var(--green)"}}>
+                        {arca.deuda.monto>0?`Deuda en ARCA: ${$$(arca.deuda.monto)}`:"Sin deuda en ARCA"}
+                      </div>
+                      <div style={{fontSize:"12px",color:"var(--muted)",marginTop:"2px"}}>{arca.deuda.descripcion}</div>
+                    </div>
+                  </div>
+                )}
+
                 {arca.clave_cargada&&(
                   <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginBottom:"20px"}}>
-                    <button className="action-chip" onClick={sincronizarArca} disabled={sincronizando}>{sincronizando?"Iniciando…":"↻ Traer período de recategorización ahora"}</button>
+                    <button className="action-chip" onClick={sincronizarArca} disabled={sincronizando}>{sincronizando?"Iniciando…":"↻ Sincronizar con ARCA ahora"}</button>
                     <button className="action-chip" onClick={cargarArca}>Actualizar estado</button>
                     {ultimaFalla&&<button className="action-chip" onClick={verCapturaArca}>Ver captura del último error</button>}
                   </div>
@@ -1631,7 +1643,7 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
                       return (
                         <div key={i} style={{padding:"10px 14px",borderRadius:"8px",background:"var(--light)",marginBottom:"6px",fontSize:"13px"}}>
                           <div style={{display:"flex",justifyContent:"space-between",gap:"10px"}}>
-                            <span><strong>{s.tipo==="emitidos"?"Facturas":"Gastos"}</strong> <span style={{color}}>{ico} {label}</span></span>
+                            <span><strong>{s.tipo==="emitidos"?"Facturas":s.tipo==="recibidos"?"Gastos":"Deuda CCMA"}</strong> <span style={{color}}>{ico} {label}</span></span>
                             <span style={{color:"var(--muted)",fontSize:"12px",whiteSpace:"nowrap"}}>{tiempoRelativo(s.created_at)}</span>
                           </div>
                           {s.detalle&&<div style={{fontSize:"12px",color:"var(--muted)",marginTop:"4px",wordBreak:"break-word"}}>{s.detalle}</div>}

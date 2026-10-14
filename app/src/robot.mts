@@ -1,8 +1,11 @@
 import type { Browser, Locator, Page } from "playwright-core"
+import { parseArNumber } from "./parsers.mts"
 
 // Debe coincidir con la versión de @sparticuz/chromium-min del package.json.
 const CHROMIUM_PACK = "https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.tar"
 const LOGIN_URL = "https://auth.afip.gob.ar/contribuyente_/login.xhtml"
+const PORTAL_URL = "https://portalcf.cloud.afip.gob.ar/portal/app/"
+const PORTAL = /portalcf\.cloud\.afip\.gob\.ar/
 const MCMP = /fes\.afip\.gob\.ar\/mcmp/
 const T = 30_000
 
@@ -79,36 +82,44 @@ export async function ingresar(page: Page, cuit: string, clave: string) {
   }
 }
 
-export async function abrirMisComprobantes(page: Page): Promise<Page> {
+// Abre un servicio del portal "Mi ARCA" (suelen abrirse en otra pestaña).
+async function abrirServicio(page: Page, nombre: RegExp, busqueda: string): Promise<Page> {
+  if (!PORTAL.test(page.url())) await page.goto(PORTAL_URL, { timeout: T }).catch(() => {})
   await page.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
-  const servicio = () => page.getByText(/^\s*Mis Comprobantes\s*$/i)
+  const servicio = () => page.getByText(nombre)
 
   let enlace = await primeroVisible([servicio()], 10_000)
   if (!enlace) {
     const buscador = page.locator("input[type='search'], input[placeholder*='uscar' i]")
     if (await buscador.first().isVisible().catch(() => false)) {
-      await buscador.first().fill("Mis Comprobantes")
+      await buscador.first().fill(busqueda)
       enlace = await primeroVisible([servicio()], 10_000)
     }
   }
   if (!enlace) {
-    await page.goto("https://portalcf.cloud.afip.gob.ar/portal/app/mis-servicios", { timeout: T }).catch(() => {})
+    await page.goto(`${PORTAL_URL}mis-servicios`, { timeout: T }).catch(() => {})
     await page.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
     enlace = await primeroVisible([servicio()], 15_000)
   }
   if (!enlace) {
-    throw new FalloArca("error", "No aparece 'Mis Comprobantes' en el portal de ARCA (¿está habilitado el servicio para este CUIT?)")
+    throw new FalloArca("error", `No aparece '${busqueda}' en el portal de ARCA (¿está habilitado el servicio para este CUIT?)`)
   }
 
   const [nueva] = await Promise.all([
     page.context().waitForEvent("page", { timeout: T }).catch(() => null),
     enlace.click(),
   ])
-  const mc = nueva ?? page
+  const abierta = nueva ?? page
+  await abierta.waitForLoadState("domcontentloaded", { timeout: T }).catch(() => {})
+  await abierta.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
+  await detectarBloqueos(abierta)
+  return abierta
+}
+
+export async function abrirMisComprobantes(page: Page): Promise<Page> {
+  const mc = await abrirServicio(page, /^\s*Mis Comprobantes\s*$/i, "Mis Comprobantes")
   await mc.waitForURL(MCMP, { timeout: T }).catch(() => {})
-  await mc.waitForLoadState("domcontentloaded", { timeout: T }).catch(() => {})
   if (!MCMP.test(mc.url())) throw new FalloArca("error", `No se abrió Mis Comprobantes (quedó en ${mc.url()})`)
-  await detectarBloqueos(mc)
   return mc
 }
 
@@ -129,10 +140,27 @@ export async function describirClickeables(page: Page): Promise<string> {
   return items.join(" | ")
 }
 
+const PIDE_PERSONA = /eleg[ií] una persona|a qui[eé]n (quer[eé]s )?represent|seleccion[aá]?r? (el |la |un |una )?(contribuyente|persona|cuit)/i
+
 // "Elegí una persona para ingresar": aparece cuando el CUIT puede representar a otros.
 // El CUIT también figura en el encabezado, así que se busca un elemento clickeable fuera de él.
 export async function elegirContribuyente(mc: Page, cuit: string) {
-  if (await primeroVisible([mc.locator("#btnEmitidos"), mc.getByText(/emitidos/i)], 5000)) return
+  await mc.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
+  if (!PIDE_PERSONA.test(await textoVisible(mc))) return
+
+  // Variante con lista desplegable + botón para continuar.
+  const selects = mc.locator("select")
+  for (let i = 0, n = await selects.count(); i < n; i++) {
+    const s = selects.nth(i)
+    const valor = await s.evaluate((el, c) =>
+      [...(el as HTMLSelectElement).options].find((o) => (o.text + o.value).replace(/\D/g, "").includes(c))?.value ?? null, cuit)
+    if (valor === null) continue
+    await s.selectOption(valor)
+    const seguir = await primeroVisible([mc.getByRole("button", { name: /continuar|aceptar|ingresar|seleccionar/i })], 5000)
+    if (seguir) await seguir.click()
+    await mc.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
+    return
+  }
 
   const candidatos = mc.locator(CLICKEABLES)
   let elegido: Locator | null = null
@@ -252,6 +280,35 @@ export async function bajarComprobantes(
   const partes: Buffer[] = []
   for await (const parte of await descarga.createReadStream()) partes.push(parte as Buffer)
   return new Uint8Array(Buffer.concat(partes))
+}
+
+// Nunca se toca nada que pague, genere obligaciones o cambie datos en ARCA.
+const PROHIBIDO = /vep|pagar|pago|generar|presentar|confirmar|eliminar|baja|adherir|plan de|volante/i
+
+// Cuenta Corriente de Monotributistas y Autónomos: saldo de deuda a la fecha.
+export async function consultarDeudaCcma(page: Page, cuit: string): Promise<{ monto: number; detalle: string }> {
+  const ccma = await abrirServicio(page, /^\s*(CCMA|Cuenta Corriente de (Contribuyentes )?Monotributistas y Aut[oó]nomos)/i, "CCMA")
+  await elegirContribuyente(ccma, cuit)
+
+  for (const paso of [/estado de cuenta/i, /c[aá]lculo de deuda|consult(a|ar) (de )?deuda/i, /^\s*(calcular|consultar)\s*$/i]) {
+    const el = await primeroVisible([ccma.getByRole("link", { name: paso }), ccma.getByRole("button", { name: paso })], 6000)
+    if (!el) continue
+    const texto = (await el.innerText().catch(() => "")) || (await el.getAttribute("value").catch(() => "")) || ""
+    if (PROHIBIDO.test(texto)) continue
+    await el.click()
+    await ccma.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
+  }
+
+  const pantalla = (await textoVisible(ccma)).replace(/\s+/g, " ")
+  if (/no (registra|posee|tiene|existe[n]?) deudas?|sin deuda|no se registran (deudas|saldos)/i.test(pantalla)) {
+    return { monto: 0, detalle: "sin deuda" }
+  }
+  const m = pantalla.match(/(saldo deudor|total (de )?(la )?deuda|deuda total|total adeudado|saldo total)[^0-9$-]{0,40}\$?\s*(-?[\d.]+,\d{2})/i)
+  const monto = m ? parseArNumber(m[4]) : null
+  if (!m || monto === null) {
+    throw new FalloArca("error", `No encontré el total de deuda en la CCMA (${ccma.url()}). Pantalla: ${pantalla.slice(0, 400)} — Botones: ${await describirClickeables(ccma)}`)
+  }
+  return { monto, detalle: `${m[1]}: $${m[4]}` }
 }
 
 // Datos para diagnosticar un fallo: URL, texto visible y captura (nunca valores de campos).
