@@ -14,6 +14,18 @@ export function parseArNumber(s: unknown): number | null {
   return t !== "" && Number.isFinite(n) ? n : null
 }
 
+// Monto en formato argentino (16.670,54) o inglés (16,670.54), como el que muestra la CCMA:
+// el separador seguido de exactamente 2 dígitos al final es el decimal; el otro, de miles.
+export function parseMonto(s: string): number | null {
+  const t = s.replace(/[^\d.,-]/g, "")
+  if (!/\d/.test(t)) return null
+  const ultimo = Math.max(t.lastIndexOf(","), t.lastIndexOf("."))
+  const n = ultimo >= 0 && t.length - ultimo - 1 === 2
+    ? Number(`${t.slice(0, ultimo).replace(/[.,]/g, "")}.${t.slice(ultimo + 1)}`)
+    : Number(t.replace(/[.,]/g, ""))
+  return Number.isFinite(n) ? n : null
+}
+
 export function parseNumPuntos(v: unknown): number | null {
   if (v === null || v === undefined) return null
   const t = String(v).replace(/\./g, "").replace(/,/g, ".").trim()

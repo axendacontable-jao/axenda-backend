@@ -96,9 +96,10 @@ export async function sincronizarCliente(clienteId: string, anio: number, mes: n
   // Ningún mensaje que se guarde o se loguee puede contener la clave.
   const limpiar = (s: string) => (clave ? s.split(clave).join("***") : s)
 
-  const registrar = (tarea: Tarea, estado: EstadoSync, detalle: string) =>
+  const registrar = (tarea: Tarea, estado: EstadoSync, detalle: string, pantalla?: string) =>
     q(d.from("sincronizaciones_arca").insert({
       cliente_id: clienteId, estudio_id: cliente.estudio_id, tipo: tarea, anio, mes, estado, detalle: limpiar(detalle),
+      pantalla: pantalla ? limpiar(pantalla).slice(0, 6000) : null,
     }))
 
   const periodo = periodoRecategorizacion(anio, mes)
@@ -141,7 +142,7 @@ export async function sincronizarCliente(clienteId: string, anio: number, mes: n
     await q(d.from("clientes").update({
       deuda_monto: deuda.monto, deuda_descripcion: descripcion, deuda_actualizada_at: new Date().toISOString(),
     }).eq("id", clienteId))
-    await registrar("ccma", "ok", descripcion)
+    await registrar("ccma", "ok", descripcion, deuda.pantalla)
     await logActividad(clienteId, `Deuda traída de ARCA — ${descripcion}`, cliente.estudio_id)
   }
 
