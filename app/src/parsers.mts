@@ -281,6 +281,57 @@ export function movimientosCcma(tablas: string[][][]): Map<string, MesCcma> | nu
   return null
 }
 
+// ── Mis Facilidades: lista de planes ─────────────────────────────────────────
+
+export type PlanArca = {
+  numero: string; tipo: string | null; estado: string | null; consolidacion: string | null
+  cuotas: number | null; cuotasPagas: number | null; monto: number | null; proximoVenc: string | null
+}
+
+export function leerPlanesFacilidades(tablas: string[][][]): PlanArca[] | null {
+  for (const tabla of tablas) {
+    const iEnc = tabla.findIndex((f) =>
+      f.some((c) => /n[uú]mero|nro|plan/i.test(c)) && f.some((c) => /estado|situaci[oó]n/i.test(c)))
+    if (iEnc < 0) continue
+    const enc = tabla[iEnc].map((c) => c.trim().toLowerCase())
+    const col = (...res: RegExp[]) => {
+      for (const re of res) {
+        const j = enc.findIndex((c) => re.test(c))
+        if (j >= 0) return j
+      }
+      return -1
+    }
+    const cNum = col(/n[uú]mero|^nro/, /^plan$/, /plan/)
+    const cTipo = col(/tipo|r[eé]gimen|descripci/)
+    const cEstado = col(/estado|situaci/)
+    const cCons = col(/consolidaci/, /presentaci/, /fecha/)
+    const cCuotas = col(/cuotas/)
+    const cMonto = col(/deuda|monto|total|importe/)
+    const cVenc = col(/pr[oó]x.*venc|vencimiento/)
+    const celda = (fila: string[], j: number) => (j >= 0 ? (fila[j] ?? "").trim() : "")
+
+    const planes: PlanArca[] = []
+    for (const fila of tabla.slice(iEnc + 1)) {
+      const numero = celda(fila, cNum)
+      if (!/[A-Z0-9]{4,}/i.test(numero)) continue
+      const cuotasTxt = celda(fila, cCuotas)
+      const pagasDeTotal = cuotasTxt.match(/(\d+)\s*\/\s*(\d+)/)
+      planes.push({
+        numero,
+        tipo: celda(fila, cTipo) || null,
+        estado: celda(fila, cEstado) || null,
+        consolidacion: fechaDdmmIso(celda(fila, cCons)),
+        cuotas: pagasDeTotal ? Number(pagasDeTotal[2]) : /^\d+$/.test(cuotasTxt) ? Number(cuotasTxt) : null,
+        cuotasPagas: pagasDeTotal ? Number(pagasDeTotal[1]) : null,
+        monto: celda(fila, cMonto) ? parseMonto(celda(fila, cMonto)) : null,
+        proximoVenc: fechaDdmmIso(celda(fila, cVenc)),
+      })
+    }
+    if (planes.length) return planes
+  }
+  return null
+}
+
 // ── PDF ──────────────────────────────────────────────────────────────────────
 
 type Pieza ={ str: string; x: number; y: number; w: number; h: number }

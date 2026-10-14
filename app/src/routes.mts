@@ -6,6 +6,7 @@ import { buscarEnConstancia, buscarEnPadron, certPem, cuitContador, keyPem, serv
 import { cifrarClave, exigirSesionPortal, firmarTokenPortal } from "./secretos.mts"
 import { TAREAS, despacharSincronizacion, finPeriodoProximaRecategorizacion } from "./sincronizacion.mts"
 import { getStore } from "@netlify/blobs"
+import { randomUUID } from "node:crypto"
 import {
   aNumero, fechaExcelIso, leerExcel, parseArNumber, parseNumPuntos, pdfTablas, pdfTexto,
   totalesComprobantesPorMes,
@@ -116,6 +117,8 @@ const salud: Handler = async () => {
     supabase_ok: !!(Netlify.env.get("SUPABASE_URL") && Netlify.env.get("SUPABASE_KEY")),
     cuit_contador: cuitContador(),
     servicios_cacheados: serviciosCacheados(),
+    node: process.version,
+    runtime: process.env.AWS_EXECUTION_ENV ?? null,
   }
 }
 
@@ -340,7 +343,7 @@ const historialCuotas: Handler = async ({ req, p, query }) => {
   const estudioId = await getEstudioId(req)
   const meses = entero(query.get("meses") ?? "6", "meses")
   const cliente = await clientePorSlug(
-    p.slug, estudioId, "id,categoria,provincia,iibb_modalidad,deuda_monto,deuda_actualizada_at",
+    p.slug, estudioId, "id,categoria,provincia,iibb_modalidad,deuda_monto,deuda_actualizada_at,deuda_detalle",
   )
   let filas: any[] = []
   try {
@@ -359,6 +362,7 @@ const historialCuotas: Handler = async ({ req, p, query }) => {
     deuda_arca: automatico && cliente.deuda_actualizada_at ? Number(cliente.deuda_monto) || 0 : null,
     deuda_actualizada_at: automatico ? cliente.deuda_actualizada_at : null,
     art_estimado: automatico ? componenteArtEstimado(cliente, filas) : null,
+    deuda_detalle: automatico ? cliente.deuda_detalle ?? null : null,
   }
 }
 
@@ -1214,7 +1218,7 @@ const crearDocumento: Handler = async ({ req, p }) => {
   if (esArchivo(adjunto) && adjunto.name) {
     try {
       const ext = adjunto.name.includes(".") ? adjunto.name.split(".").pop()!.toLowerCase() : "pdf"
-      const ruta = `${cliente.id}/${crypto.randomUUID()}.${ext}`
+      const ruta = `${cliente.id}/${randomUUID()}.${ext}`
       const storage = db().storage.from(BUCKET_DOCS)
       const { error } = await storage.upload(ruta, await bytes(adjunto), { contentType: adjunto.type || "application/pdf" })
       if (error) throw error

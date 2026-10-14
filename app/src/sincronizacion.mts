@@ -5,13 +5,25 @@ import { descifrarClave, firmarTrabajo, trabajoValido } from "./secretos.mts"
 import { type Comprobante, type MesCcma, totalesComprobantesPorMes, ultimosComprobantes } from "./parsers.mts"
 import {
   FalloArca, abrirMisComprobantes, abrirNavegador, bajarComprobantes, capturarEstado, consultarDeudaCcma,
-  elegirContribuyente, ingresar, type DeudaCcma, type EstadoSync, type TipoComprobantes,
+  consultarFacilidades, elegirContribuyente, ingresar, type DeudaCcma, type EstadoSync, type TipoComprobantes,
 } from "./robot.mts"
 
-export type Tarea = TipoComprobantes | "ccma"
-export const TAREAS: Tarea[] = ["emitidos", "recibidos", "ccma"]
+export type Tarea = TipoComprobantes | "ccma" | "facilidades"
+export const TAREAS: Tarea[] = ["emitidos", "recibidos", "ccma", "facilidades"]
 const TABLA: Record<TipoComprobantes, "facturacion" | "gastos"> = { emitidos: "facturacion", recibidos: "gastos" }
-const NOMBRE: Record<Tarea, string> = { emitidos: "facturación", recibidos: "gastos", ccma: "deuda CCMA" }
+const NOMBRE: Record<Tarea, string> = {
+  emitidos: "facturación", recibidos: "gastos", ccma: "deuda CCMA", facilidades: "planes de Mis Facilidades",
+}
+
+// Estado de un plan de Mis Facilidades → estados de planes_pago (null: no se sabe, no se cambia).
+function estadoPlan(texto: string | null): string | null {
+  if (!texto) return null
+  if (/caduc/i.test(texto)) return "caido"
+  if (/cancel|finaliz|pagad|cumplid/i.test(texto)) return "cancelado"
+  if (/anulad|rechaz|baja|desist/i.test(texto)) return "inactivo"
+  if (/vigente|activ|presentad|aceptad/i.test(texto)) return "activo"
+  return null
+}
 const REINTENTOS = 3
 
 // Último mes del período que evalúa la próxima recategorización. Ventanas: 20/01–05/02 (evalúa
@@ -82,7 +94,10 @@ function aFallo(e: any): FalloArca {
   if (e instanceof FalloArca) return e
   const msg = String(e?.message ?? e)
   const red = e?.name === "TimeoutError" || /net::|ECONN|ETIMEDOUT|ENOTFOUND|socket hang up|Timeout/i.test(msg)
-  return new FalloArca(red ? "arca_caido" : "error", msg.split("\n")[0].slice(0, 300))
+  // Si Chromium no arranca, la causa está en su salida de error ("[pid=..][err] ...").
+  const errChromium = msg.split("\n").find((l) => l.includes("[err]"))?.trim()
+  const resumen = [msg.split("\n")[0], errChromium].filter(Boolean).join(" — ")
+  return new FalloArca(red ? "arca_caido" : "error", resumen.slice(0, 500))
 }
 
 type Fallo = { fallo: FalloArca; pantalla: Awaited<ReturnType<typeof capturarEstado>> }
@@ -146,13 +161,60 @@ export async function sincronizarCliente(clienteId: string, anio: number, mes: n
     const deuda = await consultarDeudaCcma(page, cliente.cuit)
     const t = hoyArgentina()
     const descripcion = `CCMA al ${ddmmaaaa(t.y, t.m, t.d)} — ${deuda.detalle}`
+
+    // A qué corresponde la deuda: cada período con saldo, por impuesto e intereses.
+    const detalle = deuda.meses
+      ? [...deuda.meses]
+        .filter(([, m]) => m.saldo > 1)
+        .map(([k, m]) => {
+          const [a, mes] = k.split("-").map(Number)
+          return { periodo: `${a}-${pad(mes)}`, ...m }
+        })
+        .sort((x, y) => (x.periodo < y.periodo ? 1 : -1))
+      : null
+    const sumaDetalle = detalle?.reduce((s, p) => s + p.saldo, 0) ?? 0
+    const cuadra = !detalle || Math.abs(sumaDetalle - deuda.monto) <= 1
+
     await q(d.from("clientes").update({
       deuda_monto: deuda.monto, deuda_descripcion: descripcion, deuda_actualizada_at: new Date().toISOString(),
+      deuda_detalle: detalle,
     }).eq("id", clienteId))
-    await registrar("ccma", "ok", descripcion, deuda.pantalla)
+    await registrar("ccma", "ok", cuadra
+      ? `${descripcion}${detalle ? ` (${detalle.length} períodos con saldo)` : ""}`
+      : `${descripcion} — ojo: los períodos suman ${pesos(sumaDetalle)}`, deuda.pantalla)
     await logActividad(clienteId, `Deuda traída de ARCA — ${descripcion}`, cliente.estudio_id)
     await actualizarHistorialCuotas(deuda).catch((e) =>
       registrar("cuotas", "error", `No se pudo actualizar el historial de cuotas: ${e?.message ?? e}`))
+  }
+
+  // Planes de Mis Facilidades → planes_pago (se emparejan por número; nunca se borra nada).
+  async function traerFacilidades(page: Page) {
+    const { planes, pantalla } = await consultarFacilidades(page, cliente.cuit)
+    const existentes = (await q(d.from("planes_pago").select("id,numero_plan").eq("cliente_id", clienteId))) ?? []
+    const porNumero = new Map(existentes.map((p: any) => [String(p.numero_plan ?? "").replace(/\W/g, "").toUpperCase(), p]))
+    const ahora = new Date().toISOString()
+    let nuevos = 0
+    for (const plan of planes) {
+      const estado = estadoPlan(plan.estado)
+      const datos: Record<string, unknown> = Object.fromEntries(Object.entries({
+        estado_arca: plan.estado, estado, nombre_plan: plan.tipo, fecha_consolidacion: plan.consolidacion,
+        total_cuotas: plan.cuotas, cuotas_pagas: plan.cuotasPagas, proximo_venc: plan.proximoVenc,
+        arca_actualizado_at: ahora,
+      }).filter(([, v]) => v !== null && v !== undefined))
+      const actual = porNumero.get(plan.numero.replace(/\W/g, "").toUpperCase())
+      if (actual) {
+        await q(d.from("planes_pago").update(datos).eq("id", actual.id))
+      } else {
+        await q(d.from("planes_pago").insert({
+          ...datos, cliente_id: clienteId, estudio_id: cliente.estudio_id, numero_plan: plan.numero,
+          organismo: "ARCA", fuente: "arca", estado: estado ?? "activo",
+        }))
+        nuevos++
+      }
+    }
+    await registrar("facilidades", "ok", planes.length
+      ? `${planes.length} planes en Mis Facilidades (${nuevos} nuevos): ${planes.map((p) => `${p.numero}${p.estado ? ` ${p.estado}` : ""}`).join(" · ")}`
+      : "Sin planes en Mis Facilidades", pantalla)
   }
 
   // Con la clave fiscal cargada, ARCA dice qué meses se deben: el historial deja de ser manual.
@@ -277,8 +339,8 @@ export async function sincronizarCliente(clienteId: string, anio: number, mes: n
       const page = await browser.newPage({ acceptDownloads: true })
       await ingresar(page, cliente.cuit, clave)
 
-      // Comprobantes y deuda fallan por separado: si una parte falla, la otra se guarda igual.
-      const comprobantes = [...pendientes].filter((t): t is TipoComprobantes => t !== "ccma")
+      // Comprobantes, deuda y planes fallan por separado: si una parte falla, las otras se guardan igual.
+      const comprobantes = [...pendientes].filter((t): t is TipoComprobantes => t === "emitidos" || t === "recibidos")
       if (comprobantes.length) {
         try {
           const mc = await abrirMisComprobantes(page)
@@ -289,7 +351,7 @@ export async function sincronizarCliente(clienteId: string, anio: number, mes: n
           }
           if (mc !== page) await mc.close().catch(() => {})
         } catch (e) {
-          await fallar([...pendientes].filter((t) => t !== "ccma"), e)
+          await fallar([...pendientes].filter((t) => t === "emitidos" || t === "recibidos"), e)
         }
       }
       if (pendientes.has("ccma")) {
@@ -298,6 +360,14 @@ export async function sincronizarCliente(clienteId: string, anio: number, mes: n
           pendientes.delete("ccma")
         } catch (e) {
           await fallar(["ccma"], e)
+        }
+      }
+      if (pendientes.has("facilidades")) {
+        try {
+          await traerFacilidades(page)
+          pendientes.delete("facilidades")
+        } catch (e) {
+          await fallar(["facilidades"], e)
         }
       }
     } catch (e) {

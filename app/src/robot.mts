@@ -1,5 +1,5 @@
 import type { Browser, Locator, Page } from "playwright-core"
-import { type MesCcma, movimientosCcma, parseMonto, saldosPorPeriodo } from "./parsers.mts"
+import { type MesCcma, type PlanArca, leerPlanesFacilidades, movimientosCcma, parseMonto, saldosPorPeriodo } from "./parsers.mts"
 
 // Debe coincidir con la versión de @sparticuz/chromium-min del package.json.
 const CHROMIUM_PACK = "https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.tar"
@@ -21,9 +21,12 @@ export class FalloArca extends Error {
 }
 
 export async function abrirNavegador(): Promise<Browser> {
-  // Netlify corre Node 24 sobre Amazon Linux 2023, pero chromium-min 131 solo descomprime
-  // las librerías de AL2023 si ve "20.x" (con 24.x usa las de AL2 y Chromium no arranca).
-  process.env.AWS_EXECUTION_ENV = "AWS_Lambda_nodejs20.x"
+  // chromium-min 131 elige las librerías por la versión de Node de Lambda: con 18.x usa las de
+  // Amazon Linux 2 y solo reconoce "20.x" para las de AL2023. Node 22+ también corre sobre AL2023,
+  // así que se lo presenta como 20.x (si no, Chromium no arranca). Debe hacerse antes del import.
+  const runtime = process.env.AWS_EXECUTION_ENV ?? ""
+  const version = Number(runtime.match(/nodejs(\d+)/)?.[1] ?? 0)
+  if (version >= 22) process.env.AWS_EXECUTION_ENV = "AWS_Lambda_nodejs20.x"
   const { default: chromium } = await import("@sparticuz/chromium-min")
   const { chromium: pw } = await import("playwright-core")
   const executablePath = await chromium.executablePath(CHROMIUM_PACK)
@@ -369,6 +372,31 @@ async function leerDeudaCcma(page: Page, cuit: string): Promise<DeudaCcma & { pa
   }
   const pesosAr = monto.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   return { monto, detalle: `${m[1]}: $${pesosAr}`, pantalla, saldos, meses, pagina: ccma }
+}
+
+// Mis Facilidades: planes de pago del contribuyente (solo consulta).
+export async function consultarFacilidades(page: Page, cuit: string): Promise<{ planes: PlanArca[]; pantalla: string }> {
+  const mf = await abrirServicio(page, /^\s*Mis Facilidades\s*$/i, "Mis Facilidades")
+  await elegirContribuyente(mf, cuit)
+
+  let planes = leerPlanesFacilidades(await tablasDe(mf))
+  if (!planes) {
+    const paso = /consult(a|ar)?\b.*planes?|planes presentados|mis planes|^\s*planes\s*$/i
+    const el = await primeroVisible([
+      mf.getByRole("link", { name: paso }), mf.getByRole("button", { name: paso }), mf.getByRole("menuitem", { name: paso }),
+    ], 8000)
+    if (el && !PROHIBIDO.test((await el.innerText().catch(() => "")) || "")) {
+      await el.click()
+      await mf.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
+      planes = leerPlanesFacilidades(await tablasDe(mf))
+    }
+  }
+  const pantalla = (await textoVisible(mf)).replace(/\s+/g, " ")
+  if (!planes) {
+    if (/no (posee|tiene|registra|existen?|se encontraron) planes|sin planes/i.test(pantalla)) return { planes: [], pantalla }
+    throw new FalloArca("error", `No encontré la lista de planes en Mis Facilidades (${mf.url()}). Pantalla: ${pantalla.slice(0, 400)} — Botones: ${await describirClickeables(mf)}`)
+  }
+  return { planes, pantalla }
 }
 
 // Datos para diagnosticar un fallo: URL, texto visible y captura (nunca valores de campos).
