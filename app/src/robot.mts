@@ -166,8 +166,8 @@ export async function elegirContribuyente(mc: Page, cuit: string) {
 
 // Devuelve el Excel exportado por Mis Comprobantes, o null si no hubo comprobantes en el período.
 // El selector de fechas arranca en un solo día y el formulario solo toma el período cuando se
-// "aplica" (escribir en el campo no alcanza). Se intenta como lo haría una persona.
-async function ponerPeriodo(mc: Page, desde: string, hasta: string, esMesPasado: boolean) {
+// "aplica" (escribir en el campo no alcanza). Se usa su API y, si no, "Rango Personalizado".
+async function ponerPeriodo(mc: Page, desde: string, hasta: string) {
   const fecha = mc.locator("#fechaEmision")
   await fecha.waitFor({ timeout: T })
   const rango = `${desde} - ${hasta}`
@@ -176,16 +176,6 @@ async function ponerPeriodo(mc: Page, desde: string, hasta: string, esMesPasado:
   const aplicar = async () => {
     const boton = mc.locator(`${selector} .applyBtn`)
     if (await boton.isVisible().catch(() => false)) await boton.click()
-  }
-
-  if (esMesPasado) {
-    await fecha.click()
-    const atajo = mc.locator(`${selector} .ranges li`, { hasText: /^\s*Mes Pasado\s*$/i }).first()
-    if (await atajo.isVisible().catch(() => false)) {
-      await atajo.click()
-      await aplicar()
-      if (await quedo()) return
-    }
   }
 
   const conApi = await mc.evaluate(([d, h]) => {
@@ -216,7 +206,7 @@ async function ponerPeriodo(mc: Page, desde: string, hasta: string, esMesPasado:
 }
 
 export async function bajarComprobantes(
-  mc: Page, tipo: TipoComprobantes, desde: string, hasta: string, esMesPasado = false,
+  mc: Page, tipo: TipoComprobantes, desde: string, hasta: string,
 ): Promise<Uint8Array | null> {
   const nombre = tipo === "emitidos" ? /emitidos/i : /recibidos/i
   const opciones = () => [
@@ -240,7 +230,7 @@ export async function bajarComprobantes(
   await boton.click()
 
   const rango = `${desde} - ${hasta}`
-  await ponerPeriodo(mc, desde, hasta, esMesPasado)
+  await ponerPeriodo(mc, desde, hasta)
 
   const buscar = await primeroVisible([mc.locator("#buscarComprobantes"), mc.getByRole("button", { name: /^\s*buscar\s*$/i })])
   if (!buscar) throw new FalloArca("error", `No encontré el botón Buscar en Mis Comprobantes. Botones: ${await describirClickeables(mc)}`)

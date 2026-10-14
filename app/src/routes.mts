@@ -4,7 +4,7 @@ import {
 } from "./core.mts"
 import { buscarEnConstancia, buscarEnPadron, certPem, cuitContador, keyPem, serviciosCacheados } from "./arca.mts"
 import { cifrarClave, exigirSesionPortal, firmarTokenPortal } from "./secretos.mts"
-import { TIPOS, despacharSincronizacion, mesAnterior } from "./sincronizacion.mts"
+import { TIPOS, despacharSincronizacion, mesActual } from "./sincronizacion.mts"
 import { getStore } from "@netlify/blobs"
 import {
   aNumero, fechaExcelIso, leerExcel, parseArNumber, parseNumPuntos, pdfTablas, pdfTexto,
@@ -1241,12 +1241,10 @@ const sincronizarArcaAhora: Handler = async ({ req, p }) => {
   const cliente = await clientePorSlug(p.slug, estudioId)
   const cred = await q(db().from("credenciales_arca").select("cliente_id").eq("cliente_id", cliente.id).maybeSingle())
   if (!cred) throw new HttpError(400, "El cliente no tiene clave fiscal cargada")
-  const data = await body(req).catch(() => ({} as Record<string, any>))
-  const periodo = Number.isInteger(data.anio) && Number.isInteger(data.mes) && data.mes >= 1 && data.mes <= 12
-    ? { anio: data.anio as number, mes: data.mes as number }
-    : mesAnterior()
-  await despacharSincronizacion(new URL(req.url).origin, cliente.id, periodo.anio, periodo.mes, TIPOS)
-  return { ok: true, ...periodo }
+  // Últimos 12 meses hasta hoy, igual que el cron.
+  const { anio, mes } = mesActual()
+  await despacharSincronizacion(new URL(req.url).origin, cliente.id, anio, mes, TIPOS)
+  return { ok: true, anio, mes }
 }
 
 const capturaArca: Handler = async ({ req, p }) => {

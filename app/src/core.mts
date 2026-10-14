@@ -61,6 +61,12 @@ export function hoy() {
   const n = new Date()
   return { y: n.getUTCFullYear(), m: n.getUTCMonth() + 1, d: n.getUTCDate() }
 }
+// Fecha en Argentina (UTC-3, sin horario de verano): la que usa ARCA en sus formularios.
+export function hoyArgentina() {
+  const n = new Date(Date.now() - 3 * 3_600_000)
+  return { y: n.getUTCFullYear(), m: n.getUTCMonth() + 1, d: n.getUTCDate() }
+}
+
 export const hoyIso = () => {
   const t = hoy()
   return isoDate(t.y, t.m, t.d)

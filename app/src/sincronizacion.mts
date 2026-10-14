@@ -1,6 +1,6 @@
 import type { Browser } from "playwright-core"
 import { getStore } from "@netlify/blobs"
-import { db, diasEnMes, hoy, logActividad, q } from "./core.mts"
+import { db, diasEnMes, hoyArgentina, logActividad, q } from "./core.mts"
 import { descifrarClave, firmarTrabajo, trabajoValido } from "./secretos.mts"
 import { totalesComprobantesPorMes } from "./parsers.mts"
 import {
@@ -12,9 +12,24 @@ export const TIPOS: TipoComprobantes[] = ["emitidos", "recibidos"]
 const TABLA: Record<TipoComprobantes, "facturacion" | "gastos"> = { emitidos: "facturacion", recibidos: "gastos" }
 const REINTENTOS = 3
 
-export function mesAnterior() {
-  const t = hoy()
-  return t.m === 1 ? { anio: t.y - 1, mes: 12 } : { anio: t.y, mes: t.m - 1 }
+export function mesActual() {
+  const t = hoyArgentina()
+  return { anio: t.y, mes: t.m }
+}
+
+// Últimos 12 meses que terminan en (anio, mes): del día 1 de hace 11 meses hasta hoy (o fin de ese mes).
+// El selector de ARCA admite como máximo 365 días.
+function periodo12Meses(anio: number, mes: number) {
+  const indice = anio * 12 + (mes - 1) - 11
+  const inicio = { anio: Math.floor(indice / 12), mes: (indice % 12) + 1 }
+  const t = hoyArgentina()
+  const ultimoDia = anio === t.y && mes === t.m ? t.d : diasEnMes(anio, mes)
+  return {
+    inicio,
+    desde: `01/${pad(inicio.mes)}/${inicio.anio}`,
+    hasta: `${pad(ultimoDia)}/${pad(mes)}/${anio}`,
+    texto: `${pad(inicio.mes)}/${inicio.anio} a ${pad(mes)}/${anio}`,
+  }
 }
 
 const contenidoTrabajo = (clienteId: string, anio: number, mes: number, tipos: TipoComprobantes[]) =>
@@ -61,11 +76,11 @@ export async function sincronizarComprobantes(clienteId: string, anio: number, m
       cliente_id: clienteId, estudio_id: cliente.estudio_id, tipo, anio, mes, estado, detalle: limpiar(detalle),
     }))
 
-  const desde = `01/${pad(mes)}/${anio}`
-  const hasta = `${diasEnMes(anio, mes)}/${pad(mes)}/${anio}`
+  const periodo = periodo12Meses(anio, mes)
+  const clave12 = (a: number, m: number) => a * 12 + m
+  const enPeriodo = (a: number, m: number) =>
+    clave12(a, m) >= clave12(periodo.inicio.anio, periodo.inicio.mes) && clave12(a, m) <= clave12(anio, mes)
   const pendientes = new Set(tipos)
-  const anterior = mesAnterior()
-  const esMesPasado = anterior.anio === anio && anterior.mes === mes
 
   for (let intento = 1; intento <= REINTENTOS && pendientes.size; intento++) {
     let browser: Browser | null = null
@@ -76,28 +91,28 @@ export async function sincronizarComprobantes(clienteId: string, anio: number, m
       const mc = await abrirMisComprobantes(page)
       await elegirContribuyente(mc, cliente.cuit)
       for (const tipo of [...pendientes]) {
-        const excel = await bajarComprobantes(mc, tipo, desde, hasta, esMesPasado)
+        const excel = await bajarComprobantes(mc, tipo, periodo.desde, periodo.hasta)
         const totales = excel ? totalesComprobantesPorMes(excel) : []
         const etiqueta = tipo === "emitidos" ? "Facturación" : "Gastos"
-        const otros = totales.filter((t) => t.anio !== anio || t.mes !== mes)
-        if (otros.length) {
-          throw new FalloArca("error", `El Excel de ${etiqueta.toLowerCase()} trajo otros meses (${otros.map((t) => `${t.mes}/${t.anio}`).join(", ")}); no se guardó nada`)
+        const fuera = totales.filter((t) => !enPeriodo(t.anio, t.mes))
+        if (fuera.length) {
+          throw new FalloArca("error", `El Excel de ${etiqueta.toLowerCase()} trajo meses fuera de ${periodo.texto} (${fuera.map((t) => `${t.mes}/${t.anio}`).join(", ")}); no se guardó nada`)
         }
-        const monto = totales.reduce((a, t) => a + t.monto, 0)
-        const existente = await q(
-          d.from(TABLA[tipo]).select("monto").eq("cliente_id", clienteId).eq("anio", anio).eq("mes", mes).maybeSingle(),
-        )
-        if (!totales.length && Number(existente?.monto) > 0) {
-          await registrar(tipo, "ok", `${etiqueta} ${pad(mes)}/${anio}: ARCA no muestra comprobantes; se mantiene lo cargado (${pesos(Number(existente.monto))})`)
-          pendientes.delete(tipo)
-          continue
+        // Igual que la importación manual: solo se escriben los meses que tienen comprobantes.
+        if (totales.length) {
+          await q(d.from(TABLA[tipo]).upsert(
+            totales.map((t) => ({
+              cliente_id: clienteId, estudio_id: cliente.estudio_id, anio: t.anio, mes: t.mes, monto: t.monto, fuente: "arca_robot",
+            })),
+            { onConflict: "cliente_id,anio,mes" },
+          ))
         }
-        await q(d.from(TABLA[tipo]).upsert(
-          { cliente_id: clienteId, estudio_id: cliente.estudio_id, anio, mes, monto, fuente: "arca_robot" },
-          { onConflict: "cliente_id,anio,mes" },
-        ))
-        await registrar(tipo, "ok", `${etiqueta} ${pad(mes)}/${anio}: ${pesos(monto)}`)
-        await logActividad(clienteId, `${etiqueta} ${pad(mes)}/${anio} traída de ARCA — ${pesos(monto)}`, cliente.estudio_id)
+        const total = totales.reduce((a, t) => a + t.monto, 0)
+        const resumen = totales.length
+          ? `${totales.length} meses con comprobantes, total ${pesos(total)}`
+          : "ARCA no muestra comprobantes en el período"
+        await registrar(tipo, "ok", `${etiqueta} ${periodo.texto}: ${resumen}`)
+        await logActividad(clienteId, `${etiqueta} ${periodo.texto} traída de ARCA — ${resumen}`, cliente.estudio_id)
         pendientes.delete(tipo)
       }
     } catch (e) {
@@ -113,7 +128,7 @@ export async function sincronizarComprobantes(clienteId: string, anio: number, m
         }
         await q(d.from("alertas").insert({
           cliente_id: clienteId, estudio_id: cliente.estudio_id, tipo: "arca", icono: "🏛️", leida: false,
-          titulo: `ARCA: no se pudieron traer los comprobantes de ${pad(mes)}/${anio}`,
+          titulo: `ARCA: no se pudieron traer los comprobantes de ${periodo.texto}`,
           descripcion: limpiar(fallo.message),
         })).catch((e) => console.error(`[arca-sync] no se pudo crear la alerta: ${e?.message ?? e}`))
         break
