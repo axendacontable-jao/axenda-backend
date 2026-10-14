@@ -246,9 +246,13 @@ export async function sincronizarCliente(clienteId: string, anio: number, mes: n
     const t = hoyArgentina()
     const hoyStr = isoDate(t.y, t.m, t.d)
     const { anticipos, regimen, inscripcion, pantalla } = await consultarCuentaArt(art, t.y - 3)
+    // "intereses": el anticipo se pagó fuera de término y quedó un resto (ART imputa primero los intereses).
     const conEstado = anticipos.map((p) => {
       const aVencer = !!p.vencimiento && p.vencimiento >= hoyStr
-      return { ...p, a_vencer: aVencer, estado: p.saldo <= 1 ? "pagada" : aVencer ? "a_vencer" : "vencida" }
+      const estado = p.saldo <= 1 ? "pagada"
+        : p.impuesto > 0 && p.pagado >= p.impuesto - p.deducciones - 1 ? "intereses"
+        : aVencer ? "a_vencer" : "vencida"
+      return { ...p, a_vencer: aVencer, estado }
     })
     const detalle = conEstado.filter((p) => p.saldo > 1)
     const impagos = detalle.filter((p) => !p.a_vencer)
@@ -278,7 +282,7 @@ export async function sincronizarCliente(clienteId: string, anio: number, mes: n
 
     const periodo = (k: string) => `${k.slice(5)}/${k.slice(0, 4)}`
     const resumen = impagos.length
-      ? `deuda ${pesos(deuda)} (${impagos.length} anticipos impagos: ${impagos.map((p) => periodo(p.periodo)).join(", ")})`
+      ? `deuda ${pesos(deuda)} (${impagos.length} períodos con deuda: ${impagos.map((p) => periodo(p.periodo)).join(", ")})`
       : "sin deuda"
     const descripcion = `ART Río Negro al ${ddmmaaaa(t.y, t.m, t.d)} — ${inscripcion ?? "Ingresos Brutos"}: ${resumen}`
     await registrar("art", "ok", `${descripcion}${regimen ? ` · ${regimen}` : ""} · ${anticipos.length} períodos leídos`, pantalla)

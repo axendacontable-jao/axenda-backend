@@ -608,7 +608,8 @@ export async function consultarCuentaArt(art: Page, desdeAnio: number): Promise<
   return { anticipos, regimen, inscripcion, pantalla }
 }
 
-// Planes de pago de ART desde el menú lateral (solo consulta). Devuelve null si no encontró la lista.
+// Planes de pago de ART: menú lateral "Planes de Pago" → "Consulta de Planes de Pago" (solo consulta).
+// Devuelve null si no encontró la lista.
 export async function consultarPlanesArt(art: Page, panel: string): Promise<{ planes: PlanArca[] | null; pantalla: string }> {
   if (art.url() !== panel) {
     await art.goto(panel, { timeout: T }).catch(() => {})
@@ -618,38 +619,75 @@ export async function consultarPlanesArt(art: Page, panel: string): Promise<{ pl
   let elegido: Locator | null = null
   for (let i = 0, n = await candidatos.count(); i < n; i++) {
     const texto = ((await candidatos.nth(i).textContent().catch(() => "")) ?? "").replace(/\s+/g, " ").trim()
-    if (!texto || texto.length > 60 || ART_PROHIBIDO.test(texto) || /adhe|nuevo|reformul/i.test(texto)) continue
-    if (!elegido || /consult|mis planes|vigentes/i.test(texto)) elegido = candidatos.nth(i)
-    if (/consult/i.test(texto)) break
+    if (!texto || texto.length > 60 || ART_PROHIBIDO.test(texto) || /adhe|nuevo|reformul|simul/i.test(texto)) continue
+    if (/^consulta de planes de pago$/i.test(texto)) { elegido = candidatos.nth(i); break }
+    if (!elegido || /consult/i.test(texto)) elegido = candidatos.nth(i)
   }
   if (!elegido) {
-    throw new FalloArca("error", `No encontré la consulta de planes de pago en el menú de ART. Menú: ${await menuDe(art)}`)
+    throw new FalloArca("error", `No encontré "Consulta de Planes de Pago" en el menú de ART. Menú: ${await menuDe(art)}`)
   }
   const nombre = ((await elegido.textContent()) ?? "").replace(/\s+/g, " ").trim()
   await tocarEnArt(elegido, "planes de pago")
   await art.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
 
-  // La lista puede quedar en la misma pantalla, en un marco o en otra pestaña.
-  let planes: PlanArca[] | null = null
-  let pantalla = ""
-  for (let intento = 0; intento < 10 && !planes; intento++) {
-    await new Promise((r) => setTimeout(r, 1500))
-    for (const p of art.context().pages()) {
-      for (const f of p.frames()) {
-        const leidos = leerPlanesFacilidades(await tablasDe(f))
-        if (leidos && (!planes || leidos.length > planes.length)) {
-          planes = leidos
-          pantalla = (await textoVisible(f)).replace(/\s+/g, " ")
-        }
-      }
-    }
+  // La lista puede quedar en la misma pantalla, en un marco o en otra pestaña de ART. Se descartan las
+  // pestañas de ARCA (Mis Facilidades también tiene una tabla de planes) y la cuenta corriente que quedó
+  // abierta (su grilla también tiene "Nro. Plan Pago").
+  const marcos = async () => {
+    const todos = art.context().pages().flatMap((p) => p.frames()).filter((f) => /rionegro\.gov\.ar/i.test(f.url()))
+    const utiles: Frame[] = []
+    for (const f of todos) if (!/cuenta corriente de iibb/i.test(await textoVisible(f))) utiles.push(f)
+    return utiles
   }
-  if (!planes) {
-    const textos = await Promise.all(art.context().pages().flatMap((p) => p.frames()).map((f) => textoVisible(f)))
+  const leer = async () => {
+    let mejor: { planes: PlanArca[]; marco: Frame } | null = null
+    for (const f of await marcos()) {
+      const tablas = (await tablasDe(f)).filter((t) => !t.some((fila) => fila.some((c) => c.length < 30 && /posic/i.test(c))))
+      const leidos = leerPlanesFacilidades(tablas)
+      if (leidos && (!mejor || leidos.length > mejor.planes.length)) mejor = { planes: leidos, marco: f }
+    }
+    return mejor
+  }
+  const esperarLista = async (veces: number) => {
+    let r: Awaited<ReturnType<typeof leer>> = null
+    for (let i = 0; i < veces && !r?.planes.length; i++) {
+      await new Promise((res) => setTimeout(res, 1500))
+      r = await leer()
+    }
+    return r
+  }
+
+  let r = await esperarLista(6)
+  let paso = ""
+  if (!r?.planes.length) {
+    // Como la cuenta corriente, puede pedir elegir la inscripción y "Consultar" antes de mostrar la lista.
+    for (const f of await marcos()) {
+      const boton = f.getByRole("button", { name: /^\s*consultar\s*$/i }).or(f.locator("input[value='Consultar' i]")).first()
+      if (!(await boton.isVisible().catch(() => false))) continue
+      const listas = f.locator("select")
+      for (let i = 0, n = await listas.count(); i < n; i++) {
+        const valor = await listas.nth(i).evaluate((el) =>
+          [...(el as HTMLSelectElement).options].find((o) => /ingr\w*\.?\s*brutos/i.test(o.text))?.value ?? null).catch(() => null)
+        if (valor !== null) await listas.nth(i).selectOption(valor).catch(() => {})
+      }
+      await tocarEnArt(boton, "planes de pago")
+      await f.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
+      paso = " [consultar]"
+      break
+    }
+    r = await esperarLista(10)
+  }
+
+  let pantalla: string
+  let planes: PlanArca[] | null = r?.planes ?? null
+  if (r) {
+    pantalla = (await textoVisible(r.marco)).replace(/\s+/g, " ")
+  } else {
+    const textos = await Promise.all((await marcos()).map((f) => textoVisible(f)))
     pantalla = textos.map((t) => t.replace(/\s+/g, " ")).filter(Boolean).join(" || ")
     if (/no (posee|tiene|registra|existen?|se encontraron) planes|sin planes/i.test(pantalla)) planes = []
   }
-  return { planes, pantalla: `[menú: ${nombre}] ${pantalla}` }
+  return { planes, pantalla: `[menú: ${nombre}${paso}] ${pantalla}` }
 }
 
 // Datos para diagnosticar un fallo: URL, texto visible y captura (nunca valores de campos).

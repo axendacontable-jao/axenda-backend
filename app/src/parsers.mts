@@ -344,14 +344,18 @@ export function leerPlanesFacilidades(tablas: string[][][]): PlanArca[] | null {
 // ── ART Río Negro: cuenta corriente de Ingresos Brutos ───────────────────────
 
 export type AnticipoArt = {
-  periodo: string; concepto: string; vencimiento: string | null; plan: string | null
-  impuesto: number; deducciones: number; pagado: number; intereses: number; saldo: number
+  periodo: string; concepto: string; vencimiento: string | null; plan: string | null; ultimoPago: string | null
+  impuesto: number; deducciones: number; pagado: number; nominal: number; intereses: number; saldo: number
+  estadoArt: string | null
 }
 
 // Grilla "Consulta de Cuenta Corriente de IIBB": Concepto | Posic. Fiscal (2026/9) | Vencimiento |
-// Nro. Plan Pago | Impuesto | Deducciones(1) | Impuesto Pagado | … La grilla tiene scroll, así que el
-// encabezado puede venir en una tabla aparte: se alinea por la columna de posición fiscal.
-// Agrupa por período ("YYYY-MM"), del más reciente al más viejo. null si no está la grilla.
+// Nro. Plan Pago | Impuesto | Deducciones(1) | Impuesto Pagado | Último Pago | Deuda Nominal | Intereses |
+// Rec. por Simple Mora | Deuda Actual | Régimen por Obligación | Estado. Un pago fuera de término se imputa
+// primero a intereses y deja un resto de capital: lo que se debe es la "Deuda Actual" (si no está, se
+// calcula). La grilla tiene scroll, así que el encabezado puede venir en una tabla aparte: se alinea por
+// la columna de posición fiscal. Agrupa por período ("YYYY-MM"), del más reciente al más viejo.
+// null si no está la grilla.
 export function leerCuentaCorrienteArt(tablas: string[][][]): AnticipoArt[] | null {
   const esPosicion = (c: string) => /^\d{4}\s*\/\s*\d{1,2}$/.test(c.trim())
   const esFecha = (c: string) => /^\d{2}\/\d{2}\/\d{4}$/.test(c.trim())
@@ -376,7 +380,9 @@ export function leerCuentaCorrienteArt(tablas: string[][][]): AnticipoArt[] | nu
   const hPos = col(/posic/)
   const cols = {
     concepto: col(/concepto/), venc: col(/vencim/), plan: col(/plan/), impuesto: col(/impuesto/, /pagad/),
-    deducciones: col(/deducc/), pagado: col(/pagad/), intereses: col(/inter[eé]s|recargo/), saldo: col(/saldo/),
+    deducciones: col(/deducc/), pagado: col(/pagad/), ultimoPago: col(/[uú]ltimo pago/), nominal: col(/nominal/),
+    intereses: col(/inter[eé]s/), recargo: col(/recargo|rec\.? por|mora/), saldo: col(/deuda actual|saldo/),
+    estado: col(/^estado|^esta/),
   }
 
   const meses = new Map<string, AnticipoArt>()
@@ -395,21 +401,31 @@ export function leerCuentaCorrienteArt(tablas: string[][][]): AnticipoArt[] | nu
     const impuesto = monto(cols.impuesto, iVenc + 2)
     const deducciones = monto(cols.deducciones, iVenc + 3)
     const pagado = monto(cols.pagado, iVenc + 4)
-    const intereses = monto(cols.intereses, -1)
+    const intereses = monto(cols.intereses, -1) + monto(cols.recargo, -1)
+    const nominalTxt = en(cols.nominal, -1)
+    const nominal = nominalTxt ? (parseMonto(nominalTxt) ?? 0) : Math.max(impuesto - deducciones - pagado, 0)
     const saldoTxt = en(cols.saldo, -1)
-    const saldo = saldoTxt ? (parseMonto(saldoTxt) ?? 0) : Math.max(impuesto - deducciones - pagado, 0) + intereses
+    const saldo = saldoTxt ? (parseMonto(saldoTxt) ?? 0) : nominal + intereses
     const plan = en(cols.plan, iVenc + 1)
     const vencimiento = fechaDdmmIso(en(cols.venc, iVenc))
+    const ultimoPago = fechaDdmmIso(en(cols.ultimoPago, -1))
+    const estadoArt = en(cols.estado, -1) || null
 
     const k = `${a}-${String(m).padStart(2, "0")}`
-    const p = meses.get(k) ?? { periodo: k, concepto: "", vencimiento: null, plan: null, impuesto: 0, deducciones: 0, pagado: 0, intereses: 0, saldo: 0 }
+    const p = meses.get(k) ?? {
+      periodo: k, concepto: "", vencimiento: null, plan: null, ultimoPago: null,
+      impuesto: 0, deducciones: 0, pagado: 0, nominal: 0, intereses: 0, saldo: 0, estadoArt: null,
+    }
     const concepto = en(cols.concepto, iPos - 1)
     if (concepto && !p.concepto.includes(concepto)) p.concepto = p.concepto ? `${p.concepto} · ${concepto}` : concepto
     if (vencimiento && (!p.vencimiento || vencimiento < p.vencimiento)) p.vencimiento = vencimiento
     if (plan && !/^0*$/.test(plan)) p.plan ??= plan
+    if (ultimoPago && (!p.ultimoPago || ultimoPago > p.ultimoPago)) p.ultimoPago = ultimoPago
+    if (estadoArt && !(p.estadoArt ?? "").includes(estadoArt)) p.estadoArt = p.estadoArt ? `${p.estadoArt} · ${estadoArt}` : estadoArt
     p.impuesto = redondear(p.impuesto + impuesto)
     p.deducciones = redondear(p.deducciones + deducciones)
     p.pagado = redondear(p.pagado + pagado)
+    p.nominal = redondear(p.nominal + nominal)
     p.intereses = redondear(p.intereses + intereses)
     p.saldo = redondear(p.saldo + saldo)
     meses.set(k, p)
