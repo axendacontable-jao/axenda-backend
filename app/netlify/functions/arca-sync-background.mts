@@ -2,6 +2,8 @@ import type { Config } from "@netlify/functions"
 import { pedidoValido, sincronizarCliente } from "../../src/sincronizacion.mts"
 
 // Corre el robot de ARCA para un cliente. Lo disparan el cron mensual o el botón del admin.
+// El sufijo "-background" del archivo es necesario además de config.background: la CLI con la que
+// se hacen los deploys de prueba no reconoce la opción y ejecutaba el robot en forma sincrónica.
 export default async (req: Request) => {
   const pedido = await req.json().catch(() => null)
   if (!pedidoValido(pedido)) {
