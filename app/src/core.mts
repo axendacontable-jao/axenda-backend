@@ -41,7 +41,7 @@ export async function clientePorSlug(slug: string, estudioId: string, cols = "id
 
 export async function logActividad(clienteId: unknown, mensaje: string, estudioId?: string | null) {
   try {
-    const row: Record<string, unknown> = { cliente_id: clienteId, tipo: "actividad", mensaje, leida: true }
+    const row: Record<string, unknown> = { cliente_id: clienteId, tipo: "actividad", titulo: mensaje, leida: true }
     if (estudioId) row.estudio_id = estudioId
     await db().from("alertas").insert(row)
   } catch {

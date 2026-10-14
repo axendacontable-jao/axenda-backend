@@ -98,9 +98,10 @@ export async function sincronizarComprobantes(clienteId: string, anio: number, m
           await getStore("arca-capturas").set(clienteId, estadoPagina.captura).catch(() => {})
         }
         await q(d.from("alertas").insert({
-          cliente_id: clienteId, estudio_id: cliente.estudio_id, tipo: "arca", leida: false,
-          mensaje: limpiar(`No se pudieron traer de ARCA los comprobantes de ${pad(mes)}/${anio}: ${fallo.message}`),
-        })).catch(() => {})
+          cliente_id: clienteId, estudio_id: cliente.estudio_id, tipo: "arca", icono: "🏛️", leida: false,
+          titulo: `ARCA: no se pudieron traer los comprobantes de ${pad(mes)}/${anio}`,
+          descripcion: limpiar(fallo.message),
+        })).catch((e) => console.error(`[arca-sync] no se pudo crear la alerta: ${e?.message ?? e}`))
         break
       }
       await esperar(intento * 20_000)

@@ -1112,10 +1112,12 @@ const guardarConfiguracion: Handler = async ({ req }) => {
 const alertasCliente: Handler = async ({ req, p }) => {
   const estudioId = await getEstudioId(req)
   const cliente = await clientePorSlug(p.slug, estudioId)
-  return (await q(
+  const filas = (await q(
     db().from("alertas").select("*").eq("cliente_id", cliente.id).eq("estudio_id", estudioId)
       .order("created_at", { ascending: false }),
   )) ?? []
+  // La tabla guarda titulo/descripcion; el admin muestra "mensaje".
+  return filas.map((a: any) => ({ ...a, mensaje: [a.titulo, a.descripcion].filter(Boolean).join(" — ") }))
 }
 
 const crearAlerta: Handler = async ({ req, p }) => {
@@ -1123,7 +1125,7 @@ const crearAlerta: Handler = async ({ req, p }) => {
   const data = await body(req)
   const cliente = await clientePorSlug(p.slug, estudioId)
   const { data: filas, error } = await db().from("alertas").insert({
-    cliente_id: cliente.id, tipo: get(data, "tipo", "manual"), mensaje: get(data, "mensaje", ""),
+    cliente_id: cliente.id, tipo: get(data, "tipo", "manual"), titulo: get(data, "mensaje", "") || "Alerta",
     leida: false, estudio_id: estudioId,
   }).select()
   if (error) throw new HttpError(500, `Error al crear alerta: ${error.message}`)

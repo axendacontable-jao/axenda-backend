@@ -112,14 +112,56 @@ export async function abrirMisComprobantes(page: Page): Promise<Page> {
   return mc
 }
 
-// Si el CUIT representa a otros contribuyentes, Mis Comprobantes pide elegir a quién.
+const CLICKEABLES = "a, button, [onclick], [role='button'], input[type='submit'], input[type='button']"
+
+// Lista corta de lo que se puede tocar en pantalla, para diagnosticar cuando no aparece un botón.
+export async function describirClickeables(page: Page): Promise<string> {
+  const items = await page.locator(CLICKEABLES).evaluateAll((els) =>
+    els
+      .filter((el) => (el as HTMLElement).offsetParent !== null)
+      .slice(0, 25)
+      .map((el) => {
+        const e = el as HTMLElement
+        const texto = ((e.innerText || (e as HTMLInputElement).value || "") as string).replace(/\s+/g, " ").trim().slice(0, 40)
+        return `${e.tagName.toLowerCase()}${e.id ? "#" + e.id : ""}${e.className && typeof e.className === "string" ? "." + e.className.trim().split(/\s+/).slice(0, 2).join(".") : ""} "${texto}"`
+      }),
+  ).catch(() => [] as string[])
+  return items.join(" | ")
+}
+
+// "Elegí una persona para ingresar": aparece cuando el CUIT puede representar a otros.
+// El CUIT también figura en el encabezado, así que se busca un elemento clickeable fuera de él.
 export async function elegirContribuyente(mc: Page, cuit: string) {
   if (await primeroVisible([mc.locator("#btnEmitidos"), mc.getByText(/emitidos/i)], 5000)) return
-  const fmt = `${cuit.slice(0, 2)}-${cuit.slice(2, 10)}-${cuit.slice(10)}`
-  const opcion = await primeroVisible([mc.getByText(fmt), mc.getByText(cuit)], 10_000)
-  if (!opcion) throw new FalloArca("error", `Mis Comprobantes no muestra el CUIT ${fmt} para elegir`)
-  await opcion.click()
+
+  const candidatos = mc.locator(CLICKEABLES)
+  let elegido: Locator | null = null
+  for (let i = 0, n = await candidatos.count(); i < n && !elegido; i++) {
+    const c = candidatos.nth(i)
+    if (!(await c.isVisible().catch(() => false))) continue
+    const info = await c.evaluate((el) => ({
+      digitos: ((el as HTMLElement).innerText + " " + ((el as HTMLInputElement).value ?? "")).replace(/\D/g, ""),
+      enEncabezado: !!el.closest("nav, header, .navbar"),
+    }))
+    if (!info.enEncabezado && info.digitos.includes(cuit)) elegido = c
+  }
+  if (!elegido) {
+    // Tarjeta que contiene el CUIT (la más interna, que es la última en orden de documento).
+    const fmt = `${cuit.slice(0, 2)}-${cuit.slice(2, 10)}-${cuit.slice(10)}`
+    const tarjetas = mc.locator("li, tr, form, .card, .panel, div").filter({ hasText: fmt })
+    const n = await tarjetas.count()
+    if (n) {
+      const tarjeta = tarjetas.nth(n - 1)
+      const boton = tarjeta.locator(CLICKEABLES).first()
+      elegido = (await boton.count()) ? boton : tarjeta
+    }
+  }
+  if (!elegido) {
+    throw new FalloArca("error", `No pude elegir a ${cuit} en "Elegí una persona". Botones: ${await describirClickeables(mc)}`)
+  }
+  await elegido.click()
   await mc.waitForLoadState("domcontentloaded", { timeout: T }).catch(() => {})
+  await mc.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
 }
 
 // Devuelve el Excel exportado por Mis Comprobantes, o null si no hubo comprobantes en el período.
@@ -132,7 +174,9 @@ export async function bajarComprobantes(
     mc.getByRole("link", { name: nombre }),
     mc.getByRole("button", { name: nombre }),
   ])
-  if (!boton) throw new FalloArca("error", `No encontré el botón "${tipo}" en Mis Comprobantes`)
+  if (!boton) {
+    throw new FalloArca("error", `No encontré el botón "${tipo}" en Mis Comprobantes. Botones: ${await describirClickeables(mc)}`)
+  }
   await boton.click()
 
   const fecha = mc.locator("#fechaEmision")
@@ -142,7 +186,7 @@ export async function bajarComprobantes(
   await mc.locator(".daterangepicker .applyBtn").first().click({ timeout: 2000 }).catch(() => {})
 
   const buscar = await primeroVisible([mc.locator("#buscarComprobantes"), mc.getByRole("button", { name: /^\s*buscar\s*$/i })])
-  if (!buscar) throw new FalloArca("error", "No encontré el botón Buscar en Mis Comprobantes")
+  if (!buscar) throw new FalloArca("error", `No encontré el botón Buscar en Mis Comprobantes. Botones: ${await describirClickeables(mc)}`)
   await buscar.click()
   await mc.waitForLoadState("networkidle", { timeout: 60_000 }).catch(() => {})
 
@@ -165,7 +209,7 @@ export async function capturarEstado(browser: Browser | null) {
   if (!page) return null
   return {
     url: page.url(),
-    texto: resumen(await textoVisible(page)).slice(0, 300),
+    texto: resumen(await textoVisible(page)),
     captura: await page.screenshot({ type: "jpeg", quality: 50, fullPage: false }).then((b) => b.toString("base64")).catch(() => null),
   }
 }
