@@ -30,6 +30,13 @@ export async function abrirNavegador(): Promise<Browser> {
   const { default: chromium } = await import("@sparticuz/chromium-min")
   const { chromium: pw } = await import("playwright-core")
   const executablePath = await chromium.executablePath(CHROMIUM_PACK)
+  // chromium-min fija LD_LIBRARY_PATH al cargarse; según cómo se empaquetó la función eso puede
+  // pasar antes del ajuste de arriba y apuntar a /tmp/al2/lib. Se fuerza la carpeta que corresponde.
+  if (version) {
+    const libs = version >= 20 ? "/tmp/al2023/lib" : "/tmp/al2/lib"
+    const otras = (process.env.LD_LIBRARY_PATH ?? "").split(":").filter((p) => p && !/^\/tmp\/al2(023)?\/lib$/.test(p))
+    process.env.LD_LIBRARY_PATH = [libs, ...otras].join(":")
+  }
   return pw.launch({ executablePath, args: chromium.args, headless: true })
 }
 
