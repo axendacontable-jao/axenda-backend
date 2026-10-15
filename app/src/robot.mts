@@ -101,18 +101,32 @@ export async function ingresar(page: Page, cuit: string, clave: string) {
   }
 }
 
-// Abre un servicio del portal "Mi ARCA" (suelen abrirse en otra pestaña).
-async function abrirServicio(page: Page, nombre: RegExp, busqueda: string): Promise<Page> {
+// Busca un servicio en el portal "Mi ARCA": primero en la portada ("Más utilizados"), después con el
+// buscador "¿Qué necesitás? | Buscá trámites y servicios" (hay que tipearlo: la lista de resultados
+// aparece con el teclado) y por último en "Mis servicios".
+async function buscarServicio(page: Page, nombre: RegExp, busqueda: string): Promise<Locator> {
   if (!PORTAL.test(page.url())) await page.goto(PORTAL_URL, { timeout: T }).catch(() => {})
   await page.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
   const servicio = () => page.getByText(nombre)
 
   let enlace = await primeroVisible([servicio()], 10_000)
+  let buscadorVisto = "sin buscador"
   if (!enlace) {
-    const buscador = page.locator("input[type='search'], input[placeholder*='usc' i]")
-    if (await buscador.first().isVisible().catch(() => false)) {
-      await buscador.first().fill(busqueda)
-      enlace = await primeroVisible([servicio()], 10_000)
+    const buscador = await primeroVisible([
+      page.getByRole("searchbox"), page.getByPlaceholder(/busc|necesit/i), page.getByRole("combobox"),
+      page.locator("input[type='search'], input[type='text']"),
+    ], 8000)
+    if (buscador) {
+      buscadorVisto = `buscador ${await buscador.evaluate((e) => `${e.tagName.toLowerCase()} "${(e as HTMLInputElement).placeholder ?? ""}"`).catch(() => "")}`
+      await buscador.click().catch(() => {})
+      await buscador.fill("").catch(() => {})
+      await buscador.pressSequentially(busqueda, { delay: 80 })
+      enlace = await primeroVisible([servicio()], 12_000)
+      if (!enlace) {
+        await buscador.press("Enter").catch(() => {})
+        enlace = await primeroVisible([servicio()], 12_000)
+      }
+      if (!enlace) buscadorVisto += `, resultados: ${resumen(await textoVisible(page)).slice(0, 200)}`
     }
   }
   if (!enlace) {
@@ -121,9 +135,14 @@ async function abrirServicio(page: Page, nombre: RegExp, busqueda: string): Prom
     enlace = await primeroVisible([servicio()], 15_000)
   }
   if (!enlace) {
-    throw new FalloArca("error", `No aparece '${busqueda}' en el portal de ARCA (¿está habilitado el servicio para este CUIT?)`)
+    throw new FalloArca("error", `No aparece '${busqueda}' en el portal de ARCA (¿está habilitado el servicio para este CUIT?) [${buscadorVisto}]`)
   }
+  return enlace
+}
 
+// Abre un servicio del portal "Mi ARCA" (suelen abrirse en otra pestaña).
+async function abrirServicio(page: Page, nombre: RegExp, busqueda: string): Promise<Page> {
+  const enlace = await buscarServicio(page, nombre, busqueda)
   const [nueva] = await Promise.all([
     page.context().waitForEvent("page", { timeout: T }).catch(() => null),
     enlace.click(),
@@ -493,10 +512,31 @@ const menuDe = (page: Lugar) =>
   page.locator("a").evaluateAll((els) => [...new Set(els.map((e) => (e.textContent ?? "").replace(/\s+/g, " ").trim())
     .filter((t) => t && t.length < 60))].slice(0, 80).join(" | ")).catch(() => "")
 
+const urlsAbiertas = (page: Page) => page.context().pages().map((p) => p.url()).join(" | ")
+
+// Al entrar, ARCA y ART abren y cierran ventanas (pase de sesión): se usa la última pestaña de ART
+// abierta que cumpla la condición.
+async function pestanaArt(page: Page, condicion: (p: Page) => Promise<boolean>, timeout = 45_000): Promise<Page | null> {
+  const limite = Date.now() + timeout
+  while (Date.now() < limite) {
+    const candidatas = page.context().pages().filter((p) => !p.isClosed() && /rionegro\.gov\.ar/i.test(p.url())).reverse()
+    for (const p of candidatas) if (await condicion(p).catch(() => false)) return p
+    await new Promise((r) => setTimeout(r, 700))
+  }
+  return null
+}
+
 // Entra a ART desde el portal de ARCA: elige el CUIT, cierra el aviso de notificaciones pendientes
 // (sin abrirlas) y queda en el panel principal.
 export async function ingresarArt(page: Page, cuit: string): Promise<Page> {
-  const art = await abrirServicio(page, /^\s*ART Provincia de R[ií]o Negro\s*$/i, "ART Provincia de Río Negro")
+  const servicio = await buscarServicio(page, /^\s*ART Provincia de R[ií]o Negro\s*$/i, "ART Provincia")
+  await servicio.click()
+  // "Ingreso a Extranet": una lista con CUITs (las páginas de paso que se cierran solas no la tienen).
+  const conCuit = (p: Page) => p.locator("select option").evaluateAll((os) =>
+    os.some((o) => /\d{11}/.test(((o as HTMLOptionElement).text + (o as HTMLOptionElement).value).replace(/\D/g, ""))))
+  const enPanel = async (p: Page) => (await p.locator("a").filter({ hasText: /cuenta corriente/i }).count()) > 0
+  let art = await pestanaArt(page, async (p) => (await enPanel(p)) || (await conCuit(p)))
+  if (!art) throw new FalloArca("error", `ART no abrió después de elegir el servicio en ARCA. Pestañas: ${urlsAbiertas(page)}`)
   await art.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
 
   // "Ingreso a Extranet": lista con los CUIT que representa la clave + INGRESAR.
@@ -517,6 +557,11 @@ export async function ingresarArt(page: Page, cuit: string): Promise<Page> {
   ], elegido ? 15_000 : 3000)
   if (ingresar) {
     await tocarEnArt(ingresar, "ingreso")
+    await art.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
+    // El panel puede abrirse en otra pestaña (y cerrar la del ingreso).
+    const panel = await pestanaArt(page, enPanel)
+    if (!panel) throw new FalloArca("error", `No se abrió el panel de ART después de INGRESAR. Pestañas: ${urlsAbiertas(page)}`)
+    art = panel
     await art.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
   }
 
