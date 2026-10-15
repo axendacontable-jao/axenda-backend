@@ -841,6 +841,24 @@ export function fechaEnResumen(texto: string): string | null {
   return `${m[1].padStart(2, "0")}/${m[2].padStart(2, "0")}/${anio}`
 }
 
+// Marca la condición de venta "Contado": la casilla cuyo texto (etiqueta o texto pegado) dice Contado.
+async function marcarContado(p: Page) {
+  const casillas = p.locator("input[type='checkbox']")
+  for (let i = 0, n = await casillas.count(); i < n; i++) {
+    const c = casillas.nth(i)
+    const texto = await c.evaluate((el) => {
+      const etiqueta = el.id ? document.querySelector(`label[for='${el.id}']`)?.textContent ?? "" : ""
+      const pegado = el.nextSibling?.textContent ?? ""
+      const padre = el.parentElement && el.parentElement.querySelectorAll("input[type='checkbox']").length === 1 ? el.parentElement.textContent ?? "" : ""
+      return `${etiqueta} ${pegado} ${padre}`.replace(/\s+/g, " ")
+    }).catch(() => "")
+    if (!/contado/i.test(texto)) continue
+    if (!(await c.isChecked().catch(() => false))) await c.check({ force: true }).catch(() => c.click({ force: true }).catch(() => {}))
+    if (await c.isChecked().catch(() => false)) return
+  }
+  throw new FalloArca("error", "No pude marcar la condición de venta \"Contado\" en Comprobantes en línea", `Campos: ${await camposDe(p)}`)
+}
+
 // Campos visibles del formulario (id=valor) para diagnosticar un rechazo de ARCA.
 const camposDe = (p: Page) => p.locator("input:visible, select:visible, textarea:visible").evaluateAll((els) =>
   els.map((e) => {
@@ -964,9 +982,7 @@ export async function emitirFacturaRcel(
       await new Promise((r) => setTimeout(r, 500))
     }
   }
-  const contado = rcel.locator("#formadepago1").first()
-  if (await contado.isVisible().catch(() => false)) await contado.check().catch(() => {})
-  else await rcel.getByLabel(/contado/i).first().check().catch(() => {})
+  await marcarContado(rcel)
   await continuar("receptor")
 
   // 6. Detalle: un renglón con la descripción y el monto.
@@ -1017,6 +1033,7 @@ export async function emitirFacturaRcel(
     !importes.some((i) => resumenArca.includes(i)) && `importe ${importes[2]}`,
     pedido.docTipo !== 99 && !digitos.includes(String(pedido.docNro)) && `documento ${pedido.docNro}`,
     !normalizar(resumenArca).includes(normalizar(pedido.descripcion).slice(0, 25)) && "descripción",
+    /condiciones de venta\s*(null|-)?\s*comprobantes asociados/i.test(resumenArca) && "condición de venta (Contado)",
   ].filter(Boolean)
   if (faltan.length) {
     throw new FalloArca("error", `El resumen de ARCA no coincide con lo pedido (${faltan.join(", ")}): no se confirmó la factura`,
@@ -1030,6 +1047,11 @@ export async function emitirFacturaRcel(
   puedeConfirmar = true
   try {
     await confirmar.click()
+    // ARCA abre un cartel propio: "Usted está por generar un nuevo comprobante. ¿Confirma la Operación?"
+    // (Cancelar / Confirmar). Si en cambio usa la ventana del navegador, ya se aceptó arriba.
+    const cartel = rcel.locator(".ui-dialog, [role='dialog']").filter({ hasText: /confirma la operaci/i })
+    const si = cartel.getByRole("button", { name: /^\s*confirmar\s*$/i })
+    if (await primeroVisible([si], 15_000)) await si.first().click()
     await espera()
     if (!(await primeroVisible([rcel.getByText(/comprobante generado/i)], 60_000))) throw new Error("ARCA no mostró \"Comprobante Generado\"")
   } catch (e: any) {
