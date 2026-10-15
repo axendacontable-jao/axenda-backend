@@ -294,7 +294,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 .wa-fab { position:fixed; bottom:24px; right:22px; width:56px; height:56px; background:#25D366; border-radius:50%; display:flex; align-items:center; justify-content:center; text-decoration:none; box-shadow:0 4px 18px rgba(37,211,102,.4); z-index:400; }
 
 /* ── FASE 2: situación fiscal, deuda por organismo, bóveda ── */
-.btn-sec { display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:8px 14px; background:#fff; color:var(--blue); border:1.5px solid var(--border); border-radius:9px; font-family:inherit; font-size:12px; font-weight:600; text-decoration:none; cursor:pointer; transition:border-color .15s; }
+.btn-sec { white-space:nowrap; display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:8px 14px; background:#fff; color:var(--blue); border:1.5px solid var(--border); border-radius:9px; font-family:inherit; font-size:12px; font-weight:600; text-decoration:none; cursor:pointer; transition:border-color .15s; }
 .btn-sec:hover { border-color:var(--green); }
 .btn-sec:disabled { opacity:.55; cursor:default; }
 .nota-chica { font-size:11px; color:var(--muted); margin-top:6px; line-height:1.4; }
@@ -311,7 +311,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 .deuda-item-info { flex:1; min-width:0; }
 .deuda-item-monto { font-family:'DM Mono',monospace; font-weight:600; font-size:13px; }
 .deuda-item-desc { font-size:11px; color:var(--muted); margin-top:2px; line-height:1.35; }
-.doc-badge { font-size:10px; font-weight:600; padding:1px 6px; border-radius:5px; margin-left:6px; vertical-align:1px; }
+.doc-badge { font-size:10px; font-weight:600; padding:1px 6px; border-radius:5px; margin-right:6px; vertical-align:1px; }
 .tb-constancia { background:#E8F0FE; color:#1a56db; }
 .tb-comprobante { background:#2BAF8218; color:#1E8A66; }
 .tb-plan_pago { background:#FFF3CD; color:#856404; }
@@ -469,6 +469,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
               </div>
               <div class="bar-track"><div class="bar-fill bar-green" style="width:100%;opacity:.2"></div></div>
             </div>
+          </div>
           <div class="sem-dias-row">
             <span style="font-size:12px;color:var(--muted)">Recategorización · <strong id="sem-corte-nom" style="color:var(--text)">—</strong></span>
             <span style="font-size:15px;font-weight:600;font-family:'DM Mono',monospace" id="sem-dias-num">— días</span>
@@ -1362,8 +1363,8 @@ function renderBoveda(docs) {
   let html = `<div class="doc-item">
     <div class="doc-icon">🏛️</div>
     <div class="doc-info">
-      <div class="doc-name">Constancia de inscripción<span class="doc-badge tb-constancia">Constancia</span></div>
-      <div class="doc-date">Al día de hoy, desde ARCA · <a href="#" onclick="verConstanciaOficial(event)" style="color:var(--muted)">ver la oficial</a></div>
+      <div class="doc-name">Constancia de inscripción</div>
+      <div class="doc-date"><span class="doc-badge tb-constancia">Constancia</span>Al día de hoy, desde ARCA · <a href="#" onclick="verConstanciaOficial(event)" style="color:var(--muted)">ver la oficial</a></div>
     </div>
     <button class="doc-dl-btn" id="btn-constancia" onclick="descargarConstancia()">⬇ PDF</button>
   </div>`;
@@ -1375,8 +1376,8 @@ function renderBoveda(docs) {
     html += `<${url ? `a href="${url}" target="_blank" rel="noreferrer"` : "div"} class="doc-item">
       <div class="doc-icon" style="background:#2BAF8215">${d.tipo === "plan_pago" ? "📋" : d.tipo === "constancia" ? "🏛️" : "📄"}</div>
       <div class="doc-info">
-        <div class="doc-name">${escHtml(d.nombre || "—")}<span class="doc-badge ${cls}">${etq}</span></div>
-        <div class="doc-date">${[fecha, origen].filter(Boolean).join(" · ")}</div>
+        <div class="doc-name">${escHtml(d.nombre || "—")}</div>
+        <div class="doc-date"><span class="doc-badge ${cls}">${etq}</span>${[fecha, origen].filter(Boolean).join(" · ")}</div>
       </div>
       ${url ? '<div class="doc-action">↓ Bajar</div>' : ""}
     </${url ? "a" : "div"}>`;

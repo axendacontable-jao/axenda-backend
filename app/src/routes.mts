@@ -77,13 +77,28 @@ const ART_RIO_NEGRO: Record<string, number> = {
 
 const pesos = (n: number) => "$" + String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ".")
 
+// Componente de ART Río Negro de la categoría según la tabla de Configuración (componentes
+// provinciales vigentes); si no está cargada, el valor fijo de febrero de 2026.
+async function artPorMes(categoria: unknown): Promise<number> {
+  const cat = String(categoria ?? "").toUpperCase()
+  try {
+    const filas = await q(db().from("componentes_provinciales").select("monto,tipo")
+      .in("provincia", ["Rio Negro", "Río Negro"]).eq("categoria", cat).lte("vigente_desde", hoyIso())
+      .order("vigente_desde", { ascending: false }).limit(3))
+    const fila = (filas ?? []).find((f: any) => f.tipo === "servicios" || f.tipo === "unico") ?? filas?.[0]
+    if (fila && Number(fila.monto) > 0) return Number(fila.monto)
+  } catch {
+    // Sin tabla: valor fijo.
+  }
+  return ART_RIO_NEGRO[cat] ?? 0
+}
+
 // ART Río Negro (monotributo unificado) no figura en la CCMA de ARCA: se estima como el componente
 // provincial de la categoría por cada mes cuya cuota de ARCA está vencida e impaga.
-function componenteArtEstimado(cliente: any, historial: any[]): number {
+function componenteArtEstimado(cliente: any, historial: any[], porMes: number): number {
   const rioNegro = /r[ií]o negro/i.test(cliente.provincia || "Rio Negro")
   const unificado = !cliente.iibb_modalidad || cliente.iibb_modalidad === "monotributo_unificado"
   if (!rioNegro || !unificado) return 0
-  const porMes = ART_RIO_NEGRO[String(cliente.categoria ?? "").toUpperCase()] ?? 0
   const t = hoy()
   const desde = t.y * 12 + (t.m - 1) - 11
   return historial.filter((h) =>
@@ -91,11 +106,12 @@ function componenteArtEstimado(cliente: any, historial: any[]): number {
 }
 
 // Con la cuenta corriente de ART leída por el robot la deuda es la real; si no, la estimación.
-function deudaArtDe(cliente: any, historial: any[]) {
+async function deudaArtDe(cliente: any, historial: any[]) {
   if (cliente.art_actualizada_at) {
-    return { monto: Number(cliente.art_deuda_monto) || 0, real: true, actualizada_at: cliente.art_actualizada_at }
+    return { monto: Number(cliente.art_deuda_monto) || 0, real: true, actualizada_at: cliente.art_actualizada_at, por_mes: 0 }
   }
-  return { monto: componenteArtEstimado(cliente, historial), real: false, actualizada_at: null }
+  const porMes = await artPorMes(cliente.categoria)
+  return { monto: componenteArtEstimado(cliente, historial, porMes), real: false, actualizada_at: null, por_mes: porMes }
 }
 
 // UPDATE y, si no tocó filas, INSERT (nunca upsert con on_conflict en estas tablas).
@@ -368,7 +384,7 @@ const historialCuotas: Handler = async ({ req, p, query }) => {
     existentes.get(`${y}-${m}`) ?? { cliente_id: cliente.id, año: y, mes: m, pagado: false, fecha_pago: null, id: null },
   )
   const automatico = await tieneClaveFiscal(cliente.id)
-  const art = automatico ? deudaArtDe(cliente, filas) : null
+  const art = automatico ? await deudaArtDe(cliente, filas) : null
   return {
     ok: true, historial, automatico,
     // Con clave fiscal: deuda real de ARCA (todos los períodos) y de ART Río Negro (real o estimada).
@@ -376,7 +392,7 @@ const historialCuotas: Handler = async ({ req, p, query }) => {
     deuda_actualizada_at: automatico ? cliente.deuda_actualizada_at : null,
     art_monto: art?.monto ?? null, art_real: art?.real ?? false, art_actualizada_at: art?.actualizada_at ?? null,
     art_detalle: art?.real ? cliente.art_deuda_detalle ?? [] : null, art_regimen: art?.real ? cliente.art_regimen : null,
-    art_estimado: art && !art.real ? art.monto : null,
+    art_estimado: art && !art.real ? art.monto : null, art_por_mes: art && !art.real ? art.por_mes : null,
     deuda_detalle: automatico ? cliente.deuda_detalle ?? null : null,
     deuda_descripcion: automatico ? cliente.deuda_descripcion ?? null : null,
   }
@@ -528,7 +544,7 @@ const listaCorta = (xs: string[]) => (xs.length <= 4 ? xs.join(", ") : `${xs.sli
 
 type DeudaPortal = { organismo: string; monto: number; descripcion: string; fecha: string | null; fuente: string; estimado?: boolean }
 
-function deudasPortal(cliente: any, arcaAuto: boolean, historial: any[], manuales: any[], hoyStr: string): DeudaPortal[] {
+async function deudasPortal(cliente: any, arcaAuto: boolean, historial: any[], manuales: any[], hoyStr: string): Promise<DeudaPortal[]> {
   const deudas: DeudaPortal[] = []
   let arcaLeida = false
   let artReal = false
@@ -539,7 +555,7 @@ function deudasPortal(cliente: any, arcaAuto: boolean, historial: any[], manuale
       organismo: "ARCA", monto: Number(cliente.deuda_monto) || 0, fecha: cliente.deuda_actualizada_at, fuente: "arca",
       descripcion: ps.length ? `Monotributo: ${ps.length} ${ps.length === 1 ? "período" : "períodos"} con deuda (${listaCorta(ps)}), con intereses` : "Monotributo al día",
     })
-    const art = deudaArtDe(cliente, historial)
+    const art = await deudaArtDe(cliente, historial)
     artReal = art.real
     if (art.real) {
       const pa = periodosVencidos(cliente.art_deuda_detalle, hoyStr)
@@ -672,7 +688,7 @@ const datosPortal: Handler = async ({ req, p }) => {
   // suma la que carga el contador. Sin clave fiscal solo se muestra la manual.
   const arcaAuto = await tieneClaveFiscal(cliente.id)
   const deudasMan: any[] = (await q(d.from("deuda_manual").select("*").eq("cliente_id", cliente.id).neq("pagado", true)).catch(() => [])) ?? []
-  const deudas = deudasPortal(cliente, arcaAuto, historialFilas, deudasMan, isoDate(t.y, t.m, t.d))
+  const deudas = await deudasPortal(cliente, arcaAuto, historialFilas, deudasMan, isoDate(t.y, t.m, t.d))
   const deudaTotal = Math.round(deudas.reduce((s, x) => s + x.monto, 0) * 100) / 100
   const deudaDesc = deudas.filter((x) => x.monto > 0).map((x) => `${x.organismo}: ${pesos(x.monto)}`).join(" · ") || null
   const deudaDe = (org: string) => deudas.filter((x) => x.organismo === org).reduce((s, x) => s + x.monto, 0)
@@ -777,14 +793,17 @@ const portalSubirDocumento: Handler = async ({ req, p }) => {
   const form = await formulario(req)
   const adjunto = form.get("archivo")
   if (!esArchivo(adjunto) || !adjunto.name) throw new HttpError(422, "Elegí un archivo")
-  const ext = TIPOS_SUBIDA[adjunto.type]
+  // Algunos navegadores no informan el tipo: se deduce de la extensión.
+  const porExtension: Record<string, string> = { pdf: "application/pdf", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp" }
+  const tipo = TIPOS_SUBIDA[adjunto.type] ? adjunto.type : porExtension[adjunto.name.split(".").pop()?.toLowerCase() ?? ""] ?? ""
+  const ext = TIPOS_SUBIDA[tipo]
   if (!ext) throw new HttpError(415, "Solo se aceptan PDF o imágenes (JPG o PNG)")
   if (adjunto.size > 4 * 1024 * 1024) throw new HttpError(413, "El archivo supera los 4 MB")
   const nombreForm = form.get("nombre")
   const nombre = (typeof nombreForm === "string" && nombreForm.trim() ? nombreForm.trim() : adjunto.name).slice(0, 120)
   const ruta = `${cliente.id}/${randomUUID()}.${ext}`
   const storage = db().storage.from(BUCKET_DOCS)
-  const { error } = await storage.upload(ruta, await bytes(adjunto), { contentType: adjunto.type })
+  const { error } = await storage.upload(ruta, await bytes(adjunto), { contentType: tipo })
   if (error) throw new HttpError(500, `No se pudo subir el archivo: ${error.message}`)
   const doc = {
     cliente_id: cliente.id, estudio_id: cliente.estudio_id, tipo: "comprobante", nombre, fecha: hoyIso(),
@@ -1422,7 +1441,7 @@ const estadoArca: Handler = async ({ req, p }) => {
       .eq("cliente_id", cliente.id).order("created_at", { ascending: false }).limit(20)),
     q(db().from("historial_cuotas").select("año,mes,estado,fuente").eq("cliente_id", cliente.id)),
   ])
-  const art = deudaArtDe(cliente, historial ?? [])
+  const art = await deudaArtDe(cliente, historial ?? [])
   return {
     clave_cargada: !!cred, actualizada_at: cred?.actualizada_at ?? null, sincronizaciones: sincronizaciones ?? [],
     deuda: cliente.deuda_actualizada_at

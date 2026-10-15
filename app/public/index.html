@@ -2308,7 +2308,7 @@ function HistorialCuotas({ slug, cuota, categoria, onToggleMesActual, automatico
               a_vencer: ["⏳ A vencer","var(--blue)","transparent"],
             };
             const [label,color,bg] = EST[h.estado] || ["Sin obligación en ARCA","var(--muted)","transparent"];
-            const artMes = !arcaInfo.art_real&&arcaInfo.art_estimado>0 ? (ART_RIO_NEGRO_2026[categoria]||0) : 0;
+            const artMes = !arcaInfo.art_real&&arcaInfo.art_estimado>0 ? (arcaInfo.art_por_mes||ART_RIO_NEGRO_2026[categoria]||0) : 0;
             const ART_EST = { pagada:["✓ pagado","var(--green)"], intereses:["pagado fuera de término, resta","#E8A020"], vencida:["debe","var(--red)"], a_vencer:["a vencer","var(--blue)"] };
             return (
               <div key={`${h.año}-${h.mes}`} style={{border:`1px solid ${h.estado?color:"var(--border)"}`,borderRadius:"8px",padding:"10px 12px",background:bg}}>
