@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Axenda Contable — Superadmin</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
+* { margin:0; padding:0; box-sizing:border-box; }
+:root {
+  --bg:#F0F2F7; --card:#FFFFFF; --sidebar:#1B2D4F;
+  --green:#2BAF82; --yellow:#E8A020; --red:#E04545; --violet:#7C3AED;
+  --blue:#1B2D4F; --text:#1B2D4F; --muted:#6B7A96;
+  --border:#DDE3EE; --light:#EAF0F6;
+}
+body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text); }
+.layout { display:flex; min-height:100vh; }
+.sidebar { width:220px; background:var(--sidebar); position:fixed; top:0; left:0; bottom:0; display:flex; flex-direction:column; z-index:100; }
+.sidebar-logo { padding:24px 20px 18px; border-bottom:1px solid #1F3358; }
+.logo-main { font-size:16px; font-weight:700; color:var(--green); letter-spacing:0.04em; }
+.logo-sub { font-size:10px; color:#5D8AB0; letter-spacing:0.14em; text-transform:uppercase; margin-top:2px; }
+.sidebar-nav { padding:16px 12px; flex:1; }
+.nav-btn { display:flex; align-items:center; gap:9px; padding:9px 10px; border-radius:8px; font-size:13px; color:#8CA0BE; cursor:pointer; margin-bottom:2px; border:none; background:none; width:100%; text-align:left; font-family:inherit; text-decoration:none; }
+.nav-btn:hover { background:#243C65; color:#fff; }
+.nav-btn.active { background:#1E3A62; color:var(--green); font-weight:600; }
+.sidebar-footer { padding:14px 16px; border-top:1px solid #1F3358; }
+.footer-text { font-size:11px; color:#4D6A8A; text-align:center; word-break:break-all; }
+.btn-salir { width:100%; padding:8px; background:#243C65; border:none; border-radius:7px; color:#8CA0BE; font-size:12px; font-weight:500; cursor:pointer; font-family:inherit; margin-top:8px; }
+.btn-salir:hover { color:var(--red); }
+.main { margin-left:220px; flex:1; min-width:0; }
+.topbar { background:#fff; border-bottom:1px solid var(--border); padding:16px 28px; display:flex; align-items:center; justify-content:space-between; gap:12px; position:sticky; top:0; z-index:50; }
+.topbar-title { font-size:17px; font-weight:700; }
+.topbar-sub { font-size:12px; color:var(--muted); }
+.content { padding:24px 28px 48px; max-width:1180px; }
+.kpis { display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:14px; margin-bottom:22px; }
+.kpi { background:#fff; border:1px solid var(--border); border-radius:14px; padding:16px 18px; }
+.kpi-label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.08em; font-weight:600; }
+.kpi-val { font-size:26px; font-weight:600; font-family:'DM Mono',monospace; margin-top:6px; }
+.kpi-sub { font-size:12px; color:var(--muted); margin-top:4px; }
+.card { background:#fff; border:1px solid var(--border); border-radius:14px; padding:18px 20px; margin-bottom:18px; }
+.card-title { font-size:14px; font-weight:700; margin-bottom:12px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+.toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:14px; }
+.search { flex:1; min-width:200px; padding:9px 13px; border:1px solid var(--border); border-radius:10px; font-size:13px; font-family:inherit; outline:none; }
+.search:focus { border-color:var(--green); }
+.chip-filtro { padding:7px 13px; border:1px solid var(--border); border-radius:20px; font-size:12px; background:#fff; color:var(--muted); cursor:pointer; font-family:inherit; font-weight:500; }
+.chip-filtro.active { border-color:var(--green); color:var(--green); background:#2BAF8210; font-weight:600; }
+.tabla-wrap { overflow-x:auto; }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+th { text-align:left; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.06em; font-weight:600; padding:8px 10px; border-bottom:1px solid var(--border); white-space:nowrap; }
+td { padding:11px 10px; border-bottom:1px solid var(--light); vertical-align:middle; }
+tr.fila { cursor:pointer; }
+tr.fila:hover td { background:#F7F9FC; }
+.mono { font-family:'DM Mono',monospace; }
+.muted { color:var(--muted); }
+.estado { display:inline-block; padding:3px 10px; border-radius:20px; font-size:11px; font-weight:600; white-space:nowrap; }
+.e-activa { background:#2BAF8218; color:#1E8A66; }
+.e-suspendida { background:#E0454515; color:var(--red); }
+.e-trial { background:#7C3AED15; color:var(--violet); }
+.e-paga { background:#2BAF8218; color:#1E8A66; }
+.e-pendiente { background:#E8A02018; color:#B07400; }
+.e-vencida { background:#E0454515; color:var(--red); }
+.btn { padding:8px 14px; border-radius:9px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; border:1px solid var(--border); background:#fff; color:var(--text); white-space:nowrap; }
+.btn:hover { border-color:var(--green); color:var(--green); }
+.btn:disabled { opacity:0.5; cursor:default; }
+.btn-pri { background:var(--green); border-color:var(--green); color:#fff; }
+.btn-pri:hover { color:#fff; filter:brightness(0.95); }
+.btn-rojo { border-color:#E0454540; color:var(--red); }
+.btn-rojo:hover { background:var(--red); color:#fff; border-color:var(--red); }
+.btn-chico { padding:5px 10px; font-size:12px; }
+.grid-datos { display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:12px 20px; }
+.dato-label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.06em; font-weight:600; }
+.dato-val { font-size:14px; margin-top:3px; word-break:break-word; }
+.input { padding:8px 11px; border:1px solid var(--border); border-radius:9px; font-size:13px; font-family:inherit; outline:none; background:#fff; color:var(--text); }
+.input:focus { border-color:var(--green); }
+.aviso { padding:10px 14px; border-radius:10px; font-size:13px; margin-bottom:14px; }
+.aviso-ok { background:#2BAF8212; color:#1E8A66; border:1px solid #2BAF8230; }
+.aviso-error { background:#E0454512; color:var(--red); border:1px solid #E0454530; }
+.modal-overlay { position:fixed; inset:0; background:rgba(15,25,45,0.45); display:flex; align-items:center; justify-content:center; padding:16px; z-index:200; }
+.modal { background:#fff; border-radius:16px; padding:24px; max-width:440px; width:100%; box-shadow:0 12px 48px rgba(15,25,45,0.25); }
+.modal h3 { font-size:17px; margin-bottom:10px; }
+.modal p { font-size:13px; color:var(--muted); line-height:1.6; margin-bottom:12px; }
+.login-wrap { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px; }
+.login-card { background:#fff; border-radius:20px; padding:40px 44px; width:100%; max-width:400px; box-shadow:0 8px 40px rgba(27,45,79,0.13); }
+.login-card label { display:block; font-size:11px; font-weight:600; color:var(--muted); letter-spacing:0.08em; margin:14px 0 6px; }
+.login-card .input { width:100%; padding:11px 13px; }
+.vacio { text-align:center; padding:28px; color:var(--muted); font-size:13px; }
+.pie { font-size:11px; color:var(--muted); text-align:center; margin-top:24px; }
+@media (max-width: 760px) {
+  .sidebar { position:static; width:100%; flex-direction:row; align-items:center; }
+  .sidebar-nav, .sidebar-footer .footer-text { display:none; }
+  .sidebar-footer { border:none; padding:10px 16px; margin-left:auto; }
+  .btn-salir { margin:0; width:auto; padding:7px 12px; }
+  .layout { flex-direction:column; }
+  .main { margin-left:0; }
+  .topbar, .content { padding-left:16px; padding-right:16px; }
+  .login-card { padding:28px 22px; }
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { createClient } = supabase;
+const { useState, useEffect } = React;
+
+const API = "/api";
+const SUPABASE_URL = "https://mfzkcangoekzyadylaxi.supabase.co";
+const SUPABASE_KEY = "sb_publishable_XpIFC8TNibuit_o1LOtPbw_iPoyONEu";
+const db = createClient(SUPABASE_URL, SUPABASE_KEY);
+const MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+const ESTADO_TXT = { activa:"Activo", suspendida:"Suspendido", trial:"Trial" };
+const CUOTA_TXT = { paga:"Paga", pendiente:"Pendiente", vencida:"Vencida" };
+
+let _session = null;
+async function api(ruta, opts = {}) {
+  const r = await fetch(`${API}${ruta}`, {
+    ...opts,
+    headers: { "Content-Type":"application/json", Authorization:`Bearer ${_session?.access_token ?? ""}`, ...(opts.headers||{}) },
+  });
+  const d = await r.json().catch(()=>({}));
+  if (!r.ok) { const e = new Error(d.detail || `Error ${r.status}`); e.status = r.status; throw e; }
+  return d;
+}
+
+const $$ = n => n===null||n===undefined||n==="" ? "—" : "$" + Math.round(Number(n)).toLocaleString("es-AR");
+function fecha(s) {
+  if (!s) return "—";
+  const d = new Date(s);
+  return isNaN(d) ? "—" : d.toLocaleDateString("es-AR", { day:"2-digit", month:"2-digit", year:"numeric" });
+}
+function hace(s) {
+  if (!s) return "Nunca";
+  const min = Math.round((Date.now() - new Date(s)) / 60000);
+  if (min < 2) return "Recién";
+  if (min < 60) return `Hace ${min} min`;
+  if (min < 60*24) return `Hace ${Math.round(min/60)} h`;
+  const dias = Math.round(min/1440);
+  return dias < 31 ? `Hace ${dias} día${dias===1?"":"s"}` : fecha(s);
+}
+const hoyIso = () => { const d = new Date(Date.now() - 3*3600000); return d.toISOString().slice(0,10); };
+
+function Estado({ e }) { return <span className={`estado e-${e}`}>{ESTADO_TXT[e] || e}</span>; }
+
+// ── Login ──
+function Login() {
+  const [email,setEmail] = useState("");
+  const [password,setPassword] = useState("");
+  const [error,setError] = useState("");
+  const [cargando,setCargando] = useState(false);
+  async function entrar(e) {
+    e.preventDefault(); setCargando(true); setError("");
+    const { error: err } = await db.auth.signInWithPassword({ email, password });
+    if (err) setError(err.message === "Invalid login credentials" ? "Email o contraseña incorrectos" : err.message);
+    setCargando(false);
+  }
+  return (
+    <div className="login-wrap">
+      <form className="login-card" onSubmit={entrar}>
+        <div style={{textAlign:"center",marginBottom:"18px"}}>
+          <div style={{fontSize:"22px",fontWeight:"700",letterSpacing:"0.06em"}}>AXENDA</div>
+          <div style={{fontSize:"10px",color:"var(--green)",letterSpacing:"0.2em",textTransform:"uppercase",marginTop:"3px"}}>Superadmin</div>
+        </div>
+        <label>EMAIL</label>
+        <input className="input" type="email" value={email} onChange={e=>setEmail(e.target.value)} required autoFocus/>
+        <label>CONTRASEÑA</label>
+        <input className="input" type="password" value={password} onChange={e=>setPassword(e.target.value)} required/>
+        {error && <div className="aviso aviso-error" style={{marginTop:"14px",marginBottom:0}}>{error}</div>}
+        <button className="btn btn-pri" type="submit" disabled={cargando} style={{width:"100%",marginTop:"20px",padding:"12px"}}>{cargando?"Entrando...":"Entrar"}</button>
+        <div className="pie">Para administrar tu estudio entrá a <a href="/" style={{color:"var(--green)"}}>el panel normal</a>.</div>
+      </form>
+    </div>
+  );
+}
+
+// ── Dashboard ──
+function Dashboard({ datos, onAbrir, onRecargar }) {
+  const [filtro,setFiltro] = useState("todos");
+  const [busqueda,setBusqueda] = useState("");
+  const [generando,setGenerando] = useState(false);
+  const [aviso,setAviso] = useState(null);
+  const t = datos.totales;
+  const [y, m] = datos.hoy.split("-").map(Number);
+
+  async function generarCuotas() {
+    if (!confirm(`¿Generar la cuota de ${MESES[m-1]} ${y} para todos los estudios activos con cuota mensual definida?`)) return;
+    setGenerando(true); setAviso(null);
+    try {
+      const r = await api("/superadmin/cuotas/generar", { method:"POST", body:JSON.stringify({ anio:y, mes:m }) });
+      setAviso({ ok:true, txt:`✓ ${r.creadas} cuota${r.creadas===1?"":"s"} creada${r.creadas===1?"":"s"}${r.ya_estaban?` · ${r.ya_estaban} ya estaba${r.ya_estaban===1?"":"n"}`:""}${r.sin_monto?` · ${r.sin_monto} estudio${r.sin_monto===1?"":"s"} activo${r.sin_monto===1?"":"s"} sin cuota mensual definida`:""}` });
+      onRecargar();
+    } catch(e) { setAviso({ ok:false, txt:e.message }); }
+    setGenerando(false);
+  }
+
+  const lista = datos.estudios
+    .filter(e => filtro==="todos" ? true : filtro==="morosos" ? e.moroso : e.estado===filtro)
+    .filter(e => !busqueda || `${e.nombre} ${e.email} ${e.plan||""}`.toLowerCase().includes(busqueda.toLowerCase()));
+
+  return (
+    <div>
+      <div className="kpis">
+        <div className="kpi"><div className="kpi-label">Activos</div><div className="kpi-val" style={{color:"var(--green)"}}>{t.activos}</div><div className="kpi-sub">de {t.total} estudios</div></div>
+        <div className="kpi"><div className="kpi-label">Suspendidos</div><div className="kpi-val" style={{color:"var(--red)"}}>{t.suspendidos}</div></div>
+        <div className="kpi"><div className="kpi-label">En trial</div><div className="kpi-val" style={{color:"var(--violet)"}}>{t.trial}</div></div>
+        <div className="kpi"><div className="kpi-label">Ingresos de {MESES[m-1].toLowerCase()}</div><div className="kpi-val">{$$(t.ingresos_mes)}</div><div className="kpi-sub">{t.cuotas_mes ? `${t.cuotas_mes_pagas} de ${t.cuotas_mes} cuotas del mes pagas` : "Sin cuotas del mes generadas"}</div></div>
+        <div className="kpi"><div className="kpi-label">Nuevos este mes</div><div className="kpi-val">{t.nuevos_mes}</div></div>
+        <div className="kpi" style={t.morosos?{borderColor:"#E0454550"}:{}}><div className="kpi-label">Morosos</div><div className="kpi-val" style={{color:t.morosos?"var(--red)":"var(--text)"}}>{t.morosos}</div><div className="kpi-sub">con cuota vencida</div></div>
+      </div>
+
+      <div className="card">
+        <div className="card-title">
+          <span>Estudios</span>
+          <button className="btn btn-chico" onClick={generarCuotas} disabled={generando}>{generando?"Generando...":`+ Generar cuotas de ${MESES[m-1]}`}</button>
+        </div>
+        {aviso && <div className={`aviso ${aviso.ok?"aviso-ok":"aviso-error"}`}>{aviso.txt}</div>}
+        <div className="toolbar">
+          <input className="search" placeholder="Buscar por nombre, email o plan..." value={busqueda} onChange={e=>setBusqueda(e.target.value)}/>
+          {[["todos","Todos"],["activa","Activos"],["suspendida","Suspendidos"],["trial","Trial"],["morosos","Morosos"]].map(([k,l])=>(
+            <button key={k} className={`chip-filtro ${filtro===k?"active":""}`} onClick={()=>setFiltro(k)}>{l}</button>
+          ))}
+        </div>
+        {lista.length===0 ? <div className="vacio">No hay estudios con ese filtro.</div> : (
+          <div className="tabla-wrap">
+            <table>
+              <thead><tr><th>Nombre</th><th>Email</th><th>Plan</th><th>Estado</th><th>Alta</th><th style={{textAlign:"right"}}>Clientes</th><th>Último acceso</th></tr></thead>
+              <tbody>
+                {lista.map(e=>(
+                  <tr key={e.id} className="fila" onClick={()=>onAbrir(e.id)}>
+                    <td style={{fontWeight:"600"}}>
+                      {e.nombre}
+                      {e.es_superadmin && <span className="estado" style={{background:"var(--light)",color:"var(--muted)",marginLeft:"6px"}}>Vos</span>}
+                      {e.moroso && <span className="estado e-vencida" style={{marginLeft:"6px"}}>Debe {$$(e.deuda)}</span>}
+                    </td>
+                    <td className="muted">{e.email||"—"}</td>
+                    <td>{e.plan||"—"}</td>
+                    <td><Estado e={e.estado}/></td>
+                    <td className="mono">{fecha(e.created_at)}</td>
+                    <td className="mono" style={{textAlign:"right"}}>{e.clientes}</td>
+                    <td className="muted" title={e.ultimo_acceso||""}>{hace(e.ultimo_acceso)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Detalle de un estudio ──
+function DetalleEstudio({ id, onVolver, onCambio }) {
+  const [d,setD] = useState(null);
+  const [error,setError] = useState(null);
+  const [aviso,setAviso] = useState(null);
+  const [ocupado,setOcupado] = useState(false);
+  const [plan,setPlan] = useState("");
+  const [cuotaMensual,setCuotaMensual] = useState("");
+  const [nueva,setNueva] = useState(null);       // { anio, mes, monto }
+  const [pagando,setPagando] = useState(null);   // { id, fecha }
+  const [borrar,setBorrar] = useState(null);     // texto de la segunda confirmación
+
+  async function cargar() {
+    try {
+      const r = await api(`/superadmin/estudios/${id}`);
+      setD(r); setPlan(r.estudio.plan||""); setCuotaMensual(r.estudio.cuota_mensual ?? "");
+    } catch(e) { setError(e.message); }
+  }
+  useEffect(()=>{ cargar(); },[id]);
+
+  async function accion(fn, okTxt) {
+    setOcupado(true); setAviso(null);
+    try { await fn(); setAviso({ ok:true, txt:okTxt }); await cargar(); onCambio(); }
+    catch(e) { setAviso({ ok:false, txt:e.message }); }
+    setOcupado(false);
+  }
+  const patchEstudio = body => api(`/superadmin/estudios/${id}`, { method:"PATCH", body:JSON.stringify(body) });
+
+  function cambiarEstado(estado) {
+    const txt = { activa:"activar", suspendida:"suspender", trial:"pasar a trial" }[estado];
+    const extra = estado==="suspendida" ? "\n\nEl estudio no va a poder entrar al panel y el portal de sus clientes queda en pausa." : "";
+    if (!confirm(`¿Seguro que querés ${txt} "${d.estudio.nombre}"?${extra}`)) return;
+    accion(()=>patchEstudio({ estado }), `✓ Estudio ${ESTADO_TXT[estado].toLowerCase()}.`);
+  }
+
+  function pedirEliminar() {
+    if (!confirm(`¿Eliminar "${d.estudio.nombre}"?\n\nSe borran el estudio, sus ${d.estudio.clientes} clientes con todos sus datos (facturación, planes, documentos, claves fiscales) y la cuenta ${d.estudio.email||""}. No se puede deshacer.`)) return;
+    setBorrar("");
+  }
+  async function eliminar() {
+    setOcupado(true); setAviso(null);
+    try {
+      await api(`/superadmin/estudios/${id}`, { method:"DELETE", body:JSON.stringify({ confirmacion:borrar }) });
+      setBorrar(null); onCambio(); onVolver(`✓ "${d.estudio.nombre}" eliminado.`);
+    } catch(e) { setAviso({ ok:false, txt:e.message }); setBorrar(null); }
+    setOcupado(false);
+  }
+
+  if (error) return <div className="card"><div className="aviso aviso-error">{error}</div><button className="btn" onClick={()=>onVolver()}>← Volver</button></div>;
+  if (!d) return <div className="vacio">Cargando...</div>;
+  const e = d.estudio;
+  const [y, m] = hoyIso().split("-").map(Number);
+  const deuda = d.cuotas.filter(c=>c.estado==="vencida").reduce((s,c)=>s+c.monto,0);
+
+  return (
+    <div>
+      <button className="btn btn-chico" style={{marginBottom:"14px"}} onClick={()=>onVolver()}>← Todos los estudios</button>
+      {aviso && <div className={`aviso ${aviso.ok?"aviso-ok":"aviso-error"}`}>{aviso.txt}</div>}
+
+      <div className="card">
+        <div className="card-title">
+          <span style={{display:"flex",alignItems:"center",gap:"10px",fontSize:"18px"}}>
+            {e.logo_url && <img src={e.logo_url} alt="" style={{height:"32px",maxWidth:"90px",objectFit:"contain"}}/>}
+            {e.nombre} <Estado e={e.estado}/>
+          </span>
+          <span style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
+            {e.estado!=="activa" && <button className="btn btn-pri btn-chico" disabled={ocupado} onClick={()=>cambiarEstado("activa")}>Activar</button>}
+            {e.estado!=="trial" && <button className="btn btn-chico" disabled={ocupado} onClick={()=>cambiarEstado("trial")}>Pasar a trial</button>}
+            {e.estado!=="suspendida" && !e.es_superadmin && <button className="btn btn-rojo btn-chico" disabled={ocupado} onClick={()=>cambiarEstado("suspendida")}>Suspender</button>}
+            {!e.es_superadmin && <button className="btn btn-rojo btn-chico" disabled={ocupado} onClick={pedirEliminar}>Eliminar</button>}
+          </span>
+        </div>
+        <div className="grid-datos">
+          <div><div className="dato-label">Email de la cuenta</div><div className="dato-val">{e.email||"—"}</div></div>
+          <div><div className="dato-label">Contacto</div><div className="dato-val">{e.email_contacto||"—"}{e.whatsapp?<><br/><a href={`https://wa.me/549${String(e.whatsapp).replace(/\D/g,"")}`} target="_blank" rel="noopener" style={{color:"var(--green)"}}>WhatsApp {e.whatsapp}</a></>:null}</div></div>
+          <div><div className="dato-label">Alta</div><div className="dato-val mono">{fecha(e.created_at)}</div></div>
+          <div><div className="dato-label">Último acceso</div><div className="dato-val">{hace(e.ultimo_acceso)}</div></div>
+          <div><div className="dato-label">Clientes cargados</div><div className="dato-val">{e.clientes} <span className="muted">({e.clientes_activos} activos · {e.clientes_con_clave} con clave fiscal)</span></div></div>
+          <div><div className="dato-label">Provincia</div><div className="dato-val">{e.provincia||"—"}</div></div>
+          <div><div className="dato-label">Facturación desde la app</div><div className="dato-val">{e.facturacion_electronica_habilitada?"Activada":"Desactivada"}</div></div>
+          <div><div className="dato-label">Deuda con Axenda</div><div className="dato-val mono" style={{color:deuda?"var(--red)":"var(--green)"}}>{deuda?$$(deuda):"Al día"}</div></div>
+        </div>
+        <div style={{display:"flex",gap:"10px",alignItems:"flex-end",flexWrap:"wrap",marginTop:"18px",paddingTop:"16px",borderTop:"1px solid var(--border)"}}>
+          <div><div className="dato-label" style={{marginBottom:"5px"}}>Plan</div><input className="input" value={plan} onChange={x=>setPlan(x.target.value)} placeholder="Estándar" style={{width:"160px"}}/></div>
+          <div><div className="dato-label" style={{marginBottom:"5px"}}>Cuota mensual ($)</div><input className="input mono" type="number" min="0" value={cuotaMensual} onChange={x=>setCuotaMensual(x.target.value)} placeholder="0" style={{width:"140px"}}/></div>
+          <button className="btn btn-chico" disabled={ocupado} onClick={()=>accion(()=>patchEstudio({ plan, cuota_mensual:cuotaMensual===""?null:Number(cuotaMensual) }),"✓ Plan y cuota guardados.")}>Guardar</button>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-title">
+          <span>Cuotas mensuales</span>
+          {!nueva && <button className="btn btn-chico" onClick={()=>setNueva({ anio:y, mes:m, monto:e.cuota_mensual ?? "" })}>+ Agregar cuota</button>}
+        </div>
+        {nueva && (
+          <div style={{display:"flex",gap:"8px",alignItems:"center",flexWrap:"wrap",marginBottom:"14px",padding:"12px",background:"var(--light)",borderRadius:"10px"}}>
+            <select className="input" value={nueva.mes} onChange={x=>setNueva({...nueva,mes:Number(x.target.value)})}>{MESES.map((n,i)=><option key={i} value={i+1}>{n}</option>)}</select>
+            <input className="input mono" type="number" value={nueva.anio} onChange={x=>setNueva({...nueva,anio:Number(x.target.value)})} style={{width:"90px"}}/>
+            <input className="input mono" type="number" min="0" placeholder="Monto" value={nueva.monto} onChange={x=>setNueva({...nueva,monto:x.target.value})} style={{width:"130px"}}/>
+            <button className="btn btn-pri btn-chico" disabled={ocupado||nueva.monto===""} onClick={()=>accion(async()=>{ await api(`/superadmin/estudios/${id}/cuotas`,{method:"POST",body:JSON.stringify({...nueva,monto:Number(nueva.monto)})}); setNueva(null); },"✓ Cuota agregada.")}>Agregar</button>
+            <button className="btn btn-chico" onClick={()=>setNueva(null)}>Cancelar</button>
+          </div>
+        )}
+        {d.cuotas.length===0 ? <div className="vacio">Todavía no hay cuotas cargadas para este estudio.</div> : (
+          <div className="tabla-wrap">
+            <table>
+              <thead><tr><th>Mes</th><th style={{textAlign:"right"}}>Monto</th><th>Estado</th><th>Fecha de pago</th><th></th></tr></thead>
+              <tbody>
+                {d.cuotas.map(c=>(
+                  <tr key={c.id}>
+                    <td>{MESES[c.mes-1]} {c.anio}</td>
+                    <td className="mono" style={{textAlign:"right"}}>{$$(c.monto)}</td>
+                    <td><span className={`estado e-${c.estado}`}>{CUOTA_TXT[c.estado]||c.estado}</span></td>
+                    <td className="mono">{c.estado==="paga"?fecha(c.fecha_pago):"—"}</td>
+                    <td style={{textAlign:"right",whiteSpace:"nowrap"}}>
+                      {pagando?.id===c.id ? (
+                        <span style={{display:"inline-flex",gap:"6px",alignItems:"center"}}>
+                          <input className="input" type="date" value={pagando.fecha} max={hoyIso()} onChange={x=>setPagando({...pagando,fecha:x.target.value})}/>
+                          <button className="btn btn-pri btn-chico" disabled={ocupado||!pagando.fecha} onClick={()=>accion(async()=>{ await api(`/superadmin/cuotas/${c.id}`,{method:"PATCH",body:JSON.stringify({estado:"paga",fecha_pago:pagando.fecha})}); setPagando(null); },"✓ Cuota marcada como pagada.")}>Confirmar</button>
+                          <button className="btn btn-chico" onClick={()=>setPagando(null)}>✕</button>
+                        </span>
+                      ) : c.estado==="paga" ? (
+                        <button className="btn btn-chico" disabled={ocupado} onClick={()=>{ if(confirm("¿Volver la cuota a pendiente?")) accion(()=>api(`/superadmin/cuotas/${c.id}`,{method:"PATCH",body:JSON.stringify({estado:"pendiente"})}),"✓ Cuota otra vez pendiente."); }}>Desmarcar</button>
+                      ) : (
+                        <button className="btn btn-pri btn-chico" disabled={ocupado} onClick={()=>setPagando({ id:c.id, fecha:hoyIso() })}>Marcar como pagada</button>
+                      )}
+                      {pagando?.id!==c.id && <button className="btn btn-chico" style={{marginLeft:"6px"}} title="Borrar cuota" disabled={ocupado} onClick={()=>{ if(confirm(`¿Borrar la cuota de ${MESES[c.mes-1]} ${c.anio}?`)) accion(()=>api(`/superadmin/cuotas/${c.id}`,{method:"DELETE"}),"✓ Cuota borrada."); }}>🗑</button>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="muted" style={{fontSize:"12px",marginTop:"10px"}}>Cada cuota vence el día 10 de su mes; si no está paga después de esa fecha figura como vencida.</div>
+      </div>
+
+      {borrar!==null && (
+        <div className="modal-overlay" onClick={x=>x.target===x.currentTarget&&setBorrar(null)}>
+          <div className="modal">
+            <h3 style={{color:"var(--red)"}}>Confirmación final</h3>
+            <p>Para eliminar el estudio escribí su nombre exacto: <strong style={{color:"var(--text)"}}>{e.nombre}</strong></p>
+            <input className="input" style={{width:"100%"}} value={borrar} onChange={x=>setBorrar(x.target.value)} autoFocus/>
+            <div style={{display:"flex",gap:"8px",justifyContent:"flex-end",marginTop:"16px"}}>
+              <button className="btn" onClick={()=>setBorrar(null)}>Cancelar</button>
+              <button className="btn btn-rojo" style={{background:borrar.trim()===e.nombre.trim()?"var(--red)":"#fff",color:borrar.trim()===e.nombre.trim()?"#fff":"var(--red)"}} disabled={ocupado||borrar.trim()!==e.nombre.trim()} onClick={eliminar}>{ocupado?"Eliminando...":"Eliminar para siempre"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── App ──
+function App() {
+  const [session,setSession] = useState(undefined);
+  const [acceso,setAcceso] = useState(null);   // null = verificando, true, o mensaje de error
+  const [datos,setDatos] = useState(null);
+  const [error,setError] = useState(null);
+  const [abierto,setAbierto] = useState(null);
+  const [aviso,setAviso] = useState(null);
+
+  useEffect(()=>{
+    db.auth.getSession().then(({ data:{ session:s } })=>{ _session = s; setSession(s); });
+    const { data:{ subscription } } = db.auth.onAuthStateChange((_ev, s)=>{ _session = s; setSession(s); });
+    return ()=>subscription.unsubscribe();
+  },[]);
+
+  useEffect(()=>{
+    if (!session) { setAcceso(null); setDatos(null); return; }
+    api("/superadmin/me").then(()=>{ setAcceso(true); cargar(); })
+      .catch(e=>setAcceso(e.status===403 ? "Esta cuenta no tiene acceso al superadmin." : e.message));
+  },[session?.user?.id]);
+
+  async function cargar() {
+    try { setDatos(await api("/superadmin/resumen")); setError(null); }
+    catch(e) { setError(e.message); }
+  }
+  async function salir() { await db.auth.signOut(); _session = null; setSession(null); }
+
+  if (session===undefined) return <div className="vacio" style={{paddingTop:"40vh"}}>Cargando...</div>;
+  if (!session) return <Login/>;
+  if (acceso===null) return <div className="vacio" style={{paddingTop:"40vh"}}>Verificando acceso...</div>;
+  if (acceso!==true) return (
+    <div className="login-wrap"><div className="login-card" style={{textAlign:"center"}}>
+      <div style={{fontSize:"40px",marginBottom:"10px"}}>🔒</div>
+      <div style={{fontWeight:"700",fontSize:"17px",marginBottom:"8px"}}>Sin acceso</div>
+      <div className="muted" style={{fontSize:"13px",marginBottom:"20px"}}>{acceso}</div>
+      <a className="btn" href="/" style={{textDecoration:"none",display:"inline-block",marginRight:"8px"}}>Ir al panel</a>
+      <button className="btn btn-rojo" onClick={salir}>Cerrar sesión</button>
+    </div></div>
+  );
+
+  return (
+    <div className="layout">
+      <aside className="sidebar">
+        <div className="sidebar-logo"><div className="logo-main">AXENDA</div><div className="logo-sub">Superadmin</div></div>
+        <nav className="sidebar-nav">
+          <button className={`nav-btn ${!abierto?"active":""}`} onClick={()=>{ setAbierto(null); setAviso(null); }}>🏢 &nbsp;Estudios</button>
+          <a className="nav-btn" href="/" target="_blank" rel="noopener">↗ &nbsp;Mi estudio</a>
+          <a className="nav-btn" href="/ayuda/" target="_blank" rel="noopener">❓ &nbsp;Ayuda</a>
+        </nav>
+        <div className="sidebar-footer">
+          <div className="footer-text">{session.user.email}</div>
+          <button className="btn-salir" onClick={salir}>Cerrar sesión</button>
+        </div>
+      </aside>
+      <main className="main">
+        <div className="topbar">
+          <div>
+            <div className="topbar-title">{abierto ? "Detalle del estudio" : "Todos los estudios"}</div>
+            <div className="topbar-sub">Vista de superadmin · separada del panel de tu estudio</div>
+          </div>
+          <button className="btn btn-chico" onClick={cargar}>↻ Actualizar</button>
+        </div>
+        <div className="content">
+          {error && <div className="aviso aviso-error">{error}</div>}
+          {aviso && !abierto && <div className="aviso aviso-ok">{aviso}</div>}
+          {!datos ? <div className="vacio">Cargando estudios...</div>
+            : abierto ? <DetalleEstudio id={abierto} onCambio={cargar} onVolver={msg=>{ setAbierto(null); setAviso(msg||null); }}/>
+            : <Dashboard datos={datos} onAbrir={id=>{ setAbierto(id); setAviso(null); window.scrollTo(0,0); }} onRecargar={cargar}/>}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+ReactDOM.render(<App/>, document.getElementById("root"));
+</script>
+</body>
+</html>

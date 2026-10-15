@@ -1,7 +1,8 @@
 import {
-  HttpError, ahoraIsoZ, clientePorSlug, db, esFechaIso, getEstudioId, hoy, hoyIso, isoDate,
+  ESTADOS_HABILITADOS, HttpError, ahoraIsoZ, clientePorSlug, db, esFechaIso, getEstudioId, hoy, hoyIso, isoDate,
   logActividad, pyStr, q, sumarMeses, fechaValida,
 } from "./core.mts"
+import { rutasSuperadmin } from "./superadmin.mts"
 import { buscarEnConstancia, buscarEnPadron, certPem, constanciaCompleta, cuitContador, keyPem, serviciosCacheados } from "./arca.mts"
 import { pdfConstancia } from "./constancia-pdf.mts"
 import {
@@ -159,12 +160,75 @@ const estudiosMe: Handler = async ({ req }) => {
   return data ?? {}
 }
 
+const COLOR_POR_DEFECTO = "#2BAF82"
+const esColor = (v: unknown): v is string => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v)
+
 const actualizarEstudio: Handler = async ({ req }) => {
   const estudioId = await getEstudioId(req)
-  const update = elegir(await body(req), ["nombre", "onboarding_completo", "facturacion_electronica_habilitada"])
+  const update = elegir(await body(req), ["nombre", "onboarding_completo", "facturacion_electronica_habilitada", "color_primario"])
+  if ("color_primario" in update) {
+    if (update.color_primario === null || update.color_primario === "") update.color_primario = COLOR_POR_DEFECTO
+    if (!esColor(update.color_primario)) throw new HttpError(422, "El color tiene que ser un código como #2BAF82")
+    update.color_primario = update.color_primario.toUpperCase()
+  }
+  if ("nombre" in update) {
+    update.nombre = String(update.nombre ?? "").trim().slice(0, 80)
+    if (!update.nombre) throw new HttpError(422, "El nombre del estudio no puede quedar vacío")
+    await actualizarOInsertar("configuracion", { valor: update.nombre }, { clave: "nombre_estudio", estudio_id: estudioId })
+  }
   if (!Object.keys(update).length) throw new HttpError(400, "Sin campos válidos")
   await q(db().from("estudios").update(update).eq("id", estudioId))
   return { ok: true }
+}
+
+// Logo del estudio (marca blanca): bucket público logos-estudios/{estudio}/logo-<fecha>.<ext>.
+const BUCKET_LOGOS = "logos-estudios"
+const TIPOS_LOGO: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" }
+
+async function borrarLogos(estudioId: string, salvo?: string) {
+  const storage = db().storage.from(BUCKET_LOGOS)
+  const { data } = await storage.list(estudioId, { limit: 100 })
+  const viejos = (data ?? []).map((f) => `${estudioId}/${f.name}`).filter((r) => r !== salvo)
+  if (viejos.length) await storage.remove(viejos)
+}
+
+const subirLogo: Handler = async ({ req }) => {
+  const estudioId = await getEstudioId(req)
+  const adjunto = await archivo(req)
+  const porExtension: Record<string, string> = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp" }
+  const tipo = TIPOS_LOGO[adjunto.type] ? adjunto.type : porExtension[adjunto.name.split(".").pop()?.toLowerCase() ?? ""] ?? ""
+  if (!TIPOS_LOGO[tipo]) throw new HttpError(415, "El logo tiene que ser PNG, JPG o WEBP")
+  if (adjunto.size > 1024 * 1024) throw new HttpError(413, "El logo supera 1 MB")
+  const ruta = `${estudioId}/logo-${Date.now()}.${TIPOS_LOGO[tipo]}`
+  const storage = db().storage.from(BUCKET_LOGOS)
+  const { error } = await storage.upload(ruta, await bytes(adjunto), { contentType: tipo })
+  if (error) throw new HttpError(500, `No se pudo subir el logo: ${error.message}`)
+  const url = storage.getPublicUrl(ruta).data.publicUrl
+  await q(db().from("estudios").update({ logo_url: url }).eq("id", estudioId))
+  await borrarLogos(estudioId, ruta).catch(() => {})
+  return { ok: true, logo_url: url }
+}
+
+const quitarLogo: Handler = async ({ req }) => {
+  const estudioId = await getEstudioId(req)
+  await q(db().from("estudios").update({ logo_url: null }).eq("id", estudioId))
+  await borrarLogos(estudioId).catch(() => {})
+  return { ok: true }
+}
+
+// Marca del estudio para pantallas sin sesión (login del portal con ?e=<estudio>): solo datos públicos.
+const marcaDe = (e: any) => ({
+  estudio_id: e.id, nombre: e.nombre ?? "", logo_url: e.logo_url ?? null,
+  color_primario: esColor(e.color_primario) ? e.color_primario : COLOR_POR_DEFECTO,
+})
+
+const marcaEstudio: Handler = async ({ p }) => {
+  if (!/^[0-9a-f-]{36}$/i.test(p.id)) throw new HttpError(404, "Estudio no encontrado")
+  const e = await q(db().from("estudios").select("id,nombre,logo_url,color_primario").eq("id", p.id).maybeSingle())
+  if (!e) throw new HttpError(404, "Estudio no encontrado")
+  // El WhatsApp del estudio, para "¿Olvidaste tu contraseña?" antes de iniciar sesión.
+  const wa = await q(db().from("configuracion").select("valor").eq("estudio_id", e.id).eq("clave", "whatsapp_estudio").maybeSingle()).catch(() => null)
+  return { ...marcaDe(e), whatsapp: wa?.valor || null }
 }
 
 const completarOnboarding: Handler = async ({ req }) => {
@@ -184,7 +248,8 @@ const completarOnboarding: Handler = async ({ req }) => {
       }
     }
     try {
-      await q(db().from("estudios").update({ nombre, onboarding_completo: true }).eq("id", estudioId))
+      const marca = esColor(data.color_primario) ? { color_primario: data.color_primario.toUpperCase() } : {}
+      await q(db().from("estudios").update({ nombre, onboarding_completo: true, ...marca }).eq("id", estudioId))
     } catch {
       await q(db().from("estudios").update({ nombre }).eq("id", estudioId))
     }
@@ -668,6 +733,10 @@ const datosPortal: Handler = async ({ req, p }) => {
     novedades = []
   }
 
+  const estudio = cliente.estudio_id
+    ? await q(d.from("estudios").select("id,nombre,logo_url,color_primario,estado").eq("id", cliente.estudio_id).maybeSingle()).catch(() => null)
+    : null
+
   let cfg: Record<string, string> = {}
   try {
     const filas = await q(
@@ -752,6 +821,10 @@ const datosPortal: Handler = async ({ req, p }) => {
     ultima_recat: ultimaRecat, recat_pendiente: recatPendiente,
     gastos: gastos12, total_gastos: totalGastos,
     arca_auto: arcaAuto, jurisdicciones, cm05_vencimiento: cfg.cm05_vencimiento ?? null,
+    // Marca blanca: logo, nombre y color del estudio.
+    estudio_id: cliente.estudio_id ?? null, estudio: estudio ? marcaDe(estudio) : null,
+    logo_url: estudio?.logo_url ?? null, color_primario: estudio ? marcaDe(estudio).color_primario : COLOR_POR_DEFECTO,
+    estudio_suspendido: !!estudio && !ESTADOS_HABILITADOS.includes(estudio.estado),
   }
 }
 
@@ -823,12 +896,18 @@ const portalLogin: Handler = async ({ req }) => {
   const cuit = soloDigitos(get(data, "cuit", ""))
   const password = get(data, "password", "")
   if (!cuit || !password) return { ok: false, error: "CUIT y contraseña requeridos" }
-  const cliente = await clientePorCuit(cuit, "id,slug,nombre,apellido,activo,portal_password,cuit")
+  const cliente = await clientePorCuit(cuit, "id,slug,nombre,apellido,activo,portal_password,cuit,estudio_id")
   if (!cliente) return { ok: false, error: "Credenciales incorrectas" }
   if (password !== (cliente.portal_password || cuit)) return { ok: false, error: "Credenciales incorrectas" }
+  const estudio = cliente.estudio_id
+    ? await q(db().from("estudios").select("id,nombre,logo_url,color_primario,estado").eq("id", cliente.estudio_id).maybeSingle()).catch(() => null)
+    : null
+  // Con el estudio suspendido el portal de sus clientes queda en pausa.
+  const suspendido = !!estudio && !ESTADOS_HABILITADOS.includes(estudio.estado)
   return {
     ok: true, slug: cliente.slug, nombre: cliente.nombre ?? "", apellido: cliente.apellido ?? "",
-    activo: cliente.activo ?? true, token: await firmarTokenPortal(cliente.slug, cliente.id),
+    activo: (cliente.activo ?? true) && !suspendido, token: await firmarTokenPortal(cliente.slug, cliente.id),
+    marca: estudio ? marcaDe(estudio) : null,
   }
 }
 
@@ -1327,6 +1406,10 @@ const guardarConfiguracion: Handler = async ({ req }) => {
       errors.push(`${clave}: ${e?.message ?? e}`)
       console.log(`[configuracion] Error guardando ${clave} para estudio ${estudioId}: ${e?.message ?? e}`)
     }
+    // El nombre que muestran el admin, el portal y el superadmin es estudios.nombre.
+    if (clave === "nombre_estudio" && String(valor ?? "").trim()) {
+      await db().from("estudios").update({ nombre: String(valor).trim().slice(0, 80) }).eq("id", estudioId)
+    }
   }
   return errors.length ? { ok: false, errors } : { ok: true }
 }
@@ -1600,6 +1683,9 @@ export const rutas: [string, string, Handler][] = [
 
   ["GET", "/estudios/me", estudiosMe],
   ["PATCH", "/estudios/me", actualizarEstudio],
+  ["POST", "/estudios/me/logo", subirLogo],
+  ["DELETE", "/estudios/me/logo", quitarLogo],
+  ["GET", "/marca/:id", marcaEstudio],
   ["PATCH", "/estudios/onboarding", completarOnboarding],
   ["POST", "/estudios/migrar-datos", migrarDatos],
 
@@ -1682,4 +1768,6 @@ export const rutas: [string, string, Handler][] = [
   ["DELETE", "/alertas/:id", eliminarAlerta],
 
   ["POST", "/documentos/:slug", crearDocumento],
+
+  ...rutasSuperadmin,
 ]

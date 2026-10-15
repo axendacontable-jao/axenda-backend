@@ -97,7 +97,8 @@ export function pyStr(v: unknown): string {
 
 let jwks: ReturnType<typeof createRemoteJWKSet> | null = null
 
-export async function getEstudioId(req: Request): Promise<string> {
+// Usuario (sub del JWT de Supabase) que hace el pedido.
+export async function usuarioDe(req: Request): Promise<{ id: string; email: string }> {
   const auth = req.headers.get("authorization") ?? ""
   if (!auth.startsWith("Bearer ")) throw new HttpError(401, "Autenticación requerida")
   const token = auth.slice(7)
@@ -114,10 +115,16 @@ export async function getEstudioId(req: Request): Promise<string> {
   } catch (e: any) {
     throw new HttpError(401, `Token inválido: ${e?.message ?? e}`)
   }
-  const userId = payload.sub
-  if (!userId) throw new HttpError(401, "Token sin subject")
+  if (!payload.sub) throw new HttpError(401, "Token sin subject")
+  return { id: payload.sub, email: String(payload.email ?? "") }
+}
 
-  const rows = await q(db().from("estudios").select("id,estado").eq("owner_id", userId).limit(1))
+// Estados con los que el estudio puede usar la app (suspendida queda bloqueada).
+export const ESTADOS_HABILITADOS = ["activa", "trial"]
+
+export async function getEstudioId(req: Request): Promise<string> {
+  const { id: userId } = await usuarioDe(req)
+  const rows = await q(db().from("estudios").select("id,estado,ultimo_acceso_at").eq("owner_id", userId).limit(1))
   if (!rows?.length) {
     const ins = await q(
       db().from("estudios").insert({ owner_id: userId, nombre: "Mi Estudio", estado: "activa" }).select(),
@@ -125,6 +132,19 @@ export async function getEstudioId(req: Request): Promise<string> {
     if (!ins?.length) throw new HttpError(403, "No se pudo inicializar el estudio")
     return ins[0].id
   }
-  if (rows[0].estado !== "activa") throw new HttpError(403, `Estudio ${rows[0].estado}`)
+  if (!ESTADOS_HABILITADOS.includes(rows[0].estado)) throw new HttpError(403, `Estudio ${rows[0].estado}`)
+  // Último acceso para el superadmin (como mucho una escritura cada 10 minutos).
+  const ultimo = Date.parse(rows[0].ultimo_acceso_at ?? "")
+  if (!(Date.now() - ultimo < 10 * 60_000)) {
+    await db().from("estudios").update({ ultimo_acceso_at: ahoraIsoZ() }).eq("id", rows[0].id)
+  }
   return rows[0].id
+}
+
+// Pantalla de superadmin: el usuario tiene que estar en la tabla superadmins. No usa el estudio.
+export async function exigirSuperadmin(req: Request): Promise<{ id: string; email: string }> {
+  const usuario = await usuarioDe(req)
+  const fila = await q(db().from("superadmins").select("user_id").eq("user_id", usuario.id).maybeSingle())
+  if (!fila) throw new HttpError(403, "No tenés acceso al superadmin")
+  return usuario
 }

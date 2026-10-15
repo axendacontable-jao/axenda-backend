@@ -1,5 +1,5 @@
 import type { Config, Context } from "@netlify/functions"
-import { db, q } from "../../src/core.mts"
+import { ESTADOS_HABILITADOS, db, q } from "../../src/core.mts"
 import { despacharSincronizacion, finPeriodoProximaRecategorizacion } from "../../src/sincronizacion.mts"
 
 // Día 2 de cada mes: trae de ARCA el período de la próxima recategorización de todos los
@@ -7,7 +7,8 @@ import { despacharSincronizacion, finPeriodoProximaRecategorizacion } from "../.
 export default async (_req: Request, context: Context) => {
   const { anio, mes } = finPeriodoProximaRecategorizacion()
   const filas = (await q(
-    db().from("credenciales_arca").select("cliente_id, clientes!inner(activo)").eq("clientes.activo", true),
+    db().from("credenciales_arca").select("cliente_id, clientes!inner(activo), estudios!inner(estado)")
+      .eq("clientes.activo", true).in("estudios.estado", ESTADOS_HABILITADOS),
   )) ?? []
   const base = context.site.url ?? Netlify.env.get("URL")
   const resultados = await Promise.allSettled(

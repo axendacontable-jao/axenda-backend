@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manual del contador — Axenda Contable</title>
+<link rel="stylesheet" href="/ayuda/ayuda.css">
+</head>
+<body>
+
+<header class="cabecera" id="inicio">
+  <div class="cabecera-in">
+    <div class="marca">Axenda Contable · Ayuda</div>
+    <h1>Manual del contador</h1>
+    <p>Todo lo que necesitás para usar el panel: dar de alta clientes, seguir sus cuotas, planes de pago, documentos y recategorizaciones. Si buscás la guía para tus clientes, está en <a href="/ayuda/cliente/">el manual del cliente</a>.</p>
+  </div>
+</header>
+
+<div class="cuerpo">
+  <nav class="indice" aria-label="Índice">
+    <div class="indice-titulo">Índice</div>
+    <ol>
+      <li><a href="#primeros-pasos">Primeros pasos</a>
+        <ul>
+          <li><a href="#registro">Registro</a></li>
+          <li><a href="#configurar-estudio">Configurar el estudio</a></li>
+          <li><a href="#marca">Logo y color</a></li>
+        </ul>
+      </li>
+      <li><a href="#clientes">Clientes</a>
+        <ul>
+          <li><a href="#alta">Dar de alta</a></li>
+          <li><a href="#acceso-portal">Enviar el acceso al portal</a></li>
+          <li><a href="#importar">Importar comprobantes</a></li>
+          <li><a href="#gastos">Cargar gastos</a></li>
+          <li><a href="#arca">Clave fiscal y ARCA</a></li>
+          <li><a href="#facturar">Facturar desde la app</a></li>
+        </ul>
+      </li>
+      <li><a href="#cuotas">Cuotas del mes</a></li>
+      <li><a href="#planes">Planes de pago</a></li>
+      <li><a href="#documentos">Documentos</a></li>
+      <li><a href="#recategorizacion">Recategorización</a></li>
+      <li><a href="#configuracion">Configuración</a>
+        <ul>
+          <li><a href="#topes">Tablas de topes</a></li>
+          <li><a href="#whatsapp">Plantillas de WhatsApp</a></li>
+          <li><a href="#parametros">Parámetros y tareas</a></li>
+        </ul>
+      </li>
+    </ol>
+  </nav>
+
+  <main>
+    <section id="primeros-pasos">
+      <h2>1. Primeros pasos</h2>
+      <p class="bajada">Creá tu cuenta, completá los datos del estudio y personalizá cómo te ven tus clientes.</p>
+
+      <h3 id="registro">Registro</h3>
+      <ol>
+        <li>Entrá a <a href="/">axenda-contable.netlify.app</a> y elegí la pestaña <span class="boton">Registrarse</span>.</li>
+        <li>Escribí el nombre del estudio, tu email y una contraseña de al menos 6 caracteres. Tocá <span class="boton">Crear cuenta</span>.</li>
+        <li>Te llega un email de confirmación. Abrí el link para activar la cuenta y después volvé a entrar con <span class="boton">Iniciar sesión</span>.</li>
+      </ol>
+      <div class="nota cuidado">Si no te llega el email, revisá la carpeta de spam. Si sigue sin llegar, escribinos a <a href="mailto:axendacontable@gmail.com">axendacontable@gmail.com</a>.</div>
+
+      <h3 id="configurar-estudio">Configurar el estudio</h3>
+      <p>La primera vez que entrás aparece <strong>Configurá tu estudio</strong>. Completá:</p>
+      <ul>
+        <li><strong>Nombre del estudio</strong> (obligatorio): es el que ven tus clientes en su portal.</li>
+        <li><strong>Provincia principal</strong>: se usa para el componente provincial de la cuota.</li>
+        <li><strong>WhatsApp y email de contacto</strong>: el botón de WhatsApp del portal de tus clientes te escribe a este número.</li>
+        <li><strong>Logo y color primario</strong> (opcionales): ver el punto siguiente.</li>
+      </ul>
+      <p>Todo esto se puede cambiar después en <span class="boton">Configuración → Datos del estudio</span>.</p>
+
+      <h3 id="marca">Logo y color de tu estudio</h3>
+      <p>Tu logo, tu nombre y tu color reemplazan a Axenda Contable en tu panel y en el portal de tus clientes (botones, barras de progreso y etiquetas).</p>
+      <ol>
+        <li>Andá a <span class="boton">Configuración → Datos del estudio</span> y bajá hasta <strong>Marca del estudio</strong>.</li>
+        <li>Tocá <span class="boton">↑ Subir logo</span> y elegí una imagen PNG, JPG o WEBP de hasta 1 MB. Se ve sobre un recuadro blanco, así que un logo con fondo transparente queda mejor.</li>
+        <li>Elegí el color con el selector, escribí el código (por ejemplo <code>#1E88E5</code>) o tocá uno de los sugeridos. La vista previa cambia en el momento.</li>
+        <li>Tocá <span class="boton">Guardar color</span>. Si no te convence, <span class="boton">Volver al verde de Axenda</span> lo deja como estaba.</li>
+      </ol>
+      <div class="nota">Elegí un color oscuro o intenso: se usa también para textos sobre fondo blanco, y un color muy claro se lee mal.</div>
+      <a class="arriba" href="#inicio">↑ Volver al índice</a>
+    </section>
+
+    <section id="clientes">
+      <h2>2. Clientes</h2>
+      <p class="bajada">En <span class="boton">👥 Clientes</span> están todas las fichas. Cada tarjeta muestra la categoría, lo facturado en los últimos 12 meses contra el tope y el semáforo.</p>
+
+      <h3 id="alta">Dar de alta un cliente</h3>
+      <ol>
+        <li>Tocá <span class="boton">+ Nuevo cliente</span>.</li>
+        <li>Escribí el <strong>CUIT</strong>: la app busca en ARCA el nombre, el apellido y la categoría. Revisalos.</li>
+        <li>Completá la <strong>cuota mensual</strong>, la <strong>provincia</strong>, el <strong>tipo de actividad</strong> (servicios o venta de bienes), el <strong>WhatsApp</strong> y la <strong>modalidad de Ingresos Brutos</strong> (monotributo unificado, régimen simplificado, convenio multilateral, etc.).</li>
+        <li>Si trabaja en relación de dependencia, marcá la casilla: la cuota se calcula sin jubilación ni obra social.</li>
+        <li>Tocá <span class="boton">Guardar cliente</span>.</li>
+      </ol>
+      <p>Para cambiar datos más adelante, abrí el cliente y tocá <span class="boton">✏ Editar datos</span>. Con <span class="boton">Desactivar</span> el cliente deja de contar en los totales y su portal queda en pausa.</p>
+
+      <h3 id="acceso-portal">Enviar el acceso al portal</h3>
+      <p>Abrí el cliente y tocá <span class="boton">📨 Enviar acceso</span>. Se arma un mensaje de bienvenida con el nombre de tu estudio, el link al portal y cómo entrar (usuario: su CUIT; contraseña inicial: su CUIT sin guiones). Podés editarlo y mandarlo por WhatsApp o por email, o copiarlo.</p>
+      <p>El link lleva la marca de tu estudio: el cliente ve tu logo y tu color desde la pantalla de ingreso.</p>
+
+      <h3 id="importar">Importar comprobantes (facturación)</h3>
+      <ol>
+        <li>En ARCA, entrá a <strong>Mis Comprobantes → Emitidos</strong>, elegí el período y descargá el Excel.</li>
+        <li>En la tarjeta del cliente tocá <span class="boton">↑ Facturas</span> (o, dentro del cliente, <span class="boton">↑ Facturas emitidas</span>) y elegí el archivo <code>.xlsx</code>.</li>
+        <li>La app suma la facturación de cada mes. Las notas de crédito se restan solas.</li>
+      </ol>
+      <p>También podés cargar un mes a mano en la pestaña <strong>Facturación</strong> del cliente.</p>
+
+      <h3 id="gastos">Cargar gastos</h3>
+      <p>Igual que la facturación, pero con el Excel de <strong>Mis Comprobantes → Recibidos</strong> y el botón <span class="boton">↑ Gastos</span>. El cliente ve en su portal cuánto gastó contra lo que facturó.</p>
+
+      <h3 id="arca">Clave fiscal y actualización desde ARCA</h3>
+      <p>Si cargás la clave fiscal del cliente en la pestaña <strong>ARCA</strong>, la app trabaja sola:</p>
+      <ul>
+        <li>El <strong>día 2 de cada mes</strong> trae las facturas emitidas y los gastos del período de la próxima recategorización, la deuda de la cuenta corriente (CCMA), los planes de Mis Facilidades y, en Río Negro, la cuenta corriente y los planes de ART.</li>
+        <li>El <strong>día 22</strong> vuelve a mirar la CCMA para saber quién pagó la cuota del mes.</li>
+        <li>Con <span class="boton">↻ Actualizar desde ARCA</span> lo hacés en el momento, sin esperar a esas fechas.</li>
+      </ul>
+      <div class="nota">La clave se guarda cifrada y nunca se muestra en pantalla. Si el cliente tiene verificación en dos pasos, la app no puede entrar: te lo avisa en la pestaña ARCA.</div>
+
+      <h3 id="facturar">Facturar desde la app</h3>
+      <p>Con la clave fiscal cargada y <span class="boton">Configuración → Datos del estudio → Facturar desde la app</span> activado, en la pestaña <strong>Facturar</strong> del cliente cargás el receptor (CUIT, DNI o consumidor final), la descripción, la fecha y el monto. El robot emite la Factura C en Comprobantes en línea, guarda el PDF oficial en los documentos del cliente y suma el importe a su facturación.</p>
+      <p>Antes de confirmar, el robot compara el resumen de ARCA con lo pedido; si algo no coincide, no emite nada y te muestra qué pasó.</p>
+      <a class="arriba" href="#inicio">↑ Volver al índice</a>
+    </section>
+
+    <section id="cuotas">
+      <h2>3. Cuotas del mes</h2>
+      <p class="bajada">En <span class="boton">💳 Cuotas del mes</span> ves quién pagó la cuota del monotributo de este mes.</p>
+      <ul>
+        <li>Cada cliente aparece <strong>al día</strong>, <strong>pendiente</strong> o <strong>vencido</strong>. La cuota vence el día 20.</li>
+        <li><strong>Marcar como pagada:</strong> tocá el estado del cliente y cambialo a pagado. Esto es para los clientes sin clave fiscal; los que tienen clave se actualizan solos con lo que dice ARCA.</li>
+        <li>El cliente también puede avisar desde su portal con el botón <span class="boton">✓ Ya pagué</span>.</li>
+        <li>Al empezar un mes nuevo podés reiniciar todos a <strong>pendiente</strong> con el botón de reinicio de la pantalla.</li>
+      </ul>
+      <h3>Historial de cuotas</h3>
+      <p>Dentro de cada cliente está el historial mes por mes: qué cuotas se pagaron, cuáles se pagaron tarde (con intereses) y cuáles se deben. Con clave fiscal sale de la cuenta corriente de ARCA y de ART Río Negro.</p>
+      <h3>Recordatorios</h3>
+      <p>Desde el Dashboard podés mandar por WhatsApp los avisos de vencimiento a los clientes que todavía no pagaron. El texto sale de las <a href="#whatsapp">plantillas de WhatsApp</a>.</p>
+      <a class="arriba" href="#inicio">↑ Volver al índice</a>
+    </section>
+
+    <section id="planes">
+      <h2>4. Planes de pago</h2>
+      <p class="bajada">Los planes de Mis Facilidades (ARCA) y de otros organismos, con sus cuotas.</p>
+      <h3>Cargar un plan desde el PDF</h3>
+      <ol>
+        <li>En ARCA, entrá a <strong>Mis Facilidades</strong> y descargá el PDF del plan.</li>
+        <li>Abrí el cliente, pestaña <strong>Planes</strong>, y subí el PDF.</li>
+        <li>La app lee el número de plan, la cantidad de cuotas, los montos y los vencimientos. Revisalos y guardá.</li>
+        <li>En el segundo paso, marcá las cuotas que ya están pagas y si se pagaron al primer o al segundo vencimiento.</li>
+      </ol>
+      <p>También podés cargar un plan a mano (organismo, número, cuotas, montos y próximo vencimiento).</p>
+      <h3>Marcar cuotas</h3>
+      <p>En <span class="boton">📋 Planes de pago</span> ves todos los planes de todos los clientes. Abrí un plan para ver sus cuotas y marcá cada una como pagada, al primer o al segundo vencimiento.</p>
+      <p>Cuando el plan termina, tocá <span class="boton">✅ Cancelado</span> en la pestaña Planes del cliente; si el organismo lo da por caído, <span class="boton">✗ Caído</span>. Los dos se pueden deshacer con <span class="boton">↩ Reactivar</span>.</p>
+      <div class="nota">Con clave fiscal, la app lee sola el estado de los planes en Mis Facilidades y en ART Río Negro y lo muestra en cada plan.</div>
+      <a class="arriba" href="#inicio">↑ Volver al índice</a>
+    </section>
+
+    <section id="documentos">
+      <h2>5. Documentos</h2>
+      <p class="bajada">La bóveda de documentos de cada cliente: lo que cargás vos lo ve el cliente en su portal.</p>
+      <ol>
+        <li>Abrí el cliente, pestaña <strong>Documentos</strong>, y tocá <span class="boton">+ Cargar documento</span>.</li>
+        <li>Elegí el tipo (constancia, plan de pago, comprobante, etc.), poné un nombre y la fecha, y adjuntá el archivo.</li>
+      </ol>
+      <ul>
+        <li>Las <strong>facturas que emite el robot</strong> se guardan solas, con su PDF oficial.</li>
+        <li>La <strong>constancia de inscripción</strong> se descarga en PDF con <span class="boton">⬇ Constancia (PDF)</span>, con los datos actuales de ARCA.</li>
+        <li>El cliente puede subir sus comprobantes desde el portal (PDF o imagen, hasta 4 MB). Esos aparecen con la etiqueta <strong>Lo subió el cliente</strong>.</li>
+      </ul>
+      <a class="arriba" href="#inicio">↑ Volver al índice</a>
+    </section>
+
+    <section id="recategorizacion">
+      <h2>6. Recategorización</h2>
+      <p class="bajada">El semáforo compara lo facturado en los últimos 12 meses con el tope anual de la categoría.</p>
+      <div class="colores">
+        <div class="color c-verde"><strong>En orden</strong>Menos del 60% del tope.</div>
+        <div class="color c-amarillo"><strong>Atención</strong>Entre el 60% y el 85%.</div>
+        <div class="color c-rojo"><strong>Al límite</strong>85% o más: revisá si tiene que subir de categoría.</div>
+      </div>
+      <h3>Ventanas de recategorización</h3>
+      <table>
+        <tr><th>Ventana</th><th>Período que se evalúa</th></tr>
+        <tr><td>20 de enero al 5 de febrero</td><td>Enero a diciembre del año anterior</td></tr>
+        <tr><td>20 de julio al 5 de agosto</td><td>Julio del año anterior a junio</td></tr>
+      </table>
+      <p>Arriba a la derecha del panel ves cuántos días faltan para la próxima ventana; durante la ventana se pone en rojo.</p>
+      <h3>Seguimiento</h3>
+      <ol>
+        <li>Abrí el cliente, pestaña <strong>Recategorización</strong>.</li>
+        <li>Revisá lo facturado del período, la categoría que corresponde y el margen que le queda.</li>
+        <li>Cuando hagas el trámite en ARCA, tocá <span class="boton">+ Registrar</span> y cargá la categoría nueva y la fecha. Queda en el historial y el cliente deja de figurar como pendiente.</li>
+      </ol>
+      <a class="arriba" href="#inicio">↑ Volver al índice</a>
+    </section>
+
+    <section id="configuracion">
+      <h2>7. Configuración</h2>
+      <p class="bajada">En <span class="boton">⚙️ Configuración</span> están las tablas, los mensajes y los datos del estudio.</p>
+
+      <h3 id="topes">Tablas de topes y componentes</h3>
+      <ol>
+        <li>Pestaña <strong>Topes</strong> → <span class="boton">↑ Cargar / Actualizar tabla</span>.</li>
+        <li>Elegí qué tabla actualizar: <strong>topes nacionales de ARCA</strong> o el <strong>componente provincial</strong> de Río Negro, Neuquén o Buenos Aires.</li>
+        <li>Subí el PDF o el Excel oficial. La app muestra las columnas que espera para cada tabla.</li>
+      </ol>
+      <p>Actualizalas cada vez que ARCA o la provincia publiquen valores nuevos (en general, en febrero y en agosto). Los topes se usan para el semáforo y el componente provincial para la deuda estimada.</p>
+
+      <h3 id="whatsapp">Plantillas de WhatsApp</h3>
+      <p>Pestaña <strong>Mensajes WhatsApp</strong>. Hay tres plantillas: vencimiento de cuota, alerta de límite de facturación y vencimiento de plan de pago. Tocá las variables para insertarlas en el texto; al enviar se reemplazan por los datos de cada cliente:</p>
+      <table>
+        <tr><th>Variable</th><th>Se reemplaza por</th></tr>
+        <tr><td><code>{nombre}</code></td><td>Nombre del cliente</td></tr>
+        <tr><td><code>{monto}</code></td><td>Monto de la cuota</td></tr>
+        <tr><td><code>{mes}</code></td><td>Mes actual</td></tr>
+        <tr><td><code>{porcentaje}</code> · <code>{margen}</code> · <code>{fecha_corte}</code></td><td>Cuánto del tope usó, cuánto le queda y la fecha del próximo corte</td></tr>
+        <tr><td><code>{numero_cuota}</code> · <code>{nombre_plan}</code> · <code>{fecha_venc}</code></td><td>Datos de la cuota del plan de pago</td></tr>
+        <tr><td><code>{link_portal}</code></td><td>Link al portal del cliente</td></tr>
+      </table>
+
+      <h3 id="parametros">Parámetros y tareas mensuales</h3>
+      <ul>
+        <li><strong>Parámetros:</strong> cuántos días antes del vencimiento se pone en amarillo la alerta del portal y cuál es el próximo ciclo de recategorización.</li>
+        <li><strong>Tareas mensuales:</strong> tu lista de pendientes de cada mes. Aparecen en el Dashboard, se reinician al empezar el mes y, si les ponés día, se ven en el calendario.</li>
+        <li><strong>Datos del estudio:</strong> nombre, WhatsApp, email, vencimiento del CM05, facturación desde la app y <a href="#marca">marca del estudio</a>.</li>
+      </ul>
+      <a class="arriba" href="#inicio">↑ Volver al índice</a>
+    </section>
+  </main>
+</div>
+
+<div class="pie">¿No encontrás lo que buscás? Escribinos a <a href="mailto:axendacontable@gmail.com">axendacontable@gmail.com</a> · Desarrollado por <a href="https://axenda-contable.netlify.app">Axenda Contable</a></div>
+</body>
+</html>

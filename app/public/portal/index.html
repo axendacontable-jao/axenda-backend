@@ -9,7 +9,7 @@
 <style>
 :root {
   --bg: #F2F4F8; --card: #FFFFFF; --sidebar-bg: #1B2D4F;
-  --green: #2BAF82; --blue: #1B2D4F; --yellow: #E8A020; --red: #E04545;
+  --green: #2BAF82; --green-dark:#1E8F68; --green-claro:#2BAF82; --blue: #1B2D4F; --yellow: #E8A020; --red: #E04545;
   --text: #1B2D4F; --muted: #6B7A96; --border: #DDE3EE; --light: #EAF0F6;
 }
 *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
@@ -22,12 +22,22 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
   z-index:9999; transition:opacity .4s;
 }
 #loading-screen.hidden { opacity:0; pointer-events:none; }
-.loading-logo { font-size:28px; font-weight:700; color:var(--green); letter-spacing:.06em; margin-bottom:6px; }
+.loading-logo { font-size:28px; font-weight:700; color:var(--green-claro); letter-spacing:.06em; margin-bottom:6px; }
 .loading-sub  { font-size:11px; color:#5D8AB0; letter-spacing:.14em; text-transform:uppercase; margin-bottom:36px; }
 .loading-bar-track { width:200px; height:3px; background:#243C65; border-radius:3px; overflow:hidden; }
 .loading-bar-fill  { height:100%; background:var(--green); border-radius:3px; animation:ldp 1.6s ease-out forwards; }
 @keyframes ldp { from{width:0} to{width:100%} }
 .loading-msg { font-size:12px; color:#5D8AB0; margin-top:12px; }
+/* Marca blanca: logo del estudio sobre fondo blanco para que se vea en el azul. */
+.marca-logo { display:none; max-width:200px; max-height:64px; object-fit:contain; background:#fff; border-radius:10px; padding:6px 10px; margin:0 auto 14px; }
+.topbar-marca { display:flex; align-items:center; gap:12px; min-width:0; }
+.topbar-logo { display:none; height:36px; max-width:110px; object-fit:contain; background:#fff; border-radius:7px; padding:3px 6px; flex-shrink:0; }
+.topbar-estudio { font-size:11px; color:rgba(255,255,255,.55); letter-spacing:.06em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.portal-footer { text-align:center; font-size:12px; color:var(--muted); padding:28px 0 8px; }
+.portal-footer a { color:var(--muted); }
+.portal-footer a:hover { color:var(--green); }
+.login-credito { text-align:center; margin-top:14px; font-size:11px; color:rgba(255,255,255,.3); }
+.login-credito a { color:rgba(255,255,255,.45); }
 
 /* ── LOGIN ── */
 #login-screen {
@@ -58,7 +68,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 .login-btn:active   { transform:scale(.98); }
 .login-btn:disabled { opacity:.55; cursor:default; }
 .login-foot { text-align:center; margin-top:20px; font-size:13px; color:rgba(255,255,255,.45); }
-.login-foot a { color:var(--green); text-decoration:none; font-weight:500; }
+.login-foot a { color:var(--green-claro); text-decoration:none; font-weight:500; }
 .err-box { background:#fee8e8; color:var(--red); padding:11px 14px; border-radius:10px; font-size:13px; margin-bottom:16px; text-align:center; }
 
 /* ── INACTIVE ── */
@@ -68,7 +78,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
   text-align:center; padding:40px 24px; z-index:9988; gap:12px;
 }
 #inactive-screen .in-logo { font-size:22px; font-weight:700; color:var(--blue); letter-spacing:1px; background:var(--sidebar-bg); border-radius:12px; padding:8px 20px; color:#fff; margin-bottom:10px; }
-#inactive-screen .in-logo em { font-style:normal; color:var(--green); }
+#inactive-screen .in-logo em { font-style:normal; color:var(--green-claro); }
 #inactive-screen .in-icon { font-size:56px; }
 #inactive-screen h2 { font-size:22px; font-weight:700; color:var(--blue); }
 #inactive-screen p  { font-size:14px; color:var(--muted); line-height:1.6; max-width:380px; }
@@ -131,7 +141,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 .topbar-title { font-size:15px; font-weight:600; color:#fff; }
 .topbar-right { display:flex; align-items:center; gap:10px; }
 .topbar-date  { font-size:12px; color:rgba(255,255,255,.5); font-family:'DM Mono',monospace; }
-.badge-ok     { background:rgba(43,175,130,.22); color:#2BAF82; border:1px solid rgba(43,175,130,.35); font-size:11px; padding:4px 10px; border-radius:20px; font-weight:500; display:flex; align-items:center; gap:5px; }
+.badge-ok     { background:color-mix(in srgb, var(--green) 22%, transparent); color:var(--green-claro); border:1px solid color-mix(in srgb, var(--green) 35%, transparent); font-size:11px; padding:4px 10px; border-radius:20px; font-weight:500; display:flex; align-items:center; gap:5px; }
 .badge-alert  { background:rgba(232,160,32,.22); color:#E8A020; border:1px solid rgba(232,160,32,.35); font-size:11px; padding:4px 10px; border-radius:20px; font-weight:500; display:flex; align-items:center; gap:5px; animation:pulse 2.5s ease-in-out infinite; }
 .badge-danger { background:rgba(224,69,69,.22); color:#ff7575; border:1px solid rgba(224,69,69,.35); font-size:11px; padding:4px 10px; border-radius:20px; font-weight:500; display:flex; align-items:center; gap:5px; animation:pulse 2.5s ease-in-out infinite; }
 @keyframes pulse { 0%,100%{opacity:1}50%{opacity:.7} }
@@ -164,10 +174,10 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 .card-label { font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:#8CA0BE; margin-bottom:14px; font-weight:500; }
 
 /* ── SEMÁFORO ── */
-.semaforo-card::before { content:''; position:absolute; top:-60px; right:-60px; width:200px; height:200px; background:radial-gradient(circle,#2BAF8210 0%,transparent 70%); pointer-events:none; }
+.semaforo-card::before { content:''; position:absolute; top:-60px; right:-60px; width:200px; height:200px; background:radial-gradient(circle,color-mix(in srgb, var(--green) 6%, transparent) 0%,transparent 70%); pointer-events:none; }
 .semaforo-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:18px; }
 .semaforo-badge { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600; padding:4px 12px; border-radius:20px; letter-spacing:.05em; }
-.badge-verde    { background:#2BAF8218; border:1px solid #2BAF8233; color:var(--green); }
+.badge-verde    { background:color-mix(in srgb, var(--green) 9%, transparent); border:1px solid color-mix(in srgb, var(--green) 20%, transparent); color:var(--green); }
 .badge-amarillo { background:#E8A02018; border:1px solid #E8A02033; color:var(--yellow); }
 .badge-rojo     { background:#E0454514; border:1px solid #E0454528; color:var(--red); }
 .dot { width:7px; height:7px; border-radius:50%; background:currentColor; }
@@ -180,7 +190,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 .progress-meta-val   { font-family:'DM Mono',monospace; font-size:12px; }
 .bar-track { height:6px; background:var(--light); border-radius:6px; overflow:hidden; }
 .bar-fill  { height:100%; border-radius:6px; transition:width 1.2s cubic-bezier(.22,1,.36,1); }
-.bar-green  { background:linear-gradient(90deg,#2BAF82,#1E8F68); }
+.bar-green  { background:linear-gradient(90deg,var(--green),var(--green-dark)); }
 .bar-yellow { background:linear-gradient(90deg,#E8A020,#F5C842); }
 .bar-red    { background:linear-gradient(90deg,#E04545,#C83030); }
 
@@ -198,7 +208,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 .stat-val { font-size:26px; font-weight:300; font-family:'DM Mono',monospace; letter-spacing:-.01em; line-height:1.1; margin:6px 0 4px; }
 .stat-sub { font-size:12px; color:var(--muted); }
 .stat-badge { display:inline-flex; align-items:center; gap:4px; font-size:11px; padding:3px 8px; border-radius:12px; font-weight:500; margin-top:8px; }
-.sbadge-up     { background:#2BAF8215; color:var(--green); }
+.sbadge-up     { background:color-mix(in srgb, var(--green) 8%, transparent); color:var(--green); }
 .sbadge-warn   { background:#E8A02015; color:var(--yellow); }
 .sbadge-danger { background:#E0454514; color:var(--red); }
 
@@ -210,7 +220,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 /* ── ALERTAS ── */
 .alertas-list { display:flex; flex-direction:column; gap:8px; margin-top:2px; }
 .alerta-item  { display:flex; align-items:flex-start; gap:10px; padding:11px 12px; border-radius:10px; border:1px solid transparent; }
-.alerta-green  { background:#2BAF8212; border-color:#2BAF8228; }
+.alerta-green  { background:color-mix(in srgb, var(--green) 7%, transparent); border-color:color-mix(in srgb, var(--green) 16%, transparent); }
 .alerta-yellow { background:#E8A02015; border-color:#E8A02030; }
 .alerta-red    { background:#E0454514; border-color:#E0454528; }
 .alerta-icon { font-size:15px; margin-top:1px; flex-shrink:0; }
@@ -223,7 +233,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 .boveda-list { display:flex; flex-direction:column; gap:7px; margin-top:2px; }
 .doc-item { display:flex; align-items:center; gap:10px; padding:9px 11px; border-radius:9px; background:var(--light); border:1px solid var(--border); transition:.15s; text-decoration:none; color:inherit; }
 .doc-item:hover { border-color:var(--green); background:#F0FAF6; }
-.doc-icon   { width:32px; height:32px; background:#2BAF8215; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:15px; flex-shrink:0; }
+.doc-icon   { width:32px; height:32px; background:color-mix(in srgb, var(--green) 8%, transparent); border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:15px; flex-shrink:0; }
 .doc-info   { flex:1; min-width:0; }
 .doc-name   { font-size:13px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .doc-date   { font-size:11px; color:var(--muted); margin-top:1px; }
@@ -313,7 +323,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 .deuda-item-desc { font-size:11px; color:var(--muted); margin-top:2px; line-height:1.35; }
 .doc-badge { font-size:10px; font-weight:600; padding:1px 6px; border-radius:5px; margin-right:6px; vertical-align:1px; }
 .tb-constancia { background:#E8F0FE; color:#1a56db; }
-.tb-comprobante { background:#2BAF8218; color:#1E8A66; }
+.tb-comprobante { background:color-mix(in srgb, var(--green) 9%, transparent); color:var(--green-dark); }
 .tb-plan_pago { background:#FFF3CD; color:#856404; }
 .tb-otro { background:var(--border); color:var(--muted); }
 @media (max-width:600px) { .situacion-grid { grid-template-columns:1fr 1fr; } }
@@ -353,8 +363,9 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 
 <!-- LOADING -->
 <div id="loading-screen">
-  <div class="loading-logo">AXENDA</div>
-  <div class="loading-sub">Contable · Portal Cliente</div>
+  <img class="marca-logo" data-marca-logo alt="">
+  <div class="loading-logo" id="loading-logo">AXENDA</div>
+  <div class="loading-sub" id="loading-sub">Contable · Portal Cliente</div>
   <div class="loading-bar-track"><div class="loading-bar-fill"></div></div>
   <div class="loading-msg" id="loading-msg">Verificando sesión...</div>
 </div>
@@ -362,7 +373,8 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 <!-- LOGIN -->
 <div id="login-screen" style="display:none;position:fixed;inset:0;background:var(--sidebar-bg);display:none;align-items:center;justify-content:center;flex-direction:column;padding:32px 20px;z-index:9990;">
   <div class="login-logo-wrap">
-    <h1>AXENDA CONTABLE</h1>
+    <img class="marca-logo" data-marca-logo alt="">
+    <h1 id="login-titulo">AXENDA CONTABLE</h1>
     <p>Portal del Cliente</p>
   </div>
   <div class="login-card">
@@ -385,19 +397,21 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
   </div>
   <p class="login-foot">
     ¿Olvidaste tu contraseña?
-    <a id="wa-forgot" href="#" target="_blank" rel="noreferrer">Contactá a Axenda Contable</a>
+    <a id="wa-forgot" href="#" target="_blank" rel="noreferrer">Contactá a <span data-marca-nombre>Axenda Contable</span></a>
   </p>
+  <p class="login-credito"><a href="/ayuda/cliente/" target="_blank" rel="noopener">Ayuda</a> · Desarrollado por <a href="https://axenda-contable.netlify.app" target="_blank" rel="noopener">Axenda Contable</a></p>
 </div>
 
 <!-- INACTIVO -->
 <div id="inactive-screen">
-  <div class="in-logo">AXENDA<em> CONTABLE</em></div>
+  <img class="marca-logo" data-marca-logo alt="">
+  <div class="in-logo" id="in-logo">AXENDA<em> CONTABLE</em></div>
   <div class="in-icon">🔒</div>
   <h2>Tu acceso está pausado</h2>
-  <p>Tu portal fue pausado temporalmente. Contactá a Axenda Contable para más información.</p>
+  <p>Tu portal fue pausado temporalmente. Contactá a <span data-marca-nombre>Axenda Contable</span> para más información.</p>
   <a class="btn-wa-big" id="wa-inactive" href="#" target="_blank" rel="noreferrer">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/></svg>
-    Contactar a Axenda Contable
+    Contactar a <span data-marca-nombre>Axenda Contable</span>
   </a>
   <button class="btn-cerrar-sesion" onclick="doLogout()">Cerrar sesión</button>
 </div>
@@ -415,7 +429,13 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 
   <main class="main">
     <div class="topbar">
-      <div class="topbar-title" id="topbar-title">Portal</div>
+      <div class="topbar-marca">
+        <img class="topbar-logo" data-marca-logo alt="">
+        <div style="min-width:0">
+          <div class="topbar-title" id="topbar-title">Portal</div>
+          <div class="topbar-estudio" data-marca-nombre></div>
+        </div>
+      </div>
       <div class="topbar-right">
         <div id="topbar-badge" class="badge-alert">
           <span>⚠</span> <span id="badge-text">Cargando...</span>
@@ -458,11 +478,11 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
           <div class="gauge-wrap">
             <svg width="110" height="72" viewBox="0 0 110 72" style="flex-shrink:0">
               <path d="M 10 65 A 45 45 0 0 1 100 65" fill="none" stroke="#EAF0F6" stroke-width="8" stroke-linecap="round"/>
-              <path d="M 10 65 A 45 45 0 0 1 55 20" fill="none" stroke="#2BAF8240" stroke-width="8" stroke-linecap="round"/>
+              <path d="M 10 65 A 45 45 0 0 1 55 20" fill="none" style="stroke:color-mix(in srgb, var(--green) 25%, transparent)" stroke-width="8" stroke-linecap="round"/>
               <path d="M 55 20 A 45 45 0 0 1 91 38" fill="none" stroke="#E8A02040" stroke-width="8" stroke-linecap="round"/>
               <path d="M 91 38 A 45 45 0 0 1 100 65" fill="none" stroke="#E0454540" stroke-width="8" stroke-linecap="round"/>
-              <path id="gauge-needle" d="M 10 65 A 45 45 0 0 1 10 65" fill="none" stroke="#2BAF82" stroke-width="8" stroke-linecap="round"/>
-              <circle id="gauge-dot" cx="10" cy="65" r="5" fill="#2BAF82"/>
+              <path id="gauge-needle" d="M 10 65 A 45 45 0 0 1 10 65" fill="none" stroke="var(--green)" stroke-width="8" stroke-linecap="round"/>
+              <circle id="gauge-dot" cx="10" cy="65" r="5" fill="var(--green)"/>
               <text id="gauge-label" x="55" y="63" text-anchor="middle" font-family="DM Mono,monospace" font-size="12" fill="#1B2D4F" font-weight="500">0%</text>
             </svg>
             <div>
@@ -505,7 +525,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
             <svg id="bar-chart-svg" viewBox="0 0 260 108" preserveAspectRatio="none"></svg>
           </div>
           <div class="chart-legend">
-            <div class="legend-item"><div class="legend-dot" style="background:#2BAF82"></div>Facturado</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>Facturado</div>
             <div class="legend-item"><div class="legend-dot" style="background:#E04545"></div>Por encima del límite</div>
             <div class="legend-item"><div class="legend-dot" style="background:#E8A020;border-radius:0;height:2px;width:16px"></div>Referencia mensual</div>
           </div>
@@ -624,9 +644,13 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
       <!-- NOVEDADES -->
       <div id="novedades-section" style="display:none">
         <div class="card">
-          <div class="card-label">Novedades de Axenda Contable</div>
+          <div class="card-label">Novedades de <span data-marca-nombre>Axenda Contable</span></div>
           <div id="novedades-list"></div>
         </div>
+      </div>
+
+      <div class="portal-footer">
+        <a href="/ayuda/cliente/" target="_blank" rel="noopener">Ayuda</a> · Desarrollado por <a href="https://axenda-contable.netlify.app" target="_blank" rel="noopener">Axenda Contable</a>
       </div>
 
     </div>
@@ -683,6 +707,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 const API  = "/api";
 let WA = "549XXXXXXXXX"; // Se sobreescribe con el valor de configuracion.whatsapp del backend
 const SKEY = "axenda_portal_v1";
+const MKEY = "axenda_portal_marca";
 const VKEY = "axenda_alertas_vistas";
 
 const MESES      = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
@@ -693,6 +718,64 @@ let SESSION  = null;  // { slug, nombre, apellido, cuit, activo, exp }
 let DATOS    = null;  // respuesta de /portal/{slug}
 let CLIENTE  = null;  // datos del cliente (puede cambiar por ya-pagué)
 let ALERTAS_GENERADAS = [];
+
+// ── MARCA BLANCA (logo, nombre y color del estudio) ────────────────────────────
+const COLOR_AXENDA = "#2BAF82";
+let VERDE = COLOR_AXENDA;         // color primario real (los SVG no aceptan var())
+let MARCA = null;                 // { estudio_id, nombre, logo_url, color_primario, whatsapp }
+
+function oscurecer(hex, f = 0.8) {
+  const n = parseInt(hex.slice(1), 16);
+  return "#" + [n >> 16, (n >> 8) & 255, n & 255].map(v => Math.round(v * f).toString(16).padStart(2, "0")).join("");
+}
+// Versión del color que se lee sobre el azul marino: se mezcla con blanco hasta tener contraste.
+function aclarar(hex) {
+  const lin = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+  const n = parseInt(hex.slice(1), 16);
+  let rgb = [n >> 16, (n >> 8) & 255, n & 255];
+  for (let i = 0; i < 10; i++) {
+    const l = 0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2]);
+    if (l >= 0.3) break;
+    rgb = rgb.map(v => Math.round(v + (255 - v) * 0.15));
+  }
+  return "#" + rgb.map(v => v.toString(16).padStart(2, "0")).join("");
+}
+const nombreEstudio = () => MARCA?.nombre || "Axenda Contable";
+
+function aplicarMarca(m) {
+  if (!m) return;
+  MARCA = { ...(MARCA || {}), ...m };
+  try { localStorage.setItem(MKEY, JSON.stringify(MARCA)); } catch {}
+  VERDE = /^#[0-9a-f]{6}$/i.test(MARCA.color_primario || "") ? MARCA.color_primario : COLOR_AXENDA;
+  document.documentElement.style.setProperty("--green", VERDE);
+  document.documentElement.style.setProperty("--green-dark", oscurecer(VERDE));
+  document.documentElement.style.setProperty("--green-claro", aclarar(VERDE));
+  const nombre = nombreEstudio();
+  document.title = `${nombre} – Portal del Cliente`;
+  document.querySelectorAll("[data-marca-nombre]").forEach(el => { el.textContent = nombre; });
+  document.querySelectorAll("[data-marca-logo]").forEach(el => {
+    if (MARCA.logo_url) { el.src = MARCA.logo_url; el.alt = nombre; el.style.display = "block"; }
+    else el.style.display = "none";
+  });
+  if (MARCA.nombre) {
+    document.getElementById("loading-logo").textContent = MARCA.logo_url ? "" : MARCA.nombre;
+    document.getElementById("loading-sub").textContent = "Portal del Cliente";
+    document.getElementById("login-titulo").textContent = MARCA.logo_url ? "" : MARCA.nombre;
+    document.getElementById("in-logo").textContent = MARCA.nombre;
+  }
+  if (MARCA.whatsapp && WA.includes("X")) WA = "549" + String(MARCA.whatsapp).replace(/\D/g, "");
+}
+
+// Antes de iniciar sesión: el estudio del link (?e=<estudio>) o el último visto en este dispositivo.
+async function cargarMarcaInicial() {
+  try { const m = JSON.parse(localStorage.getItem(MKEY) || "null"); if (m) aplicarMarca(m); } catch {}
+  const e = new URLSearchParams(location.search).get("e");
+  if (!e || !/^[0-9a-f-]{36}$/i.test(e)) return;
+  try {
+    const r = await fetch(`${API}/marca/${e}`);
+    if (r.ok) { MARCA = null; aplicarMarca(await r.json()); }
+  } catch {}
+}
 
 // ── UTILS ──────────────────────────────────────────────────────────────────────
 function $$(n) {
@@ -731,7 +814,7 @@ function diasAlCorte() {
     periodo:prox.periodo, ventanaLabel:vent(prox) };
 }
 
-function waUrl(msg) { return `https://wa.me/${WA}?text=${encodeURIComponent(msg || "Hola! Te contacto desde el portal de Axenda Contable.")}`; }
+function waUrl(msg) { return `https://wa.me/${WA}?text=${encodeURIComponent(msg || `Hola! Te contacto desde el portal de ${nombreEstudio()}.`)}`; }
 function fmtCuit(v) {
   const n = v.replace(/\D/g,"").slice(0,11);
   if (n.length > 8) return `${n.slice(0,2)}-${n.slice(2,10)}-${n.slice(10)}`;
@@ -821,6 +904,7 @@ async function doLogin() {
     } else {
       SESSION = { slug:d.slug, nombre:d.nombre, apellido:d.apellido, cuit, activo:d.activo, token:d.token };
       saveSession(SESSION);
+      if (d.marca) { MARCA = null; aplicarMarca(d.marca); }
       if (!d.activo) { showScreen("inactive-screen"); }
       else           { await cargarPortal(); }
     }
@@ -851,8 +935,13 @@ async function cargarPortal() {
     if (!r.ok) throw new Error(r.status);
     DATOS   = await r.json();
     CLIENTE = DATOS.cliente;
+    if (DATOS.estudio) aplicarMarca({ ...DATOS.estudio, whatsapp: DATOS.whatsapp || null });
 
-    if (!CLIENTE.activo) { showScreen("inactive-screen"); return; }
+    if (!CLIENTE.activo || DATOS.estudio_suspendido) {
+      if (DATOS.whatsapp) WA = "549" + DATOS.whatsapp.replace(/\D/g, '');
+      document.getElementById("wa-inactive").href = waUrl(`Hola! Consulto sobre mi acceso al portal de ${nombreEstudio()}.`);
+      showScreen("inactive-screen"); return;
+    }
 
     renderPortal();
   } catch(e) {
@@ -872,7 +961,7 @@ function renderPortal() {
   const pctNum   = Math.min(pct * 100, 105);
 
   let semColor, semLabel, semClass;
-  if (pct < 0.6)      { semColor="#2BAF82"; semLabel="EN ORDEN";  semClass="badge-verde"; }
+  if (pct < 0.6)      { semColor=VERDE; semLabel="EN ORDEN";  semClass="badge-verde"; }
   else if (pct < 0.85){ semColor="#E8A020"; semLabel="ATENCIÓN";  semClass="badge-amarillo"; }
   else                { semColor="#E04545"; semLabel="AL LÍMITE"; semClass="badge-rojo"; }
 
@@ -882,12 +971,12 @@ function renderPortal() {
 
   // WA: usar número del backend si está disponible
   if (DATOS.whatsapp) WA = "549" + DATOS.whatsapp.replace(/\D/g, '');
-  const waBase = waUrl("Hola! Te contacto desde el portal de Axenda Contable.");
+  const waBase = waUrl(`Hola! Te contacto desde el portal de ${nombreEstudio()}.`);
   document.getElementById("wa-fab").href      = waBase;
   // El VEP lo genera el contador: el botón abre su WhatsApp con el pedido.
   document.getElementById("btn-vep").href = waUrl("Hola! Necesito regularizar mi cuenta o quiero pagar mi deuda.");
-  document.getElementById("wa-inactive").href = waUrl("Hola! Consulto sobre mi acceso al portal de Axenda Contable.");
-  document.getElementById("wa-forgot").href   = waUrl("Hola! Olvidé mi contraseña del portal de Axenda Contable.");
+  document.getElementById("wa-inactive").href = waUrl(`Hola! Consulto sobre mi acceso al portal de ${nombreEstudio()}.`);
+  document.getElementById("wa-forgot").href   = waUrl(`Hola! Olvidé mi contraseña del portal de ${nombreEstudio()}.`);
 
   // Topbar
   document.getElementById("topbar-fecha").textContent = `${MESES[hoy.getMonth()]} ${hoy.getFullYear()}`;
@@ -1107,7 +1196,7 @@ function renderSituacion() {
   const [txt, bg, col] = !est ? ["Sin verificar", "var(--light)", "var(--muted)"]
     : /SUSP/.test(est) ? ["Suspendido", "#E8A02018", "var(--yellow)"]
     : /INACTIV|BAJA/.test(est) ? ["Inactivo", "#E0454514", "var(--red)"]
-    : /ACTIV/.test(est) ? ["Activo", "#2BAF8218", "var(--green)"]
+    : /ACTIV/.test(est) ? ["Activo", "color-mix(in srgb, var(--green) 9%, transparent)", "var(--green)"]
     : [est.charAt(0) + est.slice(1).toLowerCase(), "var(--light)", "var(--text)"];
   document.getElementById("situacion-estado").innerHTML =
     `<span class="estado-pill" style="background:${bg};color:${col}" title="${escHtml(est)}">${escHtml(txt)}</span>`;
@@ -1439,7 +1528,7 @@ function renderBarChart(fac6, referenciaMensual, hoy) {
     const isFuture = (f.anio > añoHoy) || (f.anio === añoHoy && f.mes > mesHoy);
     const isThisMonth = f.mes === mesHoy && f.anio === añoHoy;
     const overLimit = referenciaMensual > 0 && v > referenciaMensual;
-    const barColor = isFuture ? '#CBD5E1' : overLimit ? '#E04545' : '#2BAF82';
+    const barColor = isFuture ? '#CBD5E1' : overLimit ? '#E04545' : VERDE;
     const opacity  = isFuture ? '0.35' : isThisMonth ? '1' : '0.75';
 
     if (barH > 0) {
@@ -1630,7 +1719,7 @@ function renderBoveda(docs) {
     const fecha = fechaDe(d) ? fmtFecha(fechaDe(d).slice(0, 10)) : "";
     const url = d.url ? escHtml(d.url) : "";
     html += `<${url ? `a href="${url}" target="_blank" rel="noreferrer"` : "div"} class="doc-item">
-      <div class="doc-icon" style="background:#2BAF8215">${d.tipo === "plan_pago" ? "📋" : d.tipo === "constancia" ? "🏛️" : "📄"}</div>
+      <div class="doc-icon" style="background:color-mix(in srgb, var(--green) 8%, transparent)">${d.tipo === "plan_pago" ? "📋" : d.tipo === "constancia" ? "🏛️" : "📄"}</div>
       <div class="doc-info">
         <div class="doc-name">${escHtml(d.nombre || "—")}</div>
         <div class="doc-date"><span class="doc-badge ${cls}">${etq}</span>${[fecha, origen].filter(Boolean).join(" · ")}</div>
@@ -1806,8 +1895,10 @@ async function cambiarPassword() {
 // ── INIT ───────────────────────────────────────────────────────────────────────
 async function init() {
   SESSION = getSession();
+  await cargarMarcaInicial();
   // Actualizar WA links con el número real
-  document.getElementById("wa-forgot").href = waUrl("Hola! Olvidé mi contraseña del portal de Axenda Contable.");
+  document.getElementById("wa-forgot").href = waUrl(`Hola! Olvidé mi contraseña del portal de ${nombreEstudio()}.`);
+  document.getElementById("wa-inactive").href = waUrl(`Hola! Consulto sobre mi acceso al portal de ${nombreEstudio()}.`);
 
   if (!SESSION) {
     setTimeout(() => showScreen("login-screen"), 800);

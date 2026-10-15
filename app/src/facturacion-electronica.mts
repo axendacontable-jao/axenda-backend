@@ -1,4 +1,4 @@
-import { HttpError, clientePorSlug, db, getEstudioId, hoyArgentina, isoDate, q } from "./core.mts"
+import { ESTADOS_HABILITADOS, HttpError, clientePorSlug, db, getEstudioId, hoyArgentina, isoDate, q } from "./core.mts"
 import { constanciaCompleta } from "./arca.mts"
 import { exigirSesionPortal } from "./secretos.mts"
 import { despacharFactura, nombreFactura } from "./sincronizacion.mts"
@@ -40,8 +40,8 @@ async function tieneClave(clienteId: string) {
   return !!(await q(db().from("credenciales_arca").select("cliente_id").eq("cliente_id", clienteId).maybeSingle()))
 }
 async function estudioHabilitado(estudioId: string) {
-  const e = await q(db().from("estudios").select("facturacion_electronica_habilitada").eq("id", estudioId).maybeSingle()).catch(() => null)
-  return !!e?.facturacion_electronica_habilitada
+  const e = await q(db().from("estudios").select("facturacion_electronica_habilitada,estado").eq("id", estudioId).maybeSingle()).catch(() => null)
+  return !!e?.facturacion_electronica_habilitada && ESTADOS_HABILITADOS.includes(e.estado)
 }
 
 // Disponible si el estudio la activó, el cliente está habilitado y tiene la clave fiscal cargada.
