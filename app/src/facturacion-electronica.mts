@@ -207,6 +207,16 @@ export async function feReintentar({ req, p }: Ctx) {
   return { ok: true, comprobante: resumen(filas[0]) }
 }
 
+// Borra un pedido que falló antes de confirmar en ARCA (en ARCA no se generó nada).
+export async function feBorrar({ req, p }: Ctx) {
+  const estudioId = await getEstudioId(req)
+  const cliente = await clientePorSlug(p.slug, estudioId)
+  const filas = await q(db().from("comprobantes_emitidos").delete()
+    .eq("id", p.id).eq("cliente_id", cliente.id).eq("estado", "error").is("cae", null).select("id"))
+  if (!filas?.length) throw new HttpError(409, "Solo se pueden borrar las facturas que no se emitieron")
+  return { ok: true }
+}
+
 export async function feReceptorAdmin({ req, p }: Ctx) {
   await getEstudioId(req)
   return buscarReceptor(p.cuit)

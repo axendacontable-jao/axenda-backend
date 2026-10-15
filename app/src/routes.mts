@@ -6,7 +6,7 @@ import { buscarEnConstancia, buscarEnPadron, certPem, constanciaCompleta, cuitCo
 import { pdfConstancia } from "./constancia-pdf.mts"
 import {
   facturacionDisponible, feComprobanteAdmin, feEmitirAdmin, feEstado, feGuardarConfig, fePortalComprobante, fePortalEmitir,
-  fePortalEstado, fePortalReceptor, feReceptorAdmin, feReintentar,
+  fePortalEstado, fePortalReceptor, feReceptorAdmin, feReintentar, feBorrar,
 } from "./facturacion-electronica.mts"
 import { cifrarClave, exigirSesionPortal, firmarTokenPortal } from "./secretos.mts"
 import { TAREAS, despacharSincronizacion, finPeriodoProximaRecategorizacion } from "./sincronizacion.mts"
@@ -1437,7 +1437,7 @@ const estadoArca: Handler = async ({ req, p }) => {
   const [cred, sincronizaciones, historial] = await Promise.all([
     q(db().from("credenciales_arca").select("actualizada_at").eq("cliente_id", cliente.id).maybeSingle()),
     q(db().from("sincronizaciones_arca").select("tipo,anio,mes,estado,detalle,created_at")
-      .eq("cliente_id", cliente.id).order("created_at", { ascending: false }).limit(20)),
+      .eq("cliente_id", cliente.id).order("created_at", { ascending: false }).limit(60)),
     q(db().from("historial_cuotas").select("año,mes,estado,fuente").eq("cliente_id", cliente.id)),
   ])
   const art = await deudaArtDe(cliente, historial ?? [])
@@ -1613,6 +1613,7 @@ export const rutas: [string, string, Handler][] = [
   ["POST", "/clientes/:slug/comprobantes", feEmitirAdmin],
   ["GET", "/clientes/:slug/comprobantes/:id", feComprobanteAdmin],
   ["POST", "/clientes/:slug/comprobantes/:id/reintentar", feReintentar],
+  ["DELETE", "/clientes/:slug/comprobantes/:id", feBorrar],
   ["GET", "/receptor/:cuit", feReceptorAdmin],
   ["GET", "/padron/:cuit", padron],
 

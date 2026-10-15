@@ -1624,7 +1624,13 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
       {/* Tab: ARCA */}
       {tab==="arca"&&(()=>{
         const ESTADOS = { ok:["✅","var(--green)","OK"], clave_incorrecta:["🔑","var(--red)","Clave incorrecta"], requiere_2fa:["📱","var(--red)","Tiene verificación en dos pasos"], captcha:["🧩","var(--red)","ARCA pidió captcha"], arca_caido:["⏳","#E8A020","ARCA no respondió"], error:["⚠️","var(--red)","Error"] };
-        const ultimaFalla = arca?.sincronizaciones?.find(s=>s.estado!=="ok");
+        // Solo la última sincronización de cada parte (facturas, gastos, deuda, cuotas, planes, ART).
+        const TIPOS_SYNC = ["emitidos","recibidos","ccma","cuotas","facilidades","art","art_planes"];
+        const ultimas = (arca?.sincronizaciones||[]).length ? [
+          ...TIPOS_SYNC.map(t=>arca.sincronizaciones.find(s=>s.tipo===t)).filter(Boolean),
+          ...arca.sincronizaciones.filter((s,i,arr)=>!TIPOS_SYNC.includes(s.tipo)&&arr.findIndex(x=>x.tipo===s.tipo)===i),
+        ] : [];
+        const ultimaFalla = ultimas.find(s=>s.estado!=="ok");
         return (
           <div className="detail-section">
             <div className="section-title">Sincronización con ARCA</div>
@@ -1722,10 +1728,10 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
                   </div>
                 )}
 
-                {arca.sincronizaciones?.length>0&&(
+                {ultimas.length>0&&(
                   <div>
-                    <div style={{fontSize:"11px",fontWeight:"600",color:"var(--muted)",textTransform:"uppercase",letterSpacing:".05em",marginBottom:"8px"}}>Últimas sincronizaciones</div>
-                    {arca.sincronizaciones.map((s,i)=>{
+                    <div style={{fontSize:"11px",fontWeight:"600",color:"var(--muted)",textTransform:"uppercase",letterSpacing:".05em",marginBottom:"8px"}}>Última sincronización</div>
+                    {ultimas.map((s,i)=>{
                       const [ico,color,label] = ESTADOS[s.estado]||ESTADOS.error;
                       return (
                         <div key={i} style={{padding:"10px 14px",borderRadius:"8px",background:"var(--light)",marginBottom:"6px",fontSize:"13px"}}>
@@ -2282,6 +2288,11 @@ function FacturacionElectronica({ cliente }) {
     try { await pedir(`${base}/comprobantes/${c.id}/reintentar`, { method: "POST" }); cargar(); }
     catch (e) { alert("No se pudo reintentar: " + e.message); }
   }
+  async function borrar(c) {
+    if (!confirm(`¿Borrar el intento de factura por ${pesosC(c.importe)}? En ARCA no se generó nada.`)) return;
+    try { await pedir(`${base}/comprobantes/${c.id}`, { method: "DELETE" }); cargar(); }
+    catch (e) { alert("No se pudo borrar: " + e.message); }
+  }
 
   if (!datos || !cfg) return <div style={{ height: "80px", borderRadius: "8px" }} className="skeleton" />;
   if (datos.error) return <div style={{ color: "var(--red)", fontSize: "13px" }}>{datos.error}</div>;
@@ -2335,6 +2346,7 @@ function FacturacionElectronica({ cliente }) {
                     <td style={{ whiteSpace: "nowrap" }}>
                       {c.url_pdf && <a className="table-action" href={c.url_pdf} target="_blank" rel="noopener" style={{ textDecoration: "none" }}>PDF</a>}
                       {c.estado === "error" && <button className="table-action" style={{ marginLeft: "4px" }} onClick={() => reintentar(c)}>Reintentar</button>}
+                      {c.estado === "error" && <button className="table-action danger" style={{ marginLeft: "4px" }} onClick={() => borrar(c)} title="Borrar este intento">🗑</button>}
                     </td>
                   </tr>
                 );
