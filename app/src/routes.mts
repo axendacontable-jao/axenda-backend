@@ -2,7 +2,7 @@ import {
   ESTADOS_HABILITADOS, HttpError, ahoraIsoZ, clientePorSlug, db, esFechaIso, exigirSuperadmin, getEstudioId, hoy, hoyArgentina,
   hoyIso, isoDate, logActividad, pyStr, q, sumarMeses, fechaValida,
 } from "./core.mts"
-import { rutasSuperadmin } from "./superadmin.mts"
+import { borrarArchivos, rutasSuperadmin } from "./superadmin.mts"
 import { buscarEnConstancia, buscarEnPadron, certPem, constanciaCompleta, cuitContador, keyPem, serviciosCacheados } from "./arca.mts"
 import { pdfConstancia } from "./constancia-pdf.mts"
 import {
@@ -390,6 +390,22 @@ const toggleActivo: Handler = async ({ req, p }) => {
   const nuevo = !cliente.activo
   await q(db().from("clientes").update({ activo: nuevo }).eq("slug", p.slug).eq("estudio_id", estudioId))
   return { ok: true, activo: nuevo }
+}
+
+// Elimina el cliente y todo lo suyo (facturación, planes, documentos, clave fiscal, cobros, etc.:
+// las tablas borran en cascada) y sus archivos. El panel pide escribir el apellido para confirmar.
+const eliminarCliente: Handler = async ({ req, p }) => {
+  const estudioId = await getEstudioId(req)
+  const cliente = await clientePorSlug(p.slug, estudioId, "id,nombre,apellido")
+  const enCurso = await q(db().from("comprobantes_emitidos").select("id").eq("cliente_id", cliente.id)
+    .in("estado", ["pendiente", "procesando", "confirmando"]).limit(1))
+  if (enCurso?.length) throw new HttpError(409, "El robot está emitiendo una factura de este cliente: esperá a que termine")
+  // Las novedades dirigidas solo a este cliente no se borran en cascada.
+  await q(db().from("novedades").delete().eq("cliente_id", cliente.id))
+  const archivos = await borrarArchivos(BUCKET_DOCS, [cliente.id])
+  await q(db().from("clientes").delete().eq("id", cliente.id).eq("estudio_id", estudioId))
+  console.log(`[clientes] estudio ${estudioId} eliminó el cliente ${cliente.id} (${archivos} archivos)`)
+  return { ok: true, archivos }
 }
 
 const actualizarEstadoPago: Handler = async ({ req, p }) => {
@@ -1790,6 +1806,7 @@ export const rutas: [string, string, Handler][] = [
   ["GET", "/clientes", listarClientes],
   ["POST", "/clientes", crearCliente],
   ["PATCH", "/clientes/:slug/toggle", toggleActivo],
+  ["DELETE", "/clientes/:slug", eliminarCliente],
   ["PATCH", "/clientes/:slug/estado-pago", actualizarEstadoPago],
   ["PATCH", "/clientes/:slug/cuota", actualizarCuota],
   ["PATCH", "/clientes/:slug/datos", actualizarDatosCliente],

@@ -195,7 +195,7 @@ async function archivosEn(bucket: string, carpeta: string, profundidad = 0): Pro
   return rutas
 }
 
-async function borrarArchivos(bucket: string, carpetas: string[]) {
+export async function borrarArchivos(bucket: string, carpetas: string[]) {
   let borrados = 0
   for (const carpeta of carpetas) {
     try {

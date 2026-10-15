@@ -1201,7 +1201,7 @@ function ModalNuevoPlan({ slug, onClose, onGuardado, initialData }) {
 }
 
 // ── Vista detalle cliente ──
-function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, onImportarGastos, importando, importandoGastos, gastosVersion, onActualizarEstado, onPlanGuardado, onActualizarCuota, onActualizarDatos }) {
+function ViewClienteDetalle({ cliente, movs, topes, onBack, onEliminado, onImportarFacturas, onImportarGastos, importando, importandoGastos, gastosVersion, onActualizarEstado, onPlanGuardado, onActualizarCuota, onActualizarDatos }) {
   const [tab, setTab]             = useState("facturacion");
   const [planes, setPlanes]       = useState(null);
   const [alertas, setAlertas]     = useState(null);
@@ -1226,6 +1226,19 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
   const recat = proximaRecategorizacion();
   const [modalEditar, setModalEditar] = useState(false);
   const [modalBienvenida, setModalBienvenida] = useState(false);
+  const [eliminando, setEliminando] = useState(null);   // apellido escrito para confirmar
+  const [borrandoCliente, setBorrandoCliente] = useState(false);
+  async function eliminarCliente() {
+    setBorrandoCliente(true);
+    try {
+      const r = await apiFetch(`${BACKEND_URL}/clientes/${cliente.slug}`, { method: "DELETE" });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.detail || `Error ${r.status}`);
+      setEliminando(null);
+      onEliminado && onEliminado(cliente);
+    } catch (e) { alert("No se pudo eliminar: " + e.message); }
+    setBorrandoCliente(false);
+  }
 
   async function parsarPDF(e) {
     const file = e.target.files[0]; if (!file) return;
@@ -1458,6 +1471,7 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
           <a className="action-chip" href={portalUrl()} target="_blank" rel="noopener">↗ Ver portal</a>
           <button className="action-chip" onClick={()=>setModalBienvenida(true)}>📨 Enviar acceso</button>
           <button className="action-chip" onClick={()=>setModalEditar(true)}>✏ Editar datos</button>
+          <button className="action-chip" style={{color:"var(--red)",borderColor:"#E0454540"}} onClick={()=>{ if(confirm(`¿Eliminar a ${cliente.nombre} ${cliente.apellido}?\n\nSe borran todos sus datos: facturación, gastos, planes de pago, documentos, facturas emitidas, clave fiscal y cobros. No se puede deshacer.\n\nSi solo querés dejar de seguirlo, usá "Desactivar" en la lista de clientes.`)) setEliminando(""); }}>🗑 Eliminar cliente</button>
         </div>
       </div>
 
@@ -1704,6 +1718,22 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
       )}
 
       {modalBienvenida&&<ModalBienvenida cliente={cliente} onClose={()=>setModalBienvenida(false)}/>}
+      {eliminando!==null&&(()=>{
+        const coincide = eliminando.trim().toLowerCase() === String(cliente.apellido||"").trim().toLowerCase();
+        return (
+          <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&!borrandoCliente&&setEliminando(null)}>
+            <div className="modal" style={{maxWidth:"440px"}}>
+              <div className="modal-title" style={{color:"var(--red)"}}>Eliminar cliente</div>
+              <div className="modal-sub">Para confirmar, escribí el apellido del cliente: <strong>{cliente.apellido}</strong></div>
+              <input className="form-input" value={eliminando} onChange={e=>setEliminando(e.target.value)} autoFocus onKeyDown={e=>e.key==="Enter"&&coincide&&eliminarCliente()}/>
+              <div className="modal-actions">
+                <button className="btn-secondary" onClick={()=>setEliminando(null)} disabled={borrandoCliente}>Cancelar</button>
+                <button className="btn-primary" style={{background:coincide?"var(--red)":"#E0454560"}} onClick={eliminarCliente} disabled={!coincide||borrandoCliente}>{borrandoCliente?"Eliminando...":"Eliminar para siempre"}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       {modalEditar&&<ModalEditarDatos cliente={cliente} topes={topes} onClose={()=>setModalEditar(false)} onGuardado={(datos)=>{onActualizarDatos&&onActualizarDatos(cliente,datos);}}/>}
 
       {/* Tab: Documentos */}
@@ -4294,6 +4324,7 @@ function App() {
               movs={factura[clienteSeleccionado?.id]||[]}
               topes={topes}
               onBack={()=>setClienteDetalle(null)}
+              onEliminado={c=>{ setClienteDetalle(null); setClientes(prev=>prev.filter(x=>x.id!==c.id)); mostrarToast(`${c.nombre} ${c.apellido} eliminado.`); }}
               onImportarFacturas={abrirImportFacturas}
               onImportarGastos={abrirImportGastos}
               importando={importando}
