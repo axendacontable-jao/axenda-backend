@@ -1,23 +1,30 @@
-import { randomUUID } from "node:crypto"
-import { HttpError, clientePorSlug, db, getEstudioId, hoyArgentina, isoDate, logActividad, q } from "./core.mts"
+import { HttpError, clientePorSlug, db, getEstudioId, hoyArgentina, isoDate, q } from "./core.mts"
 import { constanciaCompleta } from "./arca.mts"
 import { exigirSesionPortal } from "./secretos.mts"
-import { type DatosFactura, type ItemFactura, nombreComprobante, numeroComprobante, pdfFactura } from "./factura-pdf.mts"
-import {
-  CONCEPTOS, CONDICIONES_IVA, ErrorFactura, FACTURA_C, NOTA_CREDITO_C, TIPOS_DOC, puntosDeVenta, solicitarCae, ultimoAutorizado,
-} from "./wsfe.mts"
+import { despacharFactura, nombreFactura } from "./sincronizacion.mts"
+
+// Facturas C que emite el robot en "Comprobantes en línea" con la clave fiscal del cliente.
+// El pedido se guarda en comprobantes_emitidos (estado "pendiente") y lo procesa la función de fondo.
 
 type Ctx = { req: Request; p: Record<string, string>; query: URLSearchParams }
 
-const BUCKET_DOCS = "documentos-axenda"
-const CONDICIONES_VENTA = ["Contado", "Transferencia", "Tarjeta de débito", "Tarjeta de crédito", "Cuenta corriente", "Otra"]
-const COLS_CLIENTE = "id,cuit,nombre,apellido,estudio_id,fe_habilitada,fe_punto_venta,fe_domicilio,fe_ingresos_brutos,fe_inicio_actividades"
+const FACTURA_C = 11
+const CONDICIONES_IVA: Record<number, string> = {
+  5: "Consumidor Final", 1: "IVA Responsable Inscripto", 6: "Responsable Monotributo", 4: "IVA Sujeto Exento",
+  15: "IVA No Alcanzado", 13: "Monotributista Social",
+}
+const TIPOS_DOC: Record<number, string> = { 99: "Consumidor Final", 80: "CUIT", 96: "DNI" }
+const CONCEPTOS: Record<number, string> = { 2: "Servicios", 1: "Productos" }
+const COLS_CLIENTE = "id,cuit,nombre,apellido,estudio_id,tipo_actividad,fe_habilitada,fe_punto_venta"
 const MAX_POR_DIA_CLIENTE = 20
+const EN_CURSO = ["pendiente", "procesando", "confirmando"]
 
-const redondear = (n: number) => Math.round(n * 100) / 100
 const esIso = (s: unknown): s is string => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s))
-const diasEntre = (a: string, b: string) => Math.round((Date.parse(b) - Date.parse(a)) / 86_400_000)
 const hoyAr = () => { const t = hoyArgentina(); return isoDate(t.y, t.m, t.d) }
+const finDeMes = (iso: string) => {
+  const d = new Date(Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)), 0))
+  return d.toISOString().slice(0, 10)
+}
 
 async function cuerpo(req: Request): Promise<Record<string, any>> {
   try {
@@ -29,27 +36,23 @@ async function cuerpo(req: Request): Promise<Record<string, any>> {
   throw new HttpError(400, "Pedido inválido")
 }
 
-// Configuración de facturación del cliente: lista para emitir si está habilitado y tiene punto de
-// venta, domicilio comercial y fecha de inicio de actividades (datos obligatorios del comprobante).
-const configDe = (c: any) => ({
-  habilitada: !!c.fe_habilitada, punto_venta: c.fe_punto_venta ?? null, domicilio: c.fe_domicilio ?? "",
-  ingresos_brutos: c.fe_ingresos_brutos ?? "", inicio_actividades: c.fe_inicio_actividades ?? null,
-  lista: !!(c.fe_habilitada && c.fe_punto_venta && c.fe_domicilio && c.fe_inicio_actividades),
-})
-
+async function tieneClave(clienteId: string) {
+  return !!(await q(db().from("credenciales_arca").select("cliente_id").eq("cliente_id", clienteId).maybeSingle()))
+}
 async function estudioHabilitado(estudioId: string) {
   const e = await q(db().from("estudios").select("facturacion_electronica_habilitada").eq("id", estudioId).maybeSingle()).catch(() => null)
   return !!e?.facturacion_electronica_habilitada
 }
 
+// Disponible si el estudio la activó, el cliente está habilitado y tiene la clave fiscal cargada.
 export async function facturacionDisponible(cliente: any) {
-  return configDe(cliente).lista && (await estudioHabilitado(cliente.estudio_id))
+  return !!cliente.fe_habilitada && (await estudioHabilitado(cliente.estudio_id)) && (await tieneClave(cliente.id))
 }
 
 const resumen = (c: any) => ({
-  id: c.id, tipo: c.tipo, nombre: `${nombreComprobante(c.tipo)} ${numeroComprobante(c.punto_venta, c.numero)}`,
-  fecha: c.fecha, importe: Number(c.importe), receptor: c.receptor_nombre, cae: c.cae, cae_vto: c.cae_vto,
-  url_pdf: c.url_pdf, emitido_por: c.emitido_por, anulado: !!c.anulado_por, asociado_id: c.asociado_id,
+  id: c.id, estado: c.estado, nombre: c.estado === "emitida" ? nombreFactura(c.punto_venta, c.numero) : "Factura C",
+  fecha: c.fecha, importe: Number(c.importe), receptor: c.receptor_nombre, descripcion: c.items?.[0]?.descripcion ?? "",
+  cae: c.cae, cae_vto: c.cae_vto, url_pdf: c.url_pdf, emitido_por: c.emitido_por, error: c.error, creado: c.created_at,
 })
 
 async function comprobantesDe(clienteId: string, limite: number) {
@@ -57,176 +60,99 @@ async function comprobantesDe(clienteId: string, limite: number) {
     .order("created_at", { ascending: false }).limit(limite))) ?? []).map(resumen)
 }
 
-type Solicitud = {
-  concepto: number; docTipo: number; docNro: number; condicionIva: number; receptorNombre: string; receptorDomicilio: string
-  condicionVenta: string; items: ItemFactura[]; importe: number; fecha: string
-  servDesde: string | null; servHasta: string | null; vtoPago: string | null; clave: string | null
+const opciones = (cliente: any) => ({
+  condiciones_iva: CONDICIONES_IVA, tipos_doc: TIPOS_DOC, conceptos: CONCEPTOS,
+  concepto_sugerido: /bien|venta|comercio|producto/i.test(cliente.tipo_actividad ?? "") ? 1 : 2,
+})
+
+type Pedido = {
+  concepto: number; docTipo: number; docNro: number; condicionIva: number; receptorNombre: string
+  descripcion: string; importe: number; fecha: string; servDesde: string | null; servHasta: string | null; vtoPago: string | null
+  clave: string | null
 }
 
-// Valida el formulario de emisión (ARCA vuelve a validar todo; esto da mensajes claros antes).
-export function leerSolicitud(d: Record<string, any>): Solicitud {
-  const concepto = Number(d.concepto)
-  if (!CONCEPTOS[concepto]) throw new HttpError(400, "Elegí si facturás productos, servicios o ambos")
+// CUIT (o DNI, o consumidor final), descripción, fecha y monto. Para servicios, el período facturado
+// es el mes de la fecha y el pago vence ese mismo día.
+export function leerPedido(d: Record<string, any>): Pedido {
+  const concepto = Number(d.concepto ?? 2)
+  if (!CONCEPTOS[concepto]) throw new HttpError(400, "Elegí si facturás servicios o productos")
   const docTipo = Number(d.doc_tipo ?? 99)
   if (!TIPOS_DOC[docTipo]) throw new HttpError(400, "Tipo de documento del receptor inválido")
   const docNro = docTipo === 99 ? 0 : Number(String(d.doc_nro ?? "").replace(/\D/g, ""))
-  if (docTipo === 80 || docTipo === 86) {
-    if (String(docNro).length !== 11) throw new HttpError(400, "El CUIT/CUIL del receptor tiene que tener 11 dígitos")
-  } else if (docTipo === 96 && (docNro < 1_000_000 || docNro > 99_999_999)) {
-    throw new HttpError(400, "DNI del receptor inválido")
-  }
+  if (docTipo === 80 && String(docNro).length !== 11) throw new HttpError(400, "El CUIT del receptor tiene que tener 11 dígitos")
+  if (docTipo === 96 && (docNro < 1_000_000 || docNro > 99_999_999)) throw new HttpError(400, "DNI del receptor inválido")
   const condicionIva = Number(d.condicion_iva ?? 5)
   if (!CONDICIONES_IVA[condicionIva]) throw new HttpError(400, "Condición frente al IVA del receptor inválida")
   if (docTipo === 99 && condicionIva !== 5) throw new HttpError(400, "Sin documento, el receptor solo puede ser Consumidor Final")
-  const receptorNombre = String(d.receptor_nombre ?? "").trim().slice(0, 120)
-  if (docTipo !== 99 && !receptorNombre) throw new HttpError(400, "Completá el nombre o razón social del receptor")
-  const condicionVenta = CONDICIONES_VENTA.includes(d.condicion_venta) ? d.condicion_venta : "Contado"
-
-  if (!Array.isArray(d.items) || !d.items.length || d.items.length > 12) throw new HttpError(400, "Cargá entre 1 y 12 renglones")
-  const items: ItemFactura[] = d.items.map((it: any) => {
-    const descripcion = String(it?.descripcion ?? "").trim().slice(0, 200)
-    const cantidad = Number(it?.cantidad)
-    const precio = Number(it?.precio)
-    if (!descripcion) throw new HttpError(400, "Cada renglón necesita una descripción")
-    if (!(cantidad > 0 && cantidad <= 1_000_000)) throw new HttpError(400, `Cantidad inválida en "${descripcion}"`)
-    if (!(precio > 0 && precio <= 10_000_000_000)) throw new HttpError(400, `Precio inválido en "${descripcion}"`)
-    return { descripcion, cantidad, precio: redondear(precio) }
-  })
-  const importe = redondear(items.reduce((s, it) => s + it.cantidad * it.precio, 0))
-  if (!(importe > 0)) throw new HttpError(400, "El importe tiene que ser mayor a cero")
-
+  const receptorNombre = String(d.receptor_nombre ?? "").trim().slice(0, 120) || (docTipo === 99 ? "Consumidor Final" : "")
+  if (!receptorNombre) throw new HttpError(400, "Buscá el CUIT en ARCA o escribí el nombre del receptor")
+  const descripcion = String(d.descripcion ?? "").trim().replace(/\s+/g, " ").slice(0, 200)
+  if (descripcion.length < 3) throw new HttpError(400, "Escribí una descripción")
+  const importe = Math.round(Number(d.importe) * 100) / 100
+  if (!(importe > 0 && importe <= 10_000_000_000)) throw new HttpError(400, "Monto inválido")
   const hoy = hoyAr()
   const fecha = esIso(d.fecha) ? d.fecha : hoy
   const margen = concepto === 1 ? 5 : 10
-  if (Math.abs(diasEntre(hoy, fecha)) > margen) {
-    throw new HttpError(400, `La fecha de emisión puede estar hasta ${margen} días antes o después de hoy`)
+  if (Math.abs((Date.parse(fecha) - Date.parse(hoy)) / 86_400_000) > margen) {
+    throw new HttpError(400, `La fecha puede estar hasta ${margen} días antes o después de hoy`)
   }
-  let servDesde: string | null = null, servHasta: string | null = null, vtoPago: string | null = null
-  if (concepto !== 1) {
-    if (!esIso(d.serv_desde) || !esIso(d.serv_hasta)) throw new HttpError(400, "Completá el período facturado (desde y hasta)")
-    if (d.serv_desde > d.serv_hasta) throw new HttpError(400, "El período facturado empieza después de terminar")
-    servDesde = d.serv_desde
-    servHasta = d.serv_hasta
-    vtoPago = esIso(d.vto_pago) ? d.vto_pago : fecha
-    if (vtoPago < fecha) throw new HttpError(400, "El vencimiento del pago no puede ser anterior a la fecha de emisión")
-  }
+  const servDesde = concepto === 1 ? null : `${fecha.slice(0, 8)}01`
   const clave = typeof d.clave_idempotencia === "string" && /^[\w-]{8,64}$/.test(d.clave_idempotencia) ? d.clave_idempotencia : null
   return {
-    concepto, docTipo, docNro, condicionIva, receptorNombre: docTipo === 99 && !receptorNombre ? "Consumidor Final" : receptorNombre,
-    receptorDomicilio: String(d.receptor_domicilio ?? "").trim().slice(0, 160), condicionVenta, items, importe, fecha,
-    servDesde, servHasta, vtoPago, clave,
+    concepto, docTipo, docNro, condicionIva, receptorNombre, descripcion, importe, fecha,
+    servDesde, servHasta: concepto === 1 ? null : finDeMes(fecha), vtoPago: concepto === 1 ? null : fecha, clave,
   }
 }
 
-// Suma (o resta, si es nota de crédito) el comprobante en la facturación del mes. La próxima
-// importación o sincronización con ARCA reemplaza el total del mes con el dato oficial.
-async function sumarEnFacturacion(cliente: any, fecha: string, importe: number) {
-  const anio = Number(fecha.slice(0, 4))
-  const mes = Number(fecha.slice(5, 7))
-  const actual = await q(db().from("facturacion").select("monto").eq("cliente_id", cliente.id).eq("anio", anio).eq("mes", mes).maybeSingle())
-  const monto = redondear(Math.max((Number(actual?.monto) || 0) + importe, 0))
-  await q(db().from("facturacion").upsert(
-    { cliente_id: cliente.id, estudio_id: cliente.estudio_id, anio, mes, monto },
-    { onConflict: "cliente_id,anio,mes" },
-  ))
-}
-
-type Asociado = { id: string; puntoVenta: number; numero: number; fecha: string }
-
-async function emitir(cliente: any, s: Solicitud, tipo: number, emitidoPor: "cliente" | "contador", asociado: Asociado | null = null) {
-  const config = configDe(cliente)
-  if (!config.lista) throw new HttpError(409, "La facturación electrónica no está configurada para este cliente")
-  if (s.clave) {
-    const previo = await q(db().from("comprobantes_emitidos").select("*").eq("clave_idempotencia", s.clave).maybeSingle())
+async function crearPedido(req: Request, cliente: any, emitidoPor: "cliente" | "contador") {
+  const p = leerPedido(await cuerpo(req))
+  if (p.clave) {
+    const previo = await q(db().from("comprobantes_emitidos").select("*").eq("clave_idempotencia", p.clave).maybeSingle())
     if (previo) {
       if (previo.cliente_id !== cliente.id) throw new HttpError(409, "Pedido duplicado")
-      return { ok: true, comprobante: resumen(previo), repetido: true }
+      return { ok: true, comprobante: resumen(previo) }
     }
   }
-
-  let autorizado
+  // Una por vez: el robot no puede emitir dos facturas del mismo cliente al mismo tiempo.
+  const enCurso = await q(db().from("comprobantes_emitidos").select("id").eq("cliente_id", cliente.id).in("estado", EN_CURSO).limit(1))
+  if (enCurso?.length) throw new HttpError(409, "Ya hay una factura generándose para este cliente: esperá a que termine")
+  const fila = await q(db().from("comprobantes_emitidos").insert({
+    cliente_id: cliente.id, estudio_id: cliente.estudio_id, tipo: FACTURA_C, fecha: p.fecha, concepto: p.concepto,
+    doc_tipo: p.docTipo, doc_nro: p.docNro, receptor_nombre: p.receptorNombre, receptor_condicion_iva: p.condicionIva,
+    condicion_venta: "Contado", items: [{ descripcion: p.descripcion, cantidad: 1, precio: p.importe }], importe: p.importe,
+    fch_serv_desde: p.servDesde, fch_serv_hasta: p.servHasta, fch_vto_pago: p.vtoPago, emitido_por: emitidoPor,
+    clave_idempotencia: p.clave, estado: "pendiente",
+  }).select().single())
   try {
-    autorizado = await solicitarCae(cliente.cuit, {
-      ptoVta: config.punto_venta, tipo, concepto: s.concepto, docTipo: s.docTipo, docNro: s.docNro, condicionIva: s.condicionIva,
-      fecha: s.fecha, importe: s.importe, servDesde: s.servDesde, servHasta: s.servHasta, vtoPago: s.vtoPago,
-      asociado: asociado ? { tipo: FACTURA_C, ptoVta: asociado.puntoVenta, numero: asociado.numero, fecha: asociado.fecha } : null,
-    })
+    await despacharFactura(new URL(req.url).origin, fila.id)
   } catch (e: any) {
-    if (e instanceof ErrorFactura) throw new HttpError(422, e.message)
-    throw new HttpError(503, `No se pudo comunicar con ARCA: ${String(e?.message ?? e).slice(0, 200)}`)
+    await q(db().from("comprobantes_emitidos").update({ estado: "error", error: "No se pudo iniciar el robot" }).eq("id", fila.id)).catch(() => {})
+    throw new HttpError(503, `No se pudo iniciar el robot: ${e?.message ?? e}`)
   }
-
-  const nombre = `${nombreComprobante(tipo)} ${numeroComprobante(config.punto_venta, autorizado.numero)}`
-  const fila: Record<string, unknown> = {
-    cliente_id: cliente.id, estudio_id: cliente.estudio_id, tipo, punto_venta: config.punto_venta, numero: autorizado.numero,
-    fecha: s.fecha, concepto: s.concepto, doc_tipo: s.docTipo, doc_nro: s.docNro, receptor_nombre: s.receptorNombre,
-    receptor_condicion_iva: s.condicionIva, receptor_domicilio: s.receptorDomicilio || null, condicion_venta: s.condicionVenta,
-    items: s.items, importe: s.importe, fch_serv_desde: s.servDesde, fch_serv_hasta: s.servHasta, fch_vto_pago: s.vtoPago,
-    cae: autorizado.cae, cae_vto: autorizado.caeVto, asociado_id: asociado?.id ?? null, emitido_por: emitidoPor,
-    clave_idempotencia: s.clave, observaciones: autorizado.observaciones.join(" / ") || null,
-  }
-  // El CAE ya es válido ante ARCA: aunque falle algo de acá en adelante, queda registrado.
-  await logActividad(cliente.id, `${nombre} autorizada por ARCA (CAE ${autorizado.cae}) por $${s.importe.toLocaleString("es-AR")} · emitida por ${emitidoPor === "cliente" ? "el cliente" : "el contador"}`, cliente.estudio_id)
-
-  const datos: DatosFactura = {
-    tipo, puntoVenta: config.punto_venta, numero: autorizado.numero, fecha: s.fecha, concepto: s.concepto,
-    emisor: {
-      nombre: [cliente.apellido, cliente.nombre].filter(Boolean).join(" "), cuit: cliente.cuit, domicilio: config.domicilio,
-      ingresosBrutos: config.ingresos_brutos, inicioActividades: config.inicio_actividades,
-    },
-    receptor: { docTipo: s.docTipo, docNro: s.docNro, nombre: s.receptorNombre, condicionIva: s.condicionIva, domicilio: s.receptorDomicilio },
-    condicionVenta: s.condicionVenta, items: s.items, importe: s.importe, servDesde: s.servDesde, servHasta: s.servHasta,
-    vtoPago: s.vtoPago, cae: autorizado.cae, caeVto: autorizado.caeVto,
-    asociado: asociado ? { puntoVenta: asociado.puntoVenta, numero: asociado.numero, fecha: asociado.fecha } : null,
-  }
-  const avisos: string[] = []
-  try {
-    const pdf = await pdfFactura(datos)
-    const ruta = `${cliente.id}/comprobantes/${config.punto_venta}-${tipo}-${autorizado.numero}-${randomUUID().slice(0, 8)}.pdf`
-    const storage = db().storage.from(BUCKET_DOCS)
-    const { error } = await storage.upload(ruta, pdf, { contentType: "application/pdf" })
-    if (error) throw error
-    fila.url_pdf = storage.getPublicUrl(ruta).data.publicUrl
-    await q(db().from("documentos").insert({
-      cliente_id: cliente.id, estudio_id: cliente.estudio_id, tipo: "comprobante", nombre, fecha: s.fecha,
-      url: fila.url_pdf, generado_auto: true,
-    }))
-  } catch (e: any) {
-    avisos.push(`No se pudo guardar el PDF (${String(e?.message ?? e).slice(0, 120)}); el comprobante es válido igual.`)
-  }
-
-  const guardado = await q(db().from("comprobantes_emitidos").insert(fila).select().single()).catch((e: any) => {
-    avisos.push(`No se pudo registrar en la base (${String(e?.message ?? e).slice(0, 120)}). CAE ${autorizado.cae}.`)
-    return { ...fila, id: null, created_at: new Date().toISOString() }
-  })
-  if (asociado && guardado.id) await q(db().from("comprobantes_emitidos").update({ anulado_por: guardado.id }).eq("id", asociado.id)).catch(() => {})
-  await sumarEnFacturacion(cliente, s.fecha, tipo === NOTA_CREDITO_C ? -s.importe : s.importe).catch(() => {
-    avisos.push("No se pudo sumar en la facturación del mes.")
-  })
-  if (emitidoPor === "cliente") {
-    await q(db().from("alertas").insert({
-      cliente_id: cliente.id, estudio_id: cliente.estudio_id, tipo: "factura", icono: "🧾", leida: false,
-      titulo: `${[cliente.apellido, cliente.nombre].filter(Boolean).join(" ")} emitió la ${nombre}`,
-      descripcion: `Por $${s.importe.toLocaleString("es-AR", { minimumFractionDigits: 2 })} a ${s.receptorNombre}. CAE ${autorizado.cae}.`,
-    })).catch(() => {})
-  }
-  return { ok: true, comprobante: resumen(guardado), avisos }
+  return { ok: true, comprobante: resumen(fila) }
 }
 
-async function datosReceptor(cuit: string) {
-  const c = await constanciaCompleta(cuit)
-  return {
-    nombre: c.razonSocial || [c.apellido, c.nombre].filter(Boolean).join(" "),
-    domicilio: c.domicilio,
-    // Monotributista si ARCA informa categoría; si no, se elige a mano.
-    condicion_iva: c.categoria ? 6 : null,
-    estado: c.estado,
+async function buscarReceptor(cuitTexto: string) {
+  const cuit = String(cuitTexto ?? "").replace(/\D/g, "")
+  if (cuit.length !== 11) throw new HttpError(400, "CUIT inválido")
+  try {
+    const c = await constanciaCompleta(cuit)
+    const impuestos = c.impuestos.map((i) => i.toUpperCase())
+    // Monotributista si ARCA informa categoría; Responsable Inscripto si tiene IVA; si no, a elegir.
+    const condicion = c.categoria ? 6
+      : impuestos.some((i) => /IVA EXENTO/.test(i)) ? 4
+      : impuestos.some((i) => /^IVA\b/.test(i)) ? 1 : null
+    return { ok: true, nombre: c.razonSocial || [c.apellido, c.nombre].filter(Boolean).join(" "), condicion_iva: condicion, estado: c.estado }
+  } catch (e: any) {
+    throw new HttpError(404, `ARCA no encontró ese CUIT (${String(e?.message ?? e).slice(0, 120)})`)
   }
 }
 
-const opciones = () => ({
-  condiciones_iva: CONDICIONES_IVA, tipos_doc: TIPOS_DOC, conceptos: CONCEPTOS, condiciones_venta: CONDICIONES_VENTA,
-})
+async function unComprobante(clienteId: string, id: string) {
+  const c = await q(db().from("comprobantes_emitidos").select("*").eq("id", id).eq("cliente_id", clienteId).maybeSingle())
+  if (!c) throw new HttpError(404, "Comprobante no encontrado")
+  return resumen(c)
+}
 
 // ── Admin ────────────────────────────────────────────────────────────────────
 
@@ -234,8 +160,9 @@ export async function feEstado({ req, p }: Ctx) {
   const estudioId = await getEstudioId(req)
   const cliente = await clientePorSlug(p.slug, estudioId, COLS_CLIENTE)
   return {
-    estudio_habilitado: await estudioHabilitado(estudioId), config: configDe(cliente),
-    comprobantes: await comprobantesDe(cliente.id, 50), ...opciones(),
+    estudio_habilitado: await estudioHabilitado(estudioId), clave_fiscal: await tieneClave(cliente.id),
+    config: { habilitada: !!cliente.fe_habilitada, punto_venta: cliente.fe_punto_venta ?? null },
+    comprobantes: await comprobantesDe(cliente.id, 50), ...opciones(cliente),
   }
 }
 
@@ -250,90 +177,39 @@ export async function feGuardarConfig({ req, p }: Ctx) {
     if (pv !== null && !(Number.isInteger(pv) && pv >= 1 && pv <= 99998)) throw new HttpError(400, "Punto de venta inválido")
     cambios.fe_punto_venta = pv
   }
-  if ("domicilio" in d) cambios.fe_domicilio = String(d.domicilio ?? "").trim().slice(0, 160) || null
-  if ("ingresos_brutos" in d) cambios.fe_ingresos_brutos = String(d.ingresos_brutos ?? "").trim().slice(0, 40) || null
-  if ("inicio_actividades" in d) {
-    if (d.inicio_actividades && !esIso(d.inicio_actividades)) throw new HttpError(400, "Fecha de inicio de actividades inválida")
-    cambios.fe_inicio_actividades = d.inicio_actividades || null
-  }
   if (!Object.keys(cambios).length) throw new HttpError(400, "Sin cambios")
   await q(db().from("clientes").update(cambios).eq("id", cliente.id))
   return { ok: true }
 }
 
-// Prueba de conexión (solo consultas): certificado autorizado, delegación del cliente y punto de venta.
-export async function feProbar({ req, p }: Ctx) {
-  const estudioId = await getEstudioId(req)
-  const cliente = await clientePorSlug(p.slug, estudioId, COLS_CLIENTE)
-  let puntos
-  try {
-    puntos = await puntosDeVenta(cliente.cuit)
-  } catch (e: any) {
-    const msg = String(e?.message ?? e)
-    const sinDelegacion = /relacion|representad|no autorizado|600|ValidacionDeToken/i.test(msg)
-    return {
-      ok: false, paso: sinDelegacion ? "delegacion" : "certificado",
-      mensaje: sinDelegacion
-        ? `ARCA no deja facturar por este cliente con el certificado del estudio: falta que el cliente delegue "Facturación Electrónica" (${msg.slice(0, 160)})`
-        : msg.slice(0, 300),
-    }
-  }
-  const pv = cliente.fe_punto_venta
-  const elegido = puntos.find((x) => x.numero === pv)
-  if (!pv) return { ok: false, paso: "punto_venta", mensaje: "Elegí el punto de venta de Web Services", puntos }
-  if (!elegido) {
-    return { ok: false, paso: "punto_venta", mensaje: `El punto de venta ${pv} no es de Web Services para este CUIT. Puntos habilitados: ${puntos.map((x) => x.numero).join(", ") || "ninguno"}`, puntos }
-  }
-  if (elegido.bloqueado || elegido.baja) return { ok: false, paso: "punto_venta", mensaje: `El punto de venta ${pv} está bloqueado o dado de baja`, puntos }
-  const ultimo = await ultimoAutorizado(cliente.cuit, pv, FACTURA_C).catch(() => null)
-  return {
-    ok: true, puntos, ultimo_numero: ultimo,
-    mensaje: `Todo listo: punto de venta ${pv}, última Factura C N° ${ultimo ?? 0}. La próxima será la ${numeroComprobante(pv, (ultimo ?? 0) + 1)}.`,
-  }
-}
-
 export async function feEmitirAdmin({ req, p }: Ctx) {
   const estudioId = await getEstudioId(req)
   const cliente = await clientePorSlug(p.slug, estudioId, COLS_CLIENTE)
-  if (!(await estudioHabilitado(estudioId))) throw new HttpError(409, "Activá la facturación electrónica en Configuración → Estudio")
-  return emitir(cliente, leerSolicitud(await cuerpo(req)), FACTURA_C, "contador")
+  if (!(await estudioHabilitado(estudioId))) throw new HttpError(409, "Activá la facturación en Configuración → Estudio")
+  if (!(await tieneClave(cliente.id))) throw new HttpError(409, "Cargá la clave fiscal del cliente en la pestaña ARCA")
+  return crearPedido(req, cliente, "contador")
 }
 
-// Anula una Factura C con una Nota de Crédito C por el total (mismo receptor, concepto y renglones).
-export async function feAnular({ req, p }: Ctx) {
+export async function feComprobanteAdmin({ req, p }: Ctx) {
   const estudioId = await getEstudioId(req)
-  const original = await q(db().from("comprobantes_emitidos").select("*").eq("id", p.id).eq("estudio_id", estudioId).maybeSingle())
-  if (!original) throw new HttpError(404, "Comprobante no encontrado")
-  if (original.tipo !== FACTURA_C) throw new HttpError(400, "Solo se anulan facturas")
-  if (original.anulado_por) throw new HttpError(409, "Esta factura ya tiene una nota de crédito")
-  const cliente = await q(db().from("clientes").select(COLS_CLIENTE).eq("id", original.cliente_id).single())
-  const hoy = hoyAr()
-  const s: Solicitud = {
-    concepto: original.concepto, docTipo: original.doc_tipo, docNro: Number(original.doc_nro), condicionIva: original.receptor_condicion_iva,
-    receptorNombre: original.receptor_nombre ?? "Consumidor Final", receptorDomicilio: original.receptor_domicilio ?? "",
-    condicionVenta: original.condicion_venta ?? "Contado", items: original.items, importe: Number(original.importe), fecha: hoy,
-    servDesde: original.fch_serv_desde, servHasta: original.fch_serv_hasta,
-    vtoPago: original.concepto !== 1 ? (original.fch_vto_pago && original.fch_vto_pago > hoy ? original.fch_vto_pago : hoy) : null,
-    clave: `anula-${original.id}`,
-  }
-  return emitir(cliente, s, NOTA_CREDITO_C, "contador", {
-    id: original.id, puntoVenta: original.punto_venta, numero: Number(original.numero), fecha: original.fecha,
-  })
+  const cliente = await clientePorSlug(p.slug, estudioId)
+  return unComprobante(cliente.id, p.id)
+}
+
+// Vuelve a intentar un pedido que falló antes de confirmar en ARCA (nunca uno "a revisar").
+export async function feReintentar({ req, p }: Ctx) {
+  const estudioId = await getEstudioId(req)
+  const cliente = await clientePorSlug(p.slug, estudioId)
+  const filas = await q(db().from("comprobantes_emitidos").update({ estado: "pendiente", error: null, actualizado_at: new Date().toISOString() })
+    .eq("id", p.id).eq("cliente_id", cliente.id).eq("estado", "error").select())
+  if (!filas?.length) throw new HttpError(409, "Solo se pueden reintentar las facturas con error")
+  await despacharFactura(new URL(req.url).origin, p.id)
+  return { ok: true, comprobante: resumen(filas[0]) }
 }
 
 export async function feReceptorAdmin({ req, p }: Ctx) {
   await getEstudioId(req)
   return buscarReceptor(p.cuit)
-}
-
-async function buscarReceptor(cuitTexto: string) {
-  const cuit = String(cuitTexto ?? "").replace(/\D/g, "")
-  if (cuit.length !== 11) throw new HttpError(400, "CUIT inválido")
-  try {
-    return { ok: true, ...(await datosReceptor(cuit)) }
-  } catch (e: any) {
-    throw new HttpError(404, `ARCA no encontró ese CUIT (${String(e?.message ?? e).slice(0, 120)})`)
-  }
 }
 
 // ── Portal ───────────────────────────────────────────────────────────────────
@@ -345,7 +221,7 @@ async function clienteDelPortal(req: Request, slug: string) {
 
 export async function fePortalEstado({ req, p }: Ctx) {
   const cliente = await clienteDelPortal(req, p.slug)
-  return { disponible: await facturacionDisponible(cliente), comprobantes: await comprobantesDe(cliente.id, 20), ...opciones() }
+  return { disponible: await facturacionDisponible(cliente), comprobantes: await comprobantesDe(cliente.id, 20), ...opciones(cliente) }
 }
 
 export async function fePortalEmitir({ req, p }: Ctx) {
@@ -355,7 +231,12 @@ export async function fePortalEmitir({ req, p }: Ctx) {
   const { count } = await db().from("comprobantes_emitidos").select("id", { count: "exact", head: true })
     .eq("cliente_id", cliente.id).eq("emitido_por", "cliente").gte("created_at", desde)
   if ((count ?? 0) >= MAX_POR_DIA_CLIENTE) throw new HttpError(429, "Llegaste al máximo de facturas por día desde el portal. Consultá a tu contadora.")
-  return emitir(cliente, leerSolicitud(await cuerpo(req)), FACTURA_C, "cliente")
+  return crearPedido(req, cliente, "cliente")
+}
+
+export async function fePortalComprobante({ req, p }: Ctx) {
+  const cliente = await clienteDelPortal(req, p.slug)
+  return unComprobante(cliente.id, p.id)
 }
 
 export async function fePortalReceptor({ req, p }: Ctx) {

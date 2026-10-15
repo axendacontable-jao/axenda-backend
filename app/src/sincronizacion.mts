@@ -1,12 +1,15 @@
 import type { Browser, Page } from "playwright-core"
+import { randomUUID } from "node:crypto"
 import { getStore } from "@netlify/blobs"
 import { db, diasEnMes, hoyArgentina, isoDate, logActividad, q } from "./core.mts"
 import { descifrarClave, firmarTrabajo, trabajoValido } from "./secretos.mts"
-import { type Comprobante, type MesCcma, type PlanArca, totalesComprobantesPorMes, ultimosComprobantes } from "./parsers.mts"
+import {
+  type Comprobante, type MesCcma, type PlanArca, leerTextoFactura, pdfTexto, totalesComprobantesPorMes, ultimosComprobantes,
+} from "./parsers.mts"
 import {
   FalloArca, abrirMisComprobantes, abrirNavegador, bajarComprobantes, capturarEstado, consultarCuentaArt, consultarDeudaCcma,
-  consultarFacilidades, consultarPlanesArt, elegirContribuyente, ingresar, ingresarArt, type DeudaCcma, type EstadoSync,
-  type TipoComprobantes,
+  consultarFacilidades, consultarPlanesArt, elegirContribuyente, emitirFacturaRcel, ingresar, ingresarArt, type DeudaCcma,
+  type EstadoSync, type TipoComprobantes,
 } from "./robot.mts"
 
 export type Tarea = TipoComprobantes | "ccma" | "facilidades" | "art" | "art_planes"
@@ -514,4 +517,117 @@ export async function sincronizarCliente(clienteId: string, anio: number, mes: n
     titulo: `ARCA: no se pudo traer ${que}`,
     descripcion: limpiar([...new Set([...definitivos.values()].map((f) => f.fallo.message))].join(" / ")),
   })).catch((e) => console.error(`[arca-sync] no se pudo crear la alerta: ${e?.message ?? e}`))
+}
+
+// ── Facturas que pide el cliente (portal) o el contador (admin) ──────────────
+// El robot las emite en "Comprobantes en línea" con la clave fiscal del cliente. Cada pedido se
+// procesa una sola vez y nunca se reintenta solo después de tocar "Confirmar" en ARCA.
+
+const contenidoFactura = (id: string) => `factura:${id}`
+
+export async function despacharFactura(base: string, facturaId: string) {
+  const res = await fetch(`${base}/jobs/arca-sync`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ facturaId, firma: firmarTrabajo(contenidoFactura(facturaId)) }),
+  })
+  if (res.status !== 202 && !res.ok) throw new Error(`No se pudo iniciar la factura (${res.status})`)
+}
+
+export const pedidoFacturaValido = (p: any) =>
+  p && typeof p.facturaId === "string" && trabajoValido(contenidoFactura(p.facturaId), p.firma)
+
+// Suma el comprobante en la facturación del mes (la próxima sincronización con ARCA pone el total oficial).
+export async function sumarEnFacturacion(cliente: { id: string; estudio_id: string }, fecha: string, importe: number) {
+  const anio = Number(fecha.slice(0, 4))
+  const mes = Number(fecha.slice(5, 7))
+  const actual = await q(db().from("facturacion").select("monto").eq("cliente_id", cliente.id).eq("anio", anio).eq("mes", mes).maybeSingle())
+  const monto = Math.round(Math.max((Number(actual?.monto) || 0) + importe, 0) * 100) / 100
+  await q(db().from("facturacion").upsert(
+    { cliente_id: cliente.id, estudio_id: cliente.estudio_id, anio, mes, monto },
+    { onConflict: "cliente_id,anio,mes" },
+  ))
+}
+
+export const nombreFactura = (pv: number | null, numero: number | null) =>
+  pv && numero ? `Factura C ${String(pv).padStart(5, "0")}-${String(numero).padStart(8, "0")}` : "Factura C"
+
+export async function procesarFactura(facturaId: string) {
+  const d = db()
+  const ahora = () => new Date().toISOString()
+  const tomadas = await q(d.from("comprobantes_emitidos").update({ estado: "procesando", actualizado_at: ahora() })
+    .eq("id", facturaId).eq("estado", "pendiente").select())
+  const f = tomadas?.[0]
+  if (!f) return
+  const actualizar = (cambios: Record<string, unknown>) =>
+    q(d.from("comprobantes_emitidos").update({ ...cambios, actualizado_at: ahora() }).eq("id", facturaId))
+  const cliente = await q(d.from("clientes").select("id,cuit,nombre,apellido,estudio_id,fe_punto_venta").eq("id", f.cliente_id).single())
+  const cred = await q(d.from("credenciales_arca").select("clave_cifrada").eq("cliente_id", cliente.id).maybeSingle())
+  if (!cred) {
+    await actualizar({ estado: "error", error: "El cliente no tiene la clave fiscal cargada" })
+    return
+  }
+  const clave = descifrarClave(cred.clave_cifrada, cliente.id)
+  const limpiar = (t: string) => (clave ? t.split(clave).join("***") : t)
+  const emisor = [cliente.apellido, cliente.nombre].filter(Boolean).join(" ")
+  const importe = Number(f.importe)
+  const alerta = (titulo: string, descripcion: string) => q(d.from("alertas").insert({
+    cliente_id: cliente.id, estudio_id: cliente.estudio_id, tipo: "factura", icono: "🧾", leida: false, titulo, descripcion: limpiar(descripcion),
+  })).catch(() => {})
+
+  let browser: Browser | null = null
+  let generada = false
+  try {
+    browser = await abrirNavegador()
+    const page = await browser.newPage({ acceptDownloads: true })
+    await ingresar(page, cliente.cuit, clave)
+    const r = await emitirFacturaRcel(page, {
+      nombreEmisor: emisor, puntoVenta: cliente.fe_punto_venta ?? null, concepto: f.concepto, fecha: f.fecha,
+      servDesde: f.fch_serv_desde, servHasta: f.fch_serv_hasta, vtoPago: f.fch_vto_pago, condicionIva: f.receptor_condicion_iva,
+      docTipo: f.doc_tipo, docNro: Number(f.doc_nro), descripcion: f.items?.[0]?.descripcion ?? "", importe,
+    }, () => actualizar({ estado: "confirmando" }))
+    if (r.estado === "revisar") {
+      await actualizar({ estado: "revisar", error: limpiar(r.mensaje), pantalla: limpiar(r.pantalla) })
+      await alerta(`Revisar una factura de ${emisor}`, r.mensaje)
+      return
+    }
+    generada = true
+    const datos = r.pdf ? leerTextoFactura(await pdfTexto(r.pdf.slice())) : null
+    let url: string | null = null
+    if (r.pdf) {
+      const ruta = `${cliente.id}/comprobantes/${randomUUID()}.pdf`
+      const storage = d.storage.from("documentos-axenda")
+      const { error } = await storage.upload(ruta, r.pdf, { contentType: "application/pdf" })
+      if (!error) url = storage.getPublicUrl(ruta).data.publicUrl
+    }
+    const pv = datos?.puntoVenta ?? cliente.fe_punto_venta ?? null
+    const nombre = nombreFactura(pv, datos?.numero ?? null)
+    const avisos = [r.mensaje, datos?.total !== null && datos?.total !== undefined && Math.abs(datos.total - importe) > 0.01
+      ? `Ojo: el PDF dice un total de ${datos.total} y se pidió ${importe}` : ""].filter(Boolean).join(" ")
+    await actualizar({
+      estado: "emitida", punto_venta: pv, numero: datos?.numero ?? null, cae: datos?.cae ?? null, cae_vto: datos?.caeVto ?? null,
+      url_pdf: url, error: avisos || null, pantalla: limpiar(r.pantalla),
+    })
+    if (url) {
+      await q(d.from("documentos").insert({
+        cliente_id: cliente.id, estudio_id: cliente.estudio_id, tipo: "comprobante", nombre, fecha: f.fecha, url, generado_auto: true,
+      })).catch(() => {})
+    }
+    await sumarEnFacturacion(cliente, f.fecha, importe).catch(() => {})
+    const monto = `$${importe.toLocaleString("es-AR", { minimumFractionDigits: 2 })}`
+    await logActividad(cliente.id, `${nombre} emitida en ARCA por el robot por ${monto} a ${f.receptor_nombre} (CAE ${datos?.cae ?? "s/d"}, pedida por ${f.emitido_por === "cliente" ? "el cliente" : "el contador"})`, cliente.estudio_id)
+    if (f.emitido_por === "cliente") await alerta(`${emisor} emitió la ${nombre}`, `Por ${monto} a ${f.receptor_nombre}. CAE ${datos?.cae ?? "s/d"}.`)
+  } catch (e) {
+    const fallo = aFallo(e)
+    const pantalla = await capturarEstado(browser).catch(() => null)
+    await actualizar({
+      // Si ARCA ya la generó, no se marca como error: hay que revisarla antes de volver a pedirla.
+      estado: generada ? "revisar" : "error",
+      error: limpiar(generada ? `La factura se generó en ARCA pero no se pudo terminar de guardar: ${fallo.message}` : fallo.message).slice(0, 1500),
+      pantalla: pantalla?.texto ? limpiar(pantalla.texto) : null,
+    }).catch(() => {})
+    if (pantalla?.captura) await getStore("arca-capturas").set(`factura-${facturaId}`, pantalla.captura).catch(() => {})
+  } finally {
+    await browser?.close().catch(() => {})
+  }
 }

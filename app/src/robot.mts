@@ -780,6 +780,223 @@ export async function consultarPlanesArt(art: Page, panel: string): Promise<{ pl
   return { planes, pantalla: `[menú: ${nombre}${paso}] ${pantalla}` }
 }
 
+// ── Comprobantes en línea: Factura C con la clave fiscal del cliente ─────────
+// Es la única parte del robot que genera algo en ARCA. Llena los cuatro pasos y, antes de tocar
+// "Confirmar Datos...", compara el resumen de ARCA con lo pedido: si algo no coincide, no confirma.
+
+export type PedidoFactura = {
+  nombreEmisor: string; puntoVenta: number | null; concepto: number; fecha: string
+  servDesde: string | null; servHasta: string | null; vtoPago: string | null
+  condicionIva: number; docTipo: number; docNro: number; descripcion: string; importe: number
+}
+
+export type ResultadoRcel = { estado: "emitida" | "revisar"; pdf: Uint8Array | null; pantalla: string; mensaje: string }
+
+const ddmmIso = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`
+const normalizar = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim().toUpperCase()
+
+async function opcionesDe(sel: Locator) {
+  return sel.evaluate((el) => [...(el as HTMLSelectElement).options].map((o) => ({ valor: o.value, texto: o.text.trim() }))).catch(() => [])
+}
+
+// Elige una opción de una lista; algunas se llenan después de elegir la anterior, así que espera.
+async function elegirEnLista(p: Page, selector: string, prueba: (o: { valor: string; texto: string }) => boolean, que: string) {
+  const sel = p.locator(selector).first()
+  if (!(await primeroVisible([sel], 15_000))) throw new FalloArca("error", `No apareció la lista de ${que} en Comprobantes en línea`)
+  let opciones: { valor: string; texto: string }[] = []
+  for (let i = 0; i < 20; i++) {
+    opciones = await opcionesDe(sel)
+    const op = opciones.find((o) => o.valor && prueba(o))
+    if (op) {
+      await sel.selectOption(op.valor)
+      return op.texto
+    }
+    await new Promise((r) => setTimeout(r, 500))
+  }
+  throw new FalloArca("error", `No encontré ${que} en Comprobantes en línea. Opciones: ${opciones.map((o) => o.texto).filter(Boolean).join(" | ") || "ninguna"}`)
+}
+
+// Escribe en un campo aunque tenga calendario o sea de solo lectura, y avisa del cambio.
+async function escribir(p: Page, selector: string, valor: string, que: string) {
+  const campo = p.locator(selector).first()
+  if (!(await primeroVisible([campo], 10_000))) throw new FalloArca("error", `No encontré el campo ${que} en Comprobantes en línea`)
+  try {
+    await campo.fill(valor, { timeout: 5000 })
+  } catch {
+    await campo.evaluate((el, v) => { (el as HTMLInputElement).value = v }, valor)
+  }
+  await campo.evaluate((el) => {
+    el.dispatchEvent(new Event("change", { bubbles: true }))
+    el.dispatchEvent(new Event("blur", { bubbles: true }))
+  }).catch(() => {})
+}
+
+export async function emitirFacturaRcel(page: Page, pedido: PedidoFactura, alConfirmar: () => Promise<void>): Promise<ResultadoRcel> {
+  const rcel = await abrirServicio(page, /^\s*Comprobantes en l[ií]nea\s*$/i, "Comprobantes en línea")
+  const dialogos: string[] = []
+  let puedeConfirmar = false
+  rcel.on("dialog", (d) => {
+    dialogos.push(d.message())
+    // Solo se acepta el "¿Confirma...?" final; cualquier otra pregunta se cancela.
+    if (d.type() === "confirm" && !puedeConfirmar) d.dismiss().catch(() => {})
+    else d.accept().catch(() => {})
+  })
+  const espera = () => rcel.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
+  const continuar = async (paso: string) => {
+    const antes = dialogos.length
+    const boton = await primeroVisible([rcel.locator("input[value='Continuar >']"), rcel.getByRole("button", { name: /^\s*continuar\s*>?\s*$/i })], 10_000)
+    if (!boton) throw new FalloArca("error", `No encontré "Continuar" (${paso}). Botones: ${await describirClickeables(rcel)}`)
+    await boton.click()
+    await espera()
+    await new Promise((r) => setTimeout(r, 800))
+    if (dialogos.length > antes) throw new FalloArca("error", `Comprobantes en línea no aceptó los datos (${paso}): ${dialogos.slice(antes).join(" / ")}`)
+  }
+  await espera()
+
+  // 1. Empresa a representar (con la clave del contador puede haber varias).
+  const empresas = rcel.locator("input.btn_empresa, input[type='button'][onclick*='mpresa']")
+  const cantidad = await empresas.count()
+  if (cantidad) {
+    const nombres = await empresas.evaluateAll((els) => els.map((e) => (e as HTMLInputElement).value))
+    const emisor = normalizar(pedido.nombreEmisor)
+    const apellido = emisor.split(" ")[0]
+    let i = nombres.findIndex((n) => normalizar(n) === emisor)
+    if (i < 0) i = nombres.findIndex((n) => normalizar(n).includes(apellido))
+    if (i < 0 && cantidad === 1) i = 0
+    if (i < 0) throw new FalloArca("error", `Comprobantes en línea no ofrece emitir para ${pedido.nombreEmisor}. Empresas: ${nombres.join(" | ")}`)
+    await empresas.nth(i).click()
+    await espera()
+  }
+
+  // 2. Menú → Generar Comprobantes.
+  const generar = await primeroVisible([
+    rcel.locator("#btn_gen_cmp"), rcel.getByRole("button", { name: /generar comprobantes/i }), rcel.getByRole("link", { name: /generar comprobantes/i }),
+  ], 15_000)
+  if (!generar) throw new FalloArca("error", `No encontré "Generar Comprobantes". Pantalla: ${resumen(await textoVisible(rcel))} — Botones: ${await describirClickeables(rcel)}`)
+  await generar.click()
+  await espera()
+
+  // 3. Punto de venta y tipo de comprobante.
+  const pvs = (await opcionesDe(rcel.locator("#puntodeventa").first())).filter((o) => o.valor && /\d/.test(o.texto))
+  const numeroPv = (o: { texto: string; valor: string }) => Number((o.texto.match(/\d+/) ?? [o.valor])[0])
+  if (pedido.puntoVenta === null && pvs.length > 1) {
+    throw new FalloArca("error", `El cliente tiene varios puntos de venta: elegí cuál usar en la configuración de facturación. Opciones: ${pvs.map((o) => o.texto).join(" | ")}`)
+  }
+  await elegirEnLista(rcel, "#puntodeventa", (o) => /\d/.test(o.texto) && (pedido.puntoVenta === null || numeroPv(o) === pedido.puntoVenta),
+    pedido.puntoVenta ? `el punto de venta ${pedido.puntoVenta}` : "un punto de venta")
+  await elegirEnLista(rcel, "#universocomprobante", (o) => /^\s*factura\s+c\s*$/i.test(o.texto), "el tipo Factura C")
+  await continuar("punto de venta")
+
+  // 4. Datos de emisión: fecha, concepto y, si son servicios, período y vencimiento del pago.
+  await escribir(rcel, "#fc", ddmmIso(pedido.fecha), "fecha del comprobante")
+  await elegirEnLista(rcel, "#idconcepto", (o) => o.valor === String(pedido.concepto), "el concepto")
+  if (pedido.concepto !== 1) {
+    await escribir(rcel, "#fsd", ddmmIso(pedido.servDesde!), "período desde")
+    await escribir(rcel, "#fsh", ddmmIso(pedido.servHasta!), "período hasta")
+    await escribir(rcel, "#vencimientopago", ddmmIso(pedido.vtoPago!), "vencimiento del pago")
+  }
+  // Actividad asociada (si ARCA la pide y hay una sola o ninguna elegida, la primera).
+  const actividad = rcel.locator("select[id*='ctividad' i], select[name*='ctividad' i]").first()
+  if (await actividad.isVisible().catch(() => false)) {
+    const ops = (await opcionesDe(actividad)).filter((o) => o.valor)
+    const actual = await actividad.inputValue().catch(() => "")
+    if (!actual && ops.length) await actividad.selectOption(ops[0].valor)
+  }
+  await continuar("datos de emisión")
+
+  // 5. Receptor: condición frente al IVA, documento y condición de venta (contado).
+  await elegirEnLista(rcel, "#idivareceptor", (o) => o.valor === String(pedido.condicionIva), "la condición frente al IVA del receptor")
+  if (pedido.docTipo !== 99) {
+    await elegirEnLista(rcel, "#idtipodocreceptor", (o) => o.valor === String(pedido.docTipo), "el tipo de documento del receptor")
+    await escribir(rcel, "#nrodocreceptor", String(pedido.docNro), "documento del receptor")
+    await rcel.locator("#nrodocreceptor").press("Tab").catch(() => {})
+    // Con CUIT, ARCA completa la razón social sola.
+    for (let i = 0; i < 16; i++) {
+      if (await rcel.locator("#razonsocialreceptor").inputValue().catch(() => "x")) break
+      await new Promise((r) => setTimeout(r, 500))
+    }
+  }
+  const contado = rcel.locator("#formadepago1").first()
+  if (await contado.isVisible().catch(() => false)) await contado.check().catch(() => {})
+  else await rcel.getByLabel(/contado/i).first().check().catch(() => {})
+  await continuar("receptor")
+
+  // 6. Detalle: un renglón con la descripción y el monto.
+  await escribir(rcel, "#detalle_descripcion1", pedido.descripcion, "descripción")
+  await escribir(rcel, "#detalle_cantidad1", "1", "cantidad")
+  const medida = rcel.locator("#detalle_medida1").first()
+  if (await medida.isVisible().catch(() => false)) {
+    const ops = await opcionesDe(medida)
+    const unidades = ops.find((o) => /unidad/i.test(o.texto)) ?? ops.find((o) => o.valor === "7")
+    if (unidades) await medida.selectOption(unidades.valor).catch(() => {})
+  }
+  // El precio se prueba con punto decimal y, si el subtotal no da, con coma.
+  for (const formato of [pedido.importe.toFixed(2), pedido.importe.toFixed(2).replace(".", ",")]) {
+    await escribir(rcel, "#detalle_precio1", formato, "precio")
+    await rcel.locator("#detalle_precio1").press("Tab").catch(() => {})
+    await new Promise((r) => setTimeout(r, 600))
+    const subtotal = parseMonto(await rcel.locator("#detalle_subtotal1").inputValue().catch(() => "")) ?? -1
+    if (Math.abs(subtotal - pedido.importe) < 0.01) break
+  }
+  await continuar("detalle")
+
+  // 7. Resumen: se confirma solo si coincide con lo pedido.
+  const resumenArca = (await textoVisible(rcel)).replace(/\s+/g, " ")
+  const digitos = resumenArca.replace(/\D/g, "")
+  const importes = [pedido.importe.toFixed(2), pedido.importe.toFixed(2).replace(".", ","),
+    pedido.importe.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })]
+  const faltan = [
+    !/factura/i.test(resumenArca) && "tipo Factura C",
+    !resumenArca.includes(ddmmIso(pedido.fecha)) && `fecha ${ddmmIso(pedido.fecha)}`,
+    !importes.some((i) => resumenArca.includes(i)) && `importe ${importes[2]}`,
+    pedido.docTipo !== 99 && !digitos.includes(String(pedido.docNro)) && `documento ${pedido.docNro}`,
+    !normalizar(resumenArca).includes(normalizar(pedido.descripcion).slice(0, 25)) && "descripción",
+  ].filter(Boolean)
+  if (faltan.length) {
+    throw new FalloArca("error", `El resumen de ARCA no coincide con lo pedido (${faltan.join(", ")}): no se confirmó la factura. Pantalla: ${resumenArca.slice(0, 600)}`)
+  }
+  const confirmar = await primeroVisible([rcel.locator("#btngenerar"), rcel.locator("input[value^='Confirmar Datos']")], 10_000)
+  if (!confirmar) throw new FalloArca("error", `No encontré "Confirmar Datos..." en el resumen. Botones: ${await describirClickeables(rcel)}`)
+
+  await alConfirmar()
+  puedeConfirmar = true
+  try {
+    await confirmar.click()
+    await espera()
+    if (!(await primeroVisible([rcel.getByText(/comprobante generado/i)], 60_000))) throw new Error("ARCA no mostró \"Comprobante Generado\"")
+  } catch (e: any) {
+    return {
+      estado: "revisar", pdf: null, pantalla: (await textoVisible(rcel)).replace(/\s+/g, " ").slice(0, 3000),
+      mensaje: `Se confirmó en ARCA pero no se vio el comprobante generado (${String(e?.message ?? e).split("\n")[0]}). Revisá en Comprobantes en línea antes de volver a emitir.`,
+    }
+  }
+  const pantalla = (await textoVisible(rcel)).replace(/\s+/g, " ").slice(0, 3000)
+
+  // 8. PDF: "Imprimir..." lo descarga o lo abre en otra pestaña.
+  let pdf: Uint8Array | null = null
+  try {
+    const imprimir = await primeroVisible([rcel.locator("input[value^='Imprimir']"), rcel.getByRole("button", { name: /imprimir/i })], 15_000)
+    if (imprimir) {
+      const descarga = rcel.waitForEvent("download", { timeout: 45_000 }).then(async (d) => {
+        const partes: Buffer[] = []
+        for await (const parte of await d.createReadStream()) partes.push(parte as Buffer)
+        return new Uint8Array(Buffer.concat(partes))
+      })
+      const ventana = rcel.context().waitForEvent("page", { timeout: 45_000 }).then(async (np) => {
+        await np.waitForLoadState("load", { timeout: T }).catch(() => {})
+        const r = await rcel.context().request.get(np.url())
+        return new Uint8Array(await r.body())
+      })
+      await imprimir.click()
+      const bytes = await Promise.any([descarga, ventana])
+      if (bytes.length > 4 && Buffer.from(bytes.slice(0, 4)).toString() === "%PDF") pdf = bytes
+    }
+  } catch {
+    pdf = null
+  }
+  return { estado: "emitida", pdf, pantalla, mensaje: pdf ? "" : "La factura se generó pero no se pudo bajar el PDF: está en Comprobantes en línea → Consultas." }
+}
+
 // Datos para diagnosticar un fallo: URL, texto visible y captura (nunca valores de campos).
 export async function capturarEstado(browser: Browser | null) {
   const paginas = browser?.contexts().flatMap((c) => c.pages()) ?? []

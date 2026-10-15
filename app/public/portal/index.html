@@ -502,7 +502,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
           <div class="proj-warning" id="proj-warning"></div>
           <div id="factura-wrap" style="display:none;margin-top:12px">
             <button class="btn-accion" onclick="abrirFactura()">🧾 Emitir factura</button>
-            <div class="nota-chica">Se emite al instante con ARCA (Factura C) y queda guardada en tu bóveda.</div>
+            <div class="nota-chica">La genera el robot en ARCA con tu clave fiscal (1 a 2 minutos) y queda guardada en tu bóveda.</div>
             <div id="facturas-recientes" style="margin-top:10px"></div>
           </div>
         </div>
@@ -1133,10 +1133,16 @@ async function verificarArca() {
 }
 
 // ── FACTURA ELECTRÓNICA ────────────────────────────────────────────────────────
+// El robot genera la Factura C en "Comprobantes en línea" con la clave fiscal del cliente.
 const pesosC = (n) => "$" + Number(n || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-// Factura C con el web service de ARCA (certificado del estudio). El formulario se arma en el modal.
+const ESTADO_FACTURA = {
+  pendiente: ["⏳ En cola", "var(--muted)"], procesando: ["⚙️ Generándose en ARCA", "var(--blue)"], confirmando: ["⚙️ Confirmándose en ARCA", "var(--blue)"],
+  emitida: ["✓ Emitida", "var(--green)"], error: ["✗ No se emitió", "var(--red)"], revisar: ["⚠ En revisión", "var(--yellow)"],
+};
+const EN_CURSO_FACTURA = ["pendiente", "procesando", "confirmando"];
 let FE = null;
 let FE_FORM = null;
+let FE_SEGUIMIENTO = null;
 
 function numeroAr(v) {
   const t = String(v ?? "").trim();
@@ -1157,34 +1163,39 @@ async function cargarFacturacion() {
   } catch {}
 }
 
+let FE_REFRESCO = null;
 function renderFacturasRecientes() {
   const lista = (FE?.comprobantes || []).slice(0, 5);
+  // Mientras alguna se está generando, la lista se actualiza sola.
+  clearTimeout(FE_REFRESCO);
+  if (lista.some(c => EN_CURSO_FACTURA.includes(c.estado))) FE_REFRESCO = setTimeout(cargarFacturacion, 8000);
   document.getElementById("facturas-recientes").innerHTML = !lista.length ? "" :
-    `<div class="salud-label" style="margin-bottom:6px">Últimas emitidas</div>` + lista.map(c => `
-      <div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:6px 0;border-top:1px solid var(--border)">
-        <span>${escHtml(c.nombre)} · ${fmtFecha(c.fecha)}${c.anulado ? ' <span style="color:var(--red)">(anulada)</span>' : ""}</span>
-        <span style="white-space:nowrap"><strong style="font-family:'DM Mono',monospace">${c.tipo === 13 ? "−" : ""}${pesosC(c.importe)}</strong>${c.url_pdf ? ` · <a href="${escHtml(c.url_pdf)}" target="_blank" rel="noreferrer" style="color:var(--green)">PDF</a>` : ""}</span>
-      </div>`).join("");
+    `<div class="salud-label" style="margin-bottom:6px">Últimas facturas</div>` + lista.map(c => {
+      const [etq, color] = ESTADO_FACTURA[c.estado] || [c.estado, "var(--muted)"];
+      return `<div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:6px 0;border-top:1px solid var(--border)">
+        <span>${escHtml(c.nombre)} · ${fmtFecha(c.fecha)}<br><span style="color:${color}">${etq}</span></span>
+        <span style="white-space:nowrap;text-align:right"><strong style="font-family:'DM Mono',monospace">${pesosC(c.importe)}</strong>${c.url_pdf ? `<br><a href="${escHtml(c.url_pdf)}" target="_blank" rel="noreferrer" style="color:var(--green)">PDF</a>` : ""}</span>
+      </div>`;
+    }).join("");
 }
 
 async function abrirFactura() {
   if (!FE) await cargarFacturacion();
   if (!FE || !FE.disponible) { alert("La facturación desde el portal no está habilitada. Consultá a tu contadora."); return; }
-  const hoy = new Date();
   FE_FORM = {
     paso: "form", error: "", clave: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    concepto: "2", fecha: isoDia(hoy), serv_desde: isoDia(new Date(hoy.getFullYear(), hoy.getMonth(), 1)),
-    serv_hasta: isoDia(new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0)), vto_pago: isoDia(hoy),
-    doc_tipo: "99", doc_nro: "", receptor_nombre: "", receptor_domicilio: "", condicion_iva: "5", condicion_venta: "Contado",
-    items: [{ descripcion: "", cantidad: "1", precio: "" }],
+    concepto: String(FE.concepto_sugerido || 2), fecha: isoDia(new Date()), doc_tipo: "99", doc_nro: "", receptor_nombre: "",
+    condicion_iva: "5", descripcion: "", importe: "", comprobante: null,
   };
   renderFormFactura();
   document.getElementById("factura-modal").classList.add("open");
 }
 
 function cerrarFactura() {
-  if (FE_FORM && FE_FORM.paso === "emitiendo") return;
+  if (FE_FORM && FE_FORM.paso === "enviando") return;
+  clearTimeout(FE_SEGUIMIENTO);
   document.getElementById("factura-modal").classList.remove("open");
+  cargarFacturacion();
 }
 document.getElementById("factura-modal").addEventListener("click", e => {
   if (e.target === document.getElementById("factura-modal")) cerrarFactura();
@@ -1193,75 +1204,59 @@ document.getElementById("factura-modal").addEventListener("click", e => {
 // Guarda lo que hay en pantalla antes de volver a dibujar el formulario.
 function leerFormFactura() {
   if (!FE_FORM || FE_FORM.paso !== "form") return;
-  const v = (id) => document.getElementById(id)?.value ?? "";
-  ["concepto", "fecha", "serv_desde", "serv_hasta", "vto_pago", "doc_tipo", "doc_nro", "receptor_nombre", "receptor_domicilio", "condicion_iva", "condicion_venta"]
-    .forEach(k => { if (document.getElementById(`fe-${k}`)) FE_FORM[k] = v(`fe-${k}`); });
-  FE_FORM.items = FE_FORM.items.map((it, i) => ({ descripcion: v(`fe-desc-${i}`), cantidad: v(`fe-cant-${i}`), precio: v(`fe-precio-${i}`) }));
+  ["concepto", "fecha", "doc_tipo", "doc_nro", "receptor_nombre", "condicion_iva", "descripcion", "importe"].forEach(k => {
+    const el = document.getElementById(`fe-${k}`);
+    if (el) FE_FORM[k] = el.value;
+  });
 }
-
-const renglonesFactura = () => FE_FORM.items.map(it => ({ descripcion: it.descripcion.trim(), cantidad: numeroAr(it.cantidad), precio: numeroAr(it.precio) }));
-const totalFactura = () => Math.round(renglonesFactura().reduce((s, it) => s + (it.cantidad > 0 && it.precio > 0 ? it.cantidad * it.precio : 0), 0) * 100) / 100;
 
 function renderFormFactura() {
   const f = FE_FORM;
   const el = document.getElementById("factura-modal-inner");
   const opt = (obj, sel) => Object.entries(obj).map(([k, txt]) => `<option value="${escHtml(k)}"${String(sel) === String(k) ? " selected" : ""}>${escHtml(txt)}</option>`).join("");
   const err = f.error ? `<div class="err-box">${escHtml(f.error)}</div>` : "";
-  const servicios = f.concepto !== "1";
+  const importe = Math.round(numeroAr(f.importe) * 100) / 100;
+  const receptor = f.doc_tipo === "99" ? "Consumidor Final" : `${escHtml(f.receptor_nombre)} (${FE.tipos_doc[f.doc_tipo]} ${escHtml(f.doc_nro)})`;
   if (f.paso === "form") {
     el.innerHTML = `<h3>Emitir Factura C</h3>${err}
       <div class="fe-grid">
-        <div><div class="fe-label">Concepto</div><select id="fe-concepto" onchange="leerFormFactura();renderFormFactura()">${opt(FE.conceptos, f.concepto)}</select></div>
-        <div><div class="fe-label">Fecha de emisión</div><input type="date" id="fe-fecha" value="${f.fecha}"></div>
+        <div><div class="fe-label">Concepto</div><select id="fe-concepto">${opt(FE.conceptos, f.concepto)}</select></div>
+        <div><div class="fe-label">Fecha</div><input type="date" id="fe-fecha" value="${f.fecha}"></div>
       </div>
-      ${servicios ? `<div class="fe-grid">
-        <div><div class="fe-label">Período desde</div><input type="date" id="fe-serv_desde" value="${f.serv_desde}"></div>
-        <div><div class="fe-label">Período hasta</div><input type="date" id="fe-serv_hasta" value="${f.serv_hasta}"></div>
-        <div><div class="fe-label">Vencimiento del pago</div><input type="date" id="fe-vto_pago" value="${f.vto_pago}"></div>
-      </div>` : ""}
-      <div class="fe-sub">Receptor</div>
       <div class="fe-grid">
-        <div><div class="fe-label">Documento</div><select id="fe-doc_tipo" onchange="leerFormFactura();renderFormFactura()">
-          ${opt({ 99: "Consumidor final (sin documento)", 80: "CUIT", 96: "DNI", 86: "CUIL" }, f.doc_tipo)}</select></div>
-        ${f.doc_tipo !== "99" ? `<div><div class="fe-label">Número</div><input id="fe-doc_nro" inputmode="numeric" value="${escHtml(f.doc_nro)}"></div>` : ""}
+        <div><div class="fe-label">A quién le facturás</div><select id="fe-doc_tipo" onchange="leerFormFactura();renderFormFactura()">
+          ${opt({ 99: "Consumidor final", 80: "CUIT", 96: "DNI" }, f.doc_tipo)}</select></div>
+        ${f.doc_tipo !== "99" ? `<div><div class="fe-label">${f.doc_tipo === "80" ? "CUIT" : "DNI"}</div><input id="fe-doc_nro" inputmode="numeric" value="${escHtml(f.doc_nro)}"></div>` : ""}
       </div>
-      ${f.doc_tipo === "80" || f.doc_tipo === "86" ? `<button class="btn-accion" style="margin:-4px 0 12px" onclick="buscarReceptorFactura()">Buscar nombre en ARCA</button>` : ""}
+      ${f.doc_tipo === "80" ? `<button class="btn-accion" style="margin:-4px 0 12px" onclick="buscarReceptorFactura()">Buscar nombre en ARCA</button>` : ""}
       ${f.doc_tipo !== "99" ? `<div class="fe-grid">
         <div><div class="fe-label">Nombre o razón social</div><input id="fe-receptor_nombre" value="${escHtml(f.receptor_nombre)}"></div>
         <div><div class="fe-label">Condición frente al IVA</div><select id="fe-condicion_iva">${opt(FE.condiciones_iva, f.condicion_iva)}</select></div>
-      </div>
-      <div class="fe-label">Domicilio (opcional)</div><input id="fe-receptor_domicilio" value="${escHtml(f.receptor_domicilio)}">` : ""}
-      <div class="fe-sub">Detalle</div>
-      ${f.items.map((it, i) => `<div class="fe-item">
-        <input id="fe-desc-${i}" placeholder="Descripción" value="${escHtml(it.descripcion)}">
-        <input id="fe-cant-${i}" placeholder="Cant." inputmode="decimal" value="${escHtml(it.cantidad)}">
-        <input id="fe-precio-${i}" placeholder="Precio $" inputmode="decimal" value="${escHtml(it.precio)}" oninput="leerFormFactura();document.getElementById('fe-total').textContent=pesosC(totalFactura())">
-        <button class="fe-x" title="Quitar" onclick="leerFormFactura();if(FE_FORM.items.length>1){FE_FORM.items.splice(${i},1);renderFormFactura()}">×</button>
-      </div>`).join("")}
-      ${f.items.length < 12 ? `<button class="btn-accion" style="margin-bottom:12px" onclick="leerFormFactura();FE_FORM.items.push({descripcion:'',cantidad:'1',precio:''});renderFormFactura()">+ Renglón</button>` : ""}
-      <div class="fe-grid" style="align-items:end">
-        <div><div class="fe-label">Condición de venta</div><select id="fe-condicion_venta">${opt(Object.fromEntries(FE.condiciones_venta.map(v => [v, v])), f.condicion_venta)}</select></div>
-        <div style="text-align:right;margin-bottom:12px"><div class="fe-label">Total</div><div class="fe-total" id="fe-total">${pesosC(totalFactura())}</div></div>
-      </div>
+      </div>` : ""}
+      <div class="fe-label">Descripción</div><input id="fe-descripcion" value="${escHtml(f.descripcion)}" placeholder="Honorarios profesionales de octubre">
+      <div class="fe-label">Monto total</div><input id="fe-importe" inputmode="decimal" value="${escHtml(f.importe)}" placeholder="150.000,00">
       <div class="modal-btns"><button class="btn-sec" onclick="cerrarFactura()">Cancelar</button><button class="btn-pri" onclick="revisarFactura()">Revisar</button></div>`;
-  } else if (f.paso === "confirmar" || f.paso === "emitiendo") {
-    const rec = f.doc_tipo === "99" ? "Consumidor Final" : `${escHtml(f.receptor_nombre)} (${FE.tipos_doc[f.doc_tipo]} ${escHtml(f.doc_nro)})`;
+  } else if (f.paso === "confirmar" || f.paso === "enviando") {
     el.innerHTML = `<h3>Revisá la factura</h3>${err}
       <div class="fe-resumen">
         <div><strong>Factura C</strong> · ${escHtml(FE.conceptos[f.concepto])} · ${fmtFecha(f.fecha)}</div>
-        ${servicios ? `<div>Período ${fmtFecha(f.serv_desde)} al ${fmtFecha(f.serv_hasta)} · vence el pago ${fmtFecha(f.vto_pago)}</div>` : ""}
-        <div>Receptor: <strong>${rec}</strong> · ${escHtml(FE.condiciones_iva[f.doc_tipo === "99" ? "5" : f.condicion_iva])}</div>
-        ${renglonesFactura().map(it => `<div>• ${escHtml(it.descripcion)}: ${it.cantidad} × ${pesosC(it.precio)}</div>`).join("")}
-        <div style="font-size:17px;margin-top:6px">Total: <strong>${pesosC(totalFactura())}</strong></div>
+        <div>Para: <strong>${receptor}</strong>${f.doc_tipo !== "99" ? ` · ${escHtml(FE.condiciones_iva[f.condicion_iva])}` : ""}</div>
+        <div>${escHtml(f.descripcion)}</div>
+        <div style="font-size:17px;margin-top:6px">Total: <strong>${pesosC(importe)}</strong></div>
       </div>
-      <div style="font-size:12px;color:var(--red);margin-bottom:12px">Es una factura real ante ARCA: no se puede borrar. Si hay un error, tu contadora la anula con una nota de crédito.</div>
-      <div class="modal-btns"><button class="btn-sec" onclick="FE_FORM.paso='form';FE_FORM.error='';renderFormFactura()" ${f.paso === "emitiendo" ? "disabled" : ""}>Volver</button>
-        <button class="btn-pri" onclick="emitirFactura()" ${f.paso === "emitiendo" ? "disabled" : ""}>${f.paso === "emitiendo" ? "Pidiendo CAE a ARCA…" : `Emitir por ${pesosC(totalFactura())}`}</button></div>`;
-  } else if (f.paso === "listo") {
-    const c = f.resultado.comprobante;
-    el.innerHTML = `<div class="modal-ok"><div class="ok-ico">✅</div><h4>${escHtml(c.nombre)} autorizada</h4>
-      <p>CAE ${escHtml(c.cae)} · vence ${fmtFecha(c.cae_vto)}<br>Quedó guardada en tu bóveda.</p>
-      ${(f.resultado.avisos || []).map(a => `<p style="color:var(--yellow)">⚠ ${escHtml(a)}</p>`).join("")}
+      <div style="font-size:12px;color:var(--red);margin-bottom:12px">Se genera una factura real en ARCA con tu clave fiscal. No se puede borrar: si hay un error, tu contadora la anula con una nota de crédito.</div>
+      <div class="modal-btns"><button class="btn-sec" onclick="FE_FORM.paso='form';FE_FORM.error='';renderFormFactura()" ${f.paso === "enviando" ? "disabled" : ""}>Volver</button>
+        <button class="btn-pri" onclick="emitirFactura()" ${f.paso === "enviando" ? "disabled" : ""}>${f.paso === "enviando" ? "Enviando…" : `Emitir por ${pesosC(importe)}`}</button></div>`;
+  } else if (f.paso === "siguiendo") {
+    const c = f.comprobante;
+    const enCurso = EN_CURSO_FACTURA.includes(c.estado);
+    const [etq] = ESTADO_FACTURA[c.estado] || [c.estado];
+    el.innerHTML = `<div class="modal-ok">
+      <div class="ok-ico">${enCurso ? "⏳" : c.estado === "emitida" ? "✅" : "⚠️"}</div>
+      <h4>${enCurso ? `${etq}…` : c.estado === "emitida" ? `${escHtml(c.nombre)} emitida` : etq}</h4>
+      <p>${enCurso ? "El robot está generando tu factura en ARCA. Tarda 1 a 2 minutos: podés cerrar esta ventana, queda en “Últimas facturas”."
+        : c.estado === "emitida" ? `${c.cae ? `CAE ${escHtml(c.cae)}${c.cae_vto ? ` · vence ${fmtFecha(c.cae_vto)}` : ""}<br>` : ""}Quedó guardada en tu bóveda.`
+        : `${escHtml(c.error || "")}<br>Tu contadora ya lo ve en su panel.`}</p>
       ${c.url_pdf ? `<a class="btn-pri" style="display:block;padding:13px;text-decoration:none;margin-bottom:10px" href="${escHtml(c.url_pdf)}" target="_blank" rel="noreferrer">Ver PDF</a>` : ""}
       <button class="btn-sec" style="width:100%;padding:13px" onclick="cerrarFactura()">Cerrar</button></div>`;
   }
@@ -1277,7 +1272,6 @@ async function buscarReceptorFactura() {
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d.detail || `Error ${r.status}`);
     FE_FORM.receptor_nombre = d.nombre || FE_FORM.receptor_nombre;
-    FE_FORM.receptor_domicilio = d.domicilio || FE_FORM.receptor_domicilio;
     if (d.condicion_iva) FE_FORM.condicion_iva = String(d.condicion_iva);
     FE_FORM.error = "";
   } catch (e) { FE_FORM.error = e.message; }
@@ -1287,45 +1281,60 @@ async function buscarReceptorFactura() {
 function revisarFactura() {
   leerFormFactura();
   const f = FE_FORM;
-  const r = renglonesFactura();
   f.error = "";
-  if (r.some(it => !it.descripcion || !(it.cantidad > 0) || !(it.precio > 0))) f.error = "Completá descripción, cantidad y precio de cada renglón";
-  else if (f.doc_tipo !== "99" && !f.doc_nro.replace(/\D/g, "")) f.error = "Completá el documento del receptor";
-  else if (f.doc_tipo !== "99" && !f.receptor_nombre.trim()) f.error = "Completá el nombre del receptor";
+  if (f.descripcion.trim().length < 3) f.error = "Escribí una descripción";
+  else if (!(numeroAr(f.importe) > 0)) f.error = "Escribí el monto";
+  else if (f.doc_tipo !== "99" && !f.doc_nro.replace(/\D/g, "")) f.error = "Completá el documento";
+  else if (f.doc_tipo !== "99" && !f.receptor_nombre.trim()) f.error = "Buscá el CUIT en ARCA o escribí el nombre";
   else f.paso = "confirmar";
   renderFormFactura();
 }
 
 async function emitirFactura() {
   const f = FE_FORM;
-  f.paso = "emitiendo"; f.error = "";
+  f.paso = "enviando"; f.error = "";
   renderFormFactura();
-  const servicios = f.concepto !== "1";
   try {
     const r = await fetch(`${API}/portal/${SESSION.slug}/comprobantes`, {
       method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({
-        concepto: Number(f.concepto), doc_tipo: Number(f.doc_tipo), doc_nro: f.doc_nro.replace(/\D/g, ""),
+        concepto: Number(f.concepto), fecha: f.fecha, doc_tipo: Number(f.doc_tipo), doc_nro: f.doc_nro.replace(/\D/g, ""),
         condicion_iva: Number(f.doc_tipo === "99" ? 5 : f.condicion_iva), receptor_nombre: f.receptor_nombre,
-        receptor_domicilio: f.receptor_domicilio, condicion_venta: f.condicion_venta, fecha: f.fecha,
-        serv_desde: servicios ? f.serv_desde : null, serv_hasta: servicios ? f.serv_hasta : null, vto_pago: servicios ? f.vto_pago : null,
-        items: renglonesFactura(), clave_idempotencia: f.clave,
+        descripcion: f.descripcion, importe: Math.round(numeroAr(f.importe) * 100) / 100, clave_idempotencia: f.clave,
       }),
     });
     if (r.status === 401) { f.paso = "confirmar"; sesionVencida(); return; }
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d.detail || `Error ${r.status}`);
-    f.resultado = d; f.paso = "listo";
-    const c = d.comprobante;
-    if (c.url_pdf) {
-      DATOS.documentos = [{ tipo: "comprobante", nombre: c.nombre, fecha: c.fecha, url: c.url_pdf, generado_auto: true }, ...(DATOS.documentos || [])];
-      renderBoveda(DATOS.documentos);
-    }
-    cargarFacturacion();
+    f.comprobante = d.comprobante; f.paso = "siguiendo";
+    renderFormFactura();
+    seguirFactura();
   } catch (e) {
     f.paso = "confirmar"; f.error = e.message;
+    renderFormFactura();
   }
-  renderFormFactura();
+}
+
+// Consulta el pedido cada 5 segundos hasta que el robot termina.
+function seguirFactura() {
+  clearTimeout(FE_SEGUIMIENTO);
+  const c = FE_FORM?.comprobante;
+  if (!c || !EN_CURSO_FACTURA.includes(c.estado)) return;
+  FE_SEGUIMIENTO = setTimeout(async () => {
+    try {
+      const r = await fetch(`${API}/portal/${SESSION.slug}/comprobantes/${c.id}`, { headers: authHeaders() });
+      if (r.ok && FE_FORM && FE_FORM.comprobante?.id === c.id) {
+        FE_FORM.comprobante = await r.json();
+        if (FE_FORM.comprobante.estado === "emitida" && FE_FORM.comprobante.url_pdf) {
+          const nuevo = FE_FORM.comprobante;
+          DATOS.documentos = [{ tipo: "comprobante", nombre: nuevo.nombre, fecha: nuevo.fecha, url: nuevo.url_pdf, generado_auto: true }, ...(DATOS.documentos || [])];
+          renderBoveda(DATOS.documentos);
+        }
+        if (document.getElementById("factura-modal").classList.contains("open")) renderFormFactura();
+      }
+    } catch {}
+    seguirFactura();
+  }, 5000);
 }
 
 // ── YA PAGUÉ ───────────────────────────────────────────────────────────────────

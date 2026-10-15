@@ -5,8 +5,8 @@ import {
 import { buscarEnConstancia, buscarEnPadron, certPem, constanciaCompleta, cuitContador, keyPem, serviciosCacheados } from "./arca.mts"
 import { pdfConstancia } from "./constancia-pdf.mts"
 import {
-  facturacionDisponible, feAnular, feEmitirAdmin, feEstado, feGuardarConfig, fePortalEmitir, fePortalEstado, fePortalReceptor,
-  feProbar, feReceptorAdmin,
+  facturacionDisponible, feComprobanteAdmin, feEmitirAdmin, feEstado, feGuardarConfig, fePortalComprobante, fePortalEmitir,
+  fePortalEstado, fePortalReceptor, feReceptorAdmin, feReintentar,
 } from "./facturacion-electronica.mts"
 import { cifrarClave, exigirSesionPortal, firmarTokenPortal } from "./secretos.mts"
 import { TAREAS, despacharSincronizacion, finPeriodoProximaRecategorizacion } from "./sincronizacion.mts"
@@ -1610,9 +1610,9 @@ export const rutas: [string, string, Handler][] = [
   ["GET", "/clientes/:slug/constancia", constanciaPdf],
   ["GET", "/clientes/:slug/facturacion-electronica", feEstado],
   ["PUT", "/clientes/:slug/facturacion-electronica", feGuardarConfig],
-  ["POST", "/clientes/:slug/facturacion-electronica/probar", feProbar],
   ["POST", "/clientes/:slug/comprobantes", feEmitirAdmin],
-  ["POST", "/comprobantes/:id/anular", feAnular],
+  ["GET", "/clientes/:slug/comprobantes/:id", feComprobanteAdmin],
+  ["POST", "/clientes/:slug/comprobantes/:id/reintentar", feReintentar],
   ["GET", "/receptor/:cuit", feReceptorAdmin],
   ["GET", "/padron/:cuit", padron],
 
@@ -1655,6 +1655,7 @@ export const rutas: [string, string, Handler][] = [
   ["POST", "/portal/:slug/documentos", portalSubirDocumento],
   ["GET", "/portal/:slug/facturacion", fePortalEstado],
   ["POST", "/portal/:slug/comprobantes", fePortalEmitir],
+  ["GET", "/portal/:slug/comprobantes/:id", fePortalComprobante],
   ["GET", "/portal/:slug/receptor/:cuit", fePortalReceptor],
   ["GET", "/portal/:slug", datosPortal],
 

@@ -2070,7 +2070,7 @@ function JurisdiccionesConvenio({ slug }) {
   );
 }
 
-// ── Facturación electrónica (web service de ARCA, certificado del estudio) ──
+// ── Facturación: el robot emite la Factura C en "Comprobantes en línea" con la clave fiscal del cliente ──
 const pesosC = (n) => "$" + Number(n || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 // "1.500,50" o "1500.50" → número.
 function numeroAr(s) {
@@ -2081,142 +2081,132 @@ function numeroAr(s) {
   return Number(t.replace(/\./g, ""));
 }
 const isoHoyAr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
-const isoMes = (fin) => { const d = new Date(); const x = fin ? new Date(d.getFullYear(), d.getMonth()+1, 0) : new Date(d.getFullYear(), d.getMonth(), 1); return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,"0")}-${String(x.getDate()).padStart(2,"0")}`; };
+const ESTADO_FACTURA = {
+  pendiente: ["⏳ En cola", "var(--muted)"], procesando: ["⚙️ Generando en ARCA", "var(--blue)"], confirmando: ["⚙️ Confirmando en ARCA", "var(--blue)"],
+  emitida: ["✓ Emitida", "var(--green)"], error: ["✗ No se emitió", "var(--red)"], revisar: ["⚠ Revisar en ARCA", "#E8A020"],
+};
+const EN_CURSO_FACTURA = ["pendiente", "procesando", "confirmando"];
 
-function ModalEmitirFactura({ opciones, onClose, onEmitido, emitir, buscarReceptor }) {
-  const [f, setF] = useState({
-    concepto: "2", doc_tipo: "99", doc_nro: "", receptor_nombre: "", receptor_domicilio: "", condicion_iva: "5",
-    condicion_venta: "Contado", fecha: isoHoyAr(), serv_desde: isoMes(false), serv_hasta: isoMes(true), vto_pago: isoHoyAr(),
-  });
-  const [items, setItems] = useState([{ descripcion: "", cantidad: "1", precio: "" }]);
+// Formulario: receptor (CUIT, DNI o consumidor final), descripción, fecha y monto. Pide revisar antes
+// de mandar el pedido y después sigue el estado hasta que el robot termina.
+function ModalEmitirFactura({ opciones, onClose, onCambio, emitir, consultar, buscarReceptor }) {
+  const [f, setF] = useState({ concepto: String(opciones.concepto_sugerido || 2), fecha: isoHoyAr(), doc_tipo: "99", doc_nro: "", receptor_nombre: "", condicion_iva: "5", descripcion: "", importe: "" });
   const [paso, setPaso] = useState("form");
   const [error, setError] = useState("");
   const [buscando, setBuscando] = useState(false);
-  const [resultado, setResultado] = useState(null);
+  const [comp, setComp] = useState(null);
   const [clave] = useState(() => (window.crypto?.randomUUID ? window.crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2)));
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
-  const setItem = (i, k, v) => setItems(prev => prev.map((it, j) => j === i ? { ...it, [k]: v } : it));
-  const renglones = items.map(it => ({ descripcion: it.descripcion.trim(), cantidad: numeroAr(it.cantidad), precio: numeroAr(it.precio) }));
-  const total = Math.round(renglones.reduce((s, it) => s + (it.cantidad > 0 && it.precio > 0 ? it.cantidad * it.precio : 0), 0) * 100) / 100;
-  const servicios = f.concepto !== "1";
+  const importe = Math.round(numeroAr(f.importe) * 100) / 100;
+
+  useEffect(() => {
+    if (!comp || !EN_CURSO_FACTURA.includes(comp.estado)) return;
+    const t = setTimeout(async () => {
+      try { const c = await consultar(comp.id); setComp(c); if (!EN_CURSO_FACTURA.includes(c.estado)) onCambio && onCambio(); } catch {}
+    }, 5000);
+    return () => clearTimeout(t);
+  }, [comp]);
 
   async function traerReceptor() {
     setBuscando(true); setError("");
     try {
       const d = await buscarReceptor(f.doc_nro.replace(/\D/g, ""));
-      setF(p => ({ ...p, receptor_nombre: d.nombre || p.receptor_nombre, receptor_domicilio: d.domicilio || p.receptor_domicilio, condicion_iva: d.condicion_iva ? String(d.condicion_iva) : p.condicion_iva }));
+      setF(p => ({ ...p, receptor_nombre: d.nombre || p.receptor_nombre, condicion_iva: d.condicion_iva ? String(d.condicion_iva) : p.condicion_iva }));
     } catch (e) { setError(e.message); }
     setBuscando(false);
   }
   function revisar() {
     setError("");
-    if (renglones.some(it => !it.descripcion || !(it.cantidad > 0) || !(it.precio > 0))) { setError("Completá descripción, cantidad y precio de cada renglón"); return; }
-    if (f.doc_tipo !== "99" && !f.doc_nro.replace(/\D/g, "")) { setError("Completá el documento del receptor"); return; }
-    if (f.doc_tipo !== "99" && !f.receptor_nombre.trim()) { setError("Completá el nombre del receptor"); return; }
+    if (f.descripcion.trim().length < 3) return setError("Escribí una descripción");
+    if (!(importe > 0)) return setError("Escribí el monto");
+    if (f.doc_tipo !== "99" && !f.doc_nro.replace(/\D/g, "")) return setError("Completá el documento del receptor");
+    if (f.doc_tipo !== "99" && !f.receptor_nombre.trim()) return setError("Buscá el CUIT en ARCA o escribí el nombre del receptor");
     setPaso("confirmar");
   }
   async function confirmar() {
-    setPaso("emitiendo"); setError("");
+    setPaso("enviando"); setError("");
     try {
       const d = await emitir({
-        concepto: Number(f.concepto), doc_tipo: Number(f.doc_tipo), doc_nro: f.doc_nro.replace(/\D/g, ""), condicion_iva: Number(f.doc_tipo === "99" ? 5 : f.condicion_iva),
-        receptor_nombre: f.receptor_nombre, receptor_domicilio: f.receptor_domicilio, condicion_venta: f.condicion_venta,
-        fecha: f.fecha, serv_desde: servicios ? f.serv_desde : null, serv_hasta: servicios ? f.serv_hasta : null, vto_pago: servicios ? f.vto_pago : null,
-        items: renglones, clave_idempotencia: clave,
+        concepto: Number(f.concepto), fecha: f.fecha, doc_tipo: Number(f.doc_tipo), doc_nro: f.doc_nro.replace(/\D/g, ""),
+        condicion_iva: Number(f.doc_tipo === "99" ? 5 : f.condicion_iva), receptor_nombre: f.receptor_nombre,
+        descripcion: f.descripcion, importe, clave_idempotencia: clave,
       });
-      setResultado(d); setPaso("listo"); onEmitido && onEmitido();
+      setComp(d.comprobante); setPaso("siguiendo"); onCambio && onCambio();
     } catch (e) { setError(e.message); setPaso("confirmar"); }
   }
-  const etq = (k) => ({ fontSize: "11px", color: "var(--muted)", marginBottom: "3px" });
+  const etq = { fontSize: "11px", color: "var(--muted)", marginBottom: "3px" };
+  const receptorTxt = f.doc_tipo === "99" ? "Consumidor Final" : `${f.receptor_nombre} (${opciones.tipos_doc[f.doc_tipo]} ${f.doc_nro})`;
+  const enCurso = comp && EN_CURSO_FACTURA.includes(comp.estado);
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && paso !== "emitiendo" && onClose()}>
-      <div className="modal" style={{ maxWidth: "640px", maxHeight: "90vh", overflowY: "auto" }}>
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && paso !== "enviando" && onClose()}>
+      <div className="modal" style={{ maxWidth: "560px", maxHeight: "90vh", overflowY: "auto" }}>
         <div className="modal-title">Emitir Factura C</div>
+        <div className="modal-sub">El robot la genera en Comprobantes en línea con la clave fiscal del cliente.</div>
         {paso === "form" && (<>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "10px" }}>
-            <div><div style={etq()}>Concepto</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+            <div><div style={etq}>Concepto</div>
               <select className="form-input" value={f.concepto} onChange={e => set("concepto", e.target.value)}>
                 {Object.entries(opciones.conceptos).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </select></div>
-            <div><div style={etq()}>Fecha de emisión</div><input type="date" className="form-input" value={f.fecha} onChange={e => set("fecha", e.target.value)} /></div>
-          </div>
-          {servicios && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px", marginBottom: "10px" }}>
-              <div><div style={etq()}>Período desde</div><input type="date" className="form-input" value={f.serv_desde} onChange={e => set("serv_desde", e.target.value)} /></div>
-              <div><div style={etq()}>Período hasta</div><input type="date" className="form-input" value={f.serv_hasta} onChange={e => set("serv_hasta", e.target.value)} /></div>
-              <div><div style={etq()}>Vencimiento del pago</div><input type="date" className="form-input" value={f.vto_pago} onChange={e => set("vto_pago", e.target.value)} /></div>
-            </div>
-          )}
-          <div style={{ fontSize: "12px", fontWeight: "600", margin: "6px 0" }}>Receptor</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "10px" }}>
-            <div><div style={etq()}>Documento</div>
+            <div><div style={etq}>Fecha</div><input type="date" className="form-input" value={f.fecha} onChange={e => set("fecha", e.target.value)} /></div>
+            <div><div style={etq}>Receptor</div>
               <select className="form-input" value={f.doc_tipo} onChange={e => set("doc_tipo", e.target.value)}>
-                <option value="99">Consumidor final (sin documento)</option><option value="80">CUIT</option><option value="96">DNI</option><option value="86">CUIL</option>
+                <option value="99">Consumidor final</option><option value="80">CUIT</option><option value="96">DNI</option>
               </select></div>
             {f.doc_tipo !== "99" && (
-              <div><div style={etq()}>Número</div>
+              <div><div style={etq}>{f.doc_tipo === "80" ? "CUIT" : "DNI"}</div>
                 <div style={{ display: "flex", gap: "6px" }}>
-                  <input className="form-input" style={{ marginBottom: 0 }} value={f.doc_nro} onChange={e => set("doc_nro", e.target.value)} placeholder={f.doc_tipo === "96" ? "30123456" : "20-12345678-9"} />
-                  {(f.doc_tipo === "80" || f.doc_tipo === "86") && <button type="button" className="table-action" onClick={traerReceptor} disabled={buscando}>{buscando ? "…" : "Buscar en ARCA"}</button>}
+                  <input className="form-input" style={{ marginBottom: 0 }} value={f.doc_nro} onChange={e => set("doc_nro", e.target.value)} placeholder={f.doc_tipo === "80" ? "20-12345678-9" : "30123456"} />
+                  {f.doc_tipo === "80" && <button type="button" className="table-action" onClick={traerReceptor} disabled={buscando}>{buscando ? "…" : "Buscar"}</button>}
                 </div></div>
             )}
           </div>
           {f.doc_tipo !== "99" && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "10px" }}>
-              <div><div style={etq()}>Nombre o razón social</div><input className="form-input" value={f.receptor_nombre} onChange={e => set("receptor_nombre", e.target.value)} /></div>
-              <div><div style={etq()}>Condición frente al IVA</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: "10px", marginTop: "10px" }}>
+              <div><div style={etq}>Nombre o razón social</div><input className="form-input" value={f.receptor_nombre} onChange={e => set("receptor_nombre", e.target.value)} /></div>
+              <div><div style={etq}>Condición frente al IVA</div>
                 <select className="form-input" value={f.condicion_iva} onChange={e => set("condicion_iva", e.target.value)}>
                   {Object.entries(opciones.condiciones_iva).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                 </select></div>
-              <div style={{ gridColumn: "1 / -1" }}><div style={etq()}>Domicilio (opcional)</div><input className="form-input" value={f.receptor_domicilio} onChange={e => set("receptor_domicilio", e.target.value)} /></div>
             </div>
           )}
-          <div style={{ fontSize: "12px", fontWeight: "600", margin: "6px 0" }}>Detalle</div>
-          {items.map((it, i) => (
-            <div key={i} style={{ display: "grid", gridTemplateColumns: "3fr 0.8fr 1.4fr auto", gap: "6px", marginBottom: "6px" }}>
-              <input className="form-input" style={{ marginBottom: 0 }} placeholder="Descripción" value={it.descripcion} onChange={e => setItem(i, "descripcion", e.target.value)} />
-              <input className="form-input" style={{ marginBottom: 0 }} placeholder="Cant." value={it.cantidad} onChange={e => setItem(i, "cantidad", e.target.value)} />
-              <input className="form-input" style={{ marginBottom: 0 }} placeholder="Precio $" value={it.precio} onChange={e => setItem(i, "precio", e.target.value)} />
-              <button type="button" className="table-action" disabled={items.length === 1} onClick={() => setItems(prev => prev.filter((_, j) => j !== i))}>✕</button>
-            </div>
-          ))}
-          {items.length < 12 && <button type="button" className="table-action" style={{ fontSize: "11px" }} onClick={() => setItems(prev => [...prev, { descripcion: "", cantidad: "1", precio: "" }])}>+ Renglón</button>}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", margin: "12px 0" }}>
-            <div><div style={etq()}>Condición de venta</div>
-              <select className="form-input" value={f.condicion_venta} onChange={e => set("condicion_venta", e.target.value)}>
-                {opciones.condiciones_venta.map(v => <option key={v} value={v}>{v}</option>)}
-              </select></div>
-            <div style={{ textAlign: "right", alignSelf: "end" }}><div style={etq()}>Total</div><div style={{ fontFamily: "'DM Mono',monospace", fontSize: "20px", fontWeight: "700" }}>{pesosC(total)}</div></div>
+          <div style={{ marginTop: "10px" }}><div style={etq}>Descripción</div><textarea className="form-input" rows="2" value={f.descripcion} onChange={e => set("descripcion", e.target.value)} placeholder="Honorarios profesionales de octubre" /></div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", alignItems: "end" }}>
+            <div><div style={etq}>Monto total</div><input className="form-input" value={f.importe} onChange={e => set("importe", e.target.value)} placeholder="150.000,00" /></div>
+            <div style={{ textAlign: "right", fontFamily: "'DM Mono',monospace", fontSize: "18px", fontWeight: "700", marginBottom: "14px" }}>{importe > 0 ? pesosC(importe) : ""}</div>
           </div>
           {error && <div style={{ color: "var(--red)", fontSize: "12px", marginBottom: "8px" }}>{error}</div>}
           <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
             <button className="btn-secondary" onClick={onClose}>Cancelar</button>
-            <button className="btn-primary" onClick={revisar} disabled={!(total > 0)}>Revisar</button>
+            <button className="btn-primary" onClick={revisar}>Revisar</button>
           </div>
         </>)}
-        {(paso === "confirmar" || paso === "emitiendo") && (<>
+        {(paso === "confirmar" || paso === "enviando") && (<>
           <div style={{ background: "var(--bg)", borderRadius: "10px", padding: "14px", fontSize: "13px", lineHeight: "1.7", marginBottom: "12px" }}>
             <div><strong>Factura C</strong> · {opciones.conceptos[f.concepto]} · {formatArgDate(f.fecha)}</div>
-            {servicios && <div>Período {formatArgDate(f.serv_desde)} al {formatArgDate(f.serv_hasta)} · vence el pago {formatArgDate(f.vto_pago)}</div>}
-            <div>Receptor: <strong>{f.doc_tipo === "99" ? "Consumidor Final" : `${f.receptor_nombre} (${opciones.tipos_doc[f.doc_tipo]} ${f.doc_nro})`}</strong> · {opciones.condiciones_iva[f.doc_tipo === "99" ? "5" : f.condicion_iva]}</div>
-            {renglones.map((it, i) => <div key={i}>• {it.descripcion}: {it.cantidad} × {pesosC(it.precio)}</div>)}
-            <div style={{ fontSize: "16px", marginTop: "6px" }}>Total: <strong>{pesosC(total)}</strong></div>
+            <div>Receptor: <strong>{receptorTxt}</strong>{f.doc_tipo !== "99" ? ` · ${opciones.condiciones_iva[f.condicion_iva]}` : ""}</div>
+            <div>{f.descripcion}</div>
+            <div style={{ fontSize: "16px", marginTop: "6px" }}>Total: <strong>{pesosC(importe)}</strong></div>
           </div>
-          <div style={{ fontSize: "12px", color: "var(--red)", marginBottom: "12px" }}>Se emite una factura real ante ARCA. No se puede borrar: para anularla hay que emitir una nota de crédito.</div>
+          <div style={{ fontSize: "12px", color: "var(--red)", marginBottom: "12px" }}>El robot va a generar una factura real en ARCA. No se puede borrar: para anularla hay que hacer una nota de crédito.</div>
           {error && <div style={{ color: "var(--red)", fontSize: "12px", marginBottom: "8px" }}>{error}</div>}
           <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
-            <button className="btn-secondary" onClick={() => setPaso("form")} disabled={paso === "emitiendo"}>Volver</button>
-            <button className="btn-primary" onClick={confirmar} disabled={paso === "emitiendo"}>{paso === "emitiendo" ? "Pidiendo CAE a ARCA…" : `Emitir factura por ${pesosC(total)}`}</button>
+            <button className="btn-secondary" onClick={() => setPaso("form")} disabled={paso === "enviando"}>Volver</button>
+            <button className="btn-primary" onClick={confirmar} disabled={paso === "enviando"}>{paso === "enviando" ? "Enviando…" : `Emitir por ${pesosC(importe)}`}</button>
           </div>
         </>)}
-        {paso === "listo" && resultado && (<>
+        {paso === "siguiendo" && comp && (<>
           <div style={{ fontSize: "14px", lineHeight: "1.8", marginBottom: "12px" }}>
-            <div style={{ color: "var(--green)", fontWeight: "700", fontSize: "16px" }}>✓ {resultado.comprobante.nombre} autorizada</div>
-            <div>CAE {resultado.comprobante.cae} · vence {formatArgDate(resultado.comprobante.cae_vto)}</div>
-            {resultado.comprobante.url_pdf && <a className="table-action" href={resultado.comprobante.url_pdf} target="_blank" rel="noopener" style={{ textDecoration: "none" }}>↗ Ver PDF</a>}
-            {(resultado.avisos || []).map((a, i) => <div key={i} style={{ color: "#E8A020", fontSize: "12px" }}>⚠ {a}</div>)}
+            {enCurso && <div style={{ color: "var(--blue)", fontWeight: "600" }}>{(ESTADO_FACTURA[comp.estado] || [comp.estado])[0]}… (1 a 2 minutos)</div>}
+            {comp.estado === "emitida" && <>
+              <div style={{ color: "var(--green)", fontWeight: "700", fontSize: "16px" }}>✓ {comp.nombre} emitida</div>
+              {comp.cae && <div>CAE {comp.cae}{comp.cae_vto ? ` · vence ${formatArgDate(comp.cae_vto)}` : ""}</div>}
+              {comp.url_pdf && <a className="table-action" href={comp.url_pdf} target="_blank" rel="noopener" style={{ textDecoration: "none" }}>↗ Ver PDF</a>}
+              {comp.error && <div style={{ color: "#E8A020", fontSize: "12px" }}>⚠ {comp.error}</div>}
+            </>}
+            {(comp.estado === "error" || comp.estado === "revisar") && <div style={{ color: comp.estado === "error" ? "var(--red)" : "#E8A020", fontSize: "13px" }}>{(ESTADO_FACTURA[comp.estado] || [""])[0]}: {comp.error}</div>}
           </div>
-          <div style={{ display: "flex", justifyContent: "flex-end" }}><button className="btn-primary" onClick={onClose}>Listo</button></div>
+          <div style={{ display: "flex", justifyContent: "flex-end" }}><button className="btn-primary" onClick={onClose}>{enCurso ? "Cerrar (sigue en segundo plano)" : "Listo"}</button></div>
         </>)}
       </div>
     </div>
@@ -2227,8 +2217,6 @@ function FacturacionElectronica({ cliente }) {
   const [datos, setDatos] = useState(null);
   const [cfg, setCfg] = useState(null);
   const [guardando, setGuardando] = useState(false);
-  const [probando, setProbando] = useState(false);
-  const [prueba, setPrueba] = useState(null);
   const [modal, setModal] = useState(false);
   const [aviso, setAviso] = useState("");
   const base = `${BACKEND_URL}/clientes/${cliente.slug}`;
@@ -2239,109 +2227,85 @@ function FacturacionElectronica({ cliente }) {
     return d;
   };
   function cargar() {
-    pedir(`${base}/facturacion-electronica`).then(d => { setDatos(d); setCfg({ ...d.config }); }).catch(e => setDatos({ error: e.message }));
+    pedir(`${base}/facturacion-electronica`).then(d => { setDatos(d); setCfg(c => c || { ...d.config }); }).catch(e => setDatos({ error: e.message }));
   }
-  useEffect(cargar, [cliente.slug]);
+  useEffect(() => { setCfg(null); cargar(); }, [cliente.slug]);
+  // Mientras haya facturas generándose, se actualiza la lista.
+  useEffect(() => {
+    if (!datos?.comprobantes?.some(c => EN_CURSO_FACTURA.includes(c.estado))) return;
+    const t = setTimeout(cargar, 6000);
+    return () => clearTimeout(t);
+  }, [datos]);
 
   async function guardar() {
     setGuardando(true); setAviso("");
     try {
       await pedir(`${base}/facturacion-electronica`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
-        habilitada: !!cfg.habilitada, punto_venta: cfg.punto_venta === "" ? null : cfg.punto_venta, domicilio: cfg.domicilio,
-        ingresos_brutos: cfg.ingresos_brutos, inicio_actividades: cfg.inicio_actividades || null,
+        habilitada: !!cfg.habilitada, punto_venta: cfg.punto_venta === "" ? null : cfg.punto_venta,
       }) });
       setAviso("✓ Guardado"); cargar();
     } catch (e) { setAviso("No se pudo guardar: " + e.message); }
     setGuardando(false);
   }
-  async function probar() {
-    setProbando(true); setPrueba(null);
-    try { setPrueba(await pedir(`${base}/facturacion-electronica/probar`, { method: "POST" })); }
-    catch (e) { setPrueba({ ok: false, mensaje: e.message }); }
-    setProbando(false);
-  }
-  async function anular(c) {
-    if (!confirm(`¿Anular la ${c.nombre} por ${pesosC(c.importe)}?\n\nSe emite una Nota de Crédito C real en ARCA por el total. No se puede deshacer.`)) return;
-    try {
-      const d = await pedir(`${BACKEND_URL}/comprobantes/${c.id}/anular`, { method: "POST" });
-      alert(`✓ ${d.comprobante.nombre} autorizada (CAE ${d.comprobante.cae})${(d.avisos || []).length ? "\n\n" + d.avisos.join("\n") : ""}`);
-      cargar();
-    } catch (e) { alert("No se pudo anular: " + e.message); }
+  async function reintentar(c) {
+    try { await pedir(`${base}/comprobantes/${c.id}/reintentar`, { method: "POST" }); cargar(); }
+    catch (e) { alert("No se pudo reintentar: " + e.message); }
   }
 
   if (!datos || !cfg) return <div style={{ height: "80px", borderRadius: "8px" }} className="skeleton" />;
   if (datos.error) return <div style={{ color: "var(--red)", fontSize: "13px" }}>{datos.error}</div>;
-  const listo = datos.config.lista && datos.estudio_habilitado;
+  const puedeEmitir = datos.estudio_habilitado && datos.clave_fiscal;
+  const banner = (txt) => <div style={{ padding: "10px 14px", borderRadius: "8px", background: "#E8A02012", border: "1px solid #E8A02040", fontSize: "12px", marginBottom: "14px" }}>{txt}</div>;
   return (
     <div>
-      {!datos.estudio_habilitado && (
-        <div style={{ padding: "10px 14px", borderRadius: "8px", background: "#E8A02012", border: "1px solid #E8A02040", fontSize: "12px", marginBottom: "14px" }}>
-          La facturación electrónica está desactivada para el estudio. Activala en Configuración → Estudio.
-        </div>
-      )}
+      {!datos.estudio_habilitado && banner("La facturación está desactivada para el estudio. Activala en Configuración → Estudio.")}
+      {!datos.clave_fiscal && banner("Para facturar, cargá la clave fiscal del cliente en la pestaña ARCA: el robot la usa para entrar a Comprobantes en línea.")}
       <div className="detail-section" style={{ marginBottom: "16px" }}>
-        <div className="section-title">Facturación electrónica de {cliente.nombre}</div>
-        <details style={{ fontSize: "12px", color: "var(--muted)", marginBottom: "12px" }}>
-          <summary style={{ cursor: "pointer" }}>Qué hace falta en ARCA (una sola vez)</summary>
-          <ol style={{ margin: "8px 0 0 18px", lineHeight: "1.6" }}>
-            <li>Tu certificado (el mismo que usa la app) autorizado para el servicio "Facturación Electrónica" en tu Administrador de Relaciones.</li>
-            <li>El cliente te delega "Facturación Electrónica" en su Administrador de Relaciones, y vos se lo asociás a tu certificado eligiéndolo como representado.</li>
-            <li>El cliente tiene un punto de venta "Factura Electrónica - Monotributo - Web Services" (Administración de Puntos de Venta y Domicilios).</li>
-          </ol>
-          Con "Probar conexión" la app verifica los tres pasos sin emitir nada.
-        </details>
+        <div className="section-title">Facturación de {cliente.nombre}</div>
+        <div style={{ fontSize: "12px", color: "var(--muted)", marginBottom: "12px" }}>
+          El robot entra a "Comprobantes en línea" con la clave fiscal del cliente y genera la Factura C. Antes de confirmar en ARCA compara el resumen con lo pedido; si algo no coincide, no la emite.
+        </div>
         <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", fontWeight: "600", marginBottom: "12px" }}>
           <input type="checkbox" checked={!!cfg.habilitada} onChange={e => setCfg(c => ({ ...c, habilitada: e.target.checked }))} />
-          Habilitado para facturar desde la app (vos y el cliente desde su portal)
+          El cliente puede emitir facturas desde su portal
         </label>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: "10px" }}>
-          <div><div style={{ fontSize: "11px", color: "var(--muted)", marginBottom: "3px" }}>Punto de venta (Web Services)</div>
-            <input className="form-input" value={cfg.punto_venta ?? ""} onChange={e => setCfg(c => ({ ...c, punto_venta: e.target.value.replace(/\D/g, "") }))} placeholder="3" /></div>
-          <div><div style={{ fontSize: "11px", color: "var(--muted)", marginBottom: "3px" }}>Ingresos Brutos N°</div>
-            <input className="form-input" value={cfg.ingresos_brutos ?? ""} onChange={e => setCfg(c => ({ ...c, ingresos_brutos: e.target.value }))} placeholder="47292067" /></div>
-          <div><div style={{ fontSize: "11px", color: "var(--muted)", marginBottom: "3px" }}>Inicio de actividades</div>
-            <input type="date" className="form-input" value={cfg.inicio_actividades ?? ""} onChange={e => setCfg(c => ({ ...c, inicio_actividades: e.target.value }))} /></div>
-          <div style={{ gridColumn: "1 / -1" }}><div style={{ fontSize: "11px", color: "var(--muted)", marginBottom: "3px" }}>Domicilio comercial (sale en la factura)</div>
-            <input className="form-input" value={cfg.domicilio ?? ""} onChange={e => setCfg(c => ({ ...c, domicilio: e.target.value }))} placeholder="Calle 123 - Localidad, Provincia" /></div>
-        </div>
-        <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ maxWidth: "260px" }}><div style={{ fontSize: "11px", color: "var(--muted)", marginBottom: "3px" }}>Punto de venta (solo si tiene más de uno)</div>
+          <input className="form-input" value={cfg.punto_venta ?? ""} onChange={e => setCfg(c => ({ ...c, punto_venta: e.target.value.replace(/\D/g, "") }))} placeholder="Automático" /></div>
+        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
           <button className="btn-primary" onClick={guardar} disabled={guardando}>{guardando ? "Guardando…" : "Guardar"}</button>
-          <button className="btn-secondary" onClick={probar} disabled={probando}>{probando ? "Consultando ARCA…" : "Probar conexión con ARCA"}</button>
           {aviso && <span style={{ fontSize: "12px", color: aviso.startsWith("✓") ? "var(--green)" : "var(--red)" }}>{aviso}</span>}
         </div>
-        {prueba && (
-          <div style={{ marginTop: "12px", padding: "10px 14px", borderRadius: "8px", fontSize: "12px", background: prueba.ok ? "#2BAF8210" : "#E0454510", border: `1px solid ${prueba.ok ? "#2BAF8240" : "#E0454540"}` }}>
-            {prueba.ok ? "✓ " : "✗ "}{prueba.mensaje}
-            {Array.isArray(prueba.puntos) && prueba.puntos.length > 0 && <div style={{ color: "var(--muted)", marginTop: "4px" }}>Puntos de venta de Web Services: {prueba.puntos.map(p => `${p.numero}${p.bloqueado ? " (bloqueado)" : ""}${p.baja ? " (baja)" : ""}`).join(", ")}</div>}
-          </div>
-        )}
       </div>
 
       <div className="detail-section">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-          <div className="section-title" style={{ marginBottom: 0 }}>Comprobantes emitidos desde la app</div>
-          <button className="add-btn" disabled={!listo} title={listo ? "" : "Completá y guardá la configuración (y activala en Configuración → Estudio)"} onClick={() => setModal(true)}>+ Emitir factura</button>
+          <div className="section-title" style={{ marginBottom: 0 }}>Facturas emitidas desde la app</div>
+          <button className="add-btn" disabled={!puedeEmitir} onClick={() => setModal(true)}>+ Emitir factura</button>
         </div>
         {datos.comprobantes.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "20px", color: "var(--muted)", fontSize: "13px" }}>Todavía no se emitieron comprobantes desde la app.</div>
+          <div style={{ textAlign: "center", padding: "20px", color: "var(--muted)", fontSize: "13px" }}>Todavía no se emitieron facturas desde la app.</div>
         ) : (
           <div className="table-wrap"><table className="data-table">
-            <thead><tr><th>Comprobante</th><th>Fecha</th><th>Receptor</th><th>Importe</th><th>Emitió</th><th>CAE</th><th></th></tr></thead>
+            <thead><tr><th>Estado</th><th>Comprobante</th><th>Fecha</th><th>Receptor</th><th>Importe</th><th>Pidió</th><th></th></tr></thead>
             <tbody>
-              {datos.comprobantes.map(c => (
-                <tr key={c.id || c.cae} style={c.anulado ? { opacity: 0.55 } : undefined}>
-                  <td style={{ whiteSpace: "nowrap", fontWeight: "600" }}>{c.nombre}{c.anulado && <span style={{ fontSize: "10px", color: "var(--red)", marginLeft: "6px" }}>anulada</span>}</td>
-                  <td>{formatArgDate(c.fecha)}</td>
-                  <td>{c.receptor || "—"}</td>
-                  <td style={{ fontFamily: "'DM Mono',monospace", color: c.tipo === 13 ? "var(--red)" : "inherit" }}>{c.tipo === 13 ? "−" : ""}{pesosC(c.importe)}</td>
-                  <td>{c.emitido_por === "cliente" ? "Cliente" : "Contador"}</td>
-                  <td style={{ fontFamily: "'DM Mono',monospace", fontSize: "11px" }}>{c.cae}</td>
-                  <td style={{ whiteSpace: "nowrap" }}>
-                    {c.url_pdf && <a className="table-action" href={c.url_pdf} target="_blank" rel="noopener" style={{ textDecoration: "none" }}>PDF</a>}
-                    {c.tipo === 11 && !c.anulado && c.id && <button className="table-action danger" style={{ marginLeft: "4px" }} onClick={() => anular(c)}>Anular</button>}
-                  </td>
-                </tr>
-              ))}
+              {datos.comprobantes.map(c => {
+                const [etqEst, color] = ESTADO_FACTURA[c.estado] || [c.estado, "var(--muted)"];
+                return (
+                  <tr key={c.id}>
+                    <td style={{ color, fontWeight: "600", whiteSpace: "nowrap", fontSize: "12px" }} title={c.error || ""}>{etqEst}</td>
+                    <td style={{ whiteSpace: "nowrap" }}>{c.nombre}{c.cae && <div style={{ fontSize: "10px", color: "var(--muted)", fontFamily: "'DM Mono',monospace" }}>CAE {c.cae}</div>}
+                      {c.error && <div style={{ fontSize: "11px", color: c.estado === "emitida" ? "#E8A020" : "var(--red)", maxWidth: "260px", whiteSpace: "normal" }}>{c.error}</div>}</td>
+                    <td>{formatArgDate(c.fecha)}</td>
+                    <td>{c.receptor || "—"}<div style={{ fontSize: "11px", color: "var(--muted)" }}>{c.descripcion}</div></td>
+                    <td style={{ fontFamily: "'DM Mono',monospace" }}>{pesosC(c.importe)}</td>
+                    <td>{c.emitido_por === "cliente" ? "Cliente" : "Contador"}</td>
+                    <td style={{ whiteSpace: "nowrap" }}>
+                      {c.url_pdf && <a className="table-action" href={c.url_pdf} target="_blank" rel="noopener" style={{ textDecoration: "none" }}>PDF</a>}
+                      {c.estado === "error" && <button className="table-action" style={{ marginLeft: "4px" }} onClick={() => reintentar(c)}>Reintentar</button>}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table></div>
         )}
@@ -2350,9 +2314,10 @@ function FacturacionElectronica({ cliente }) {
       {modal && (
         <ModalEmitirFactura
           opciones={datos}
-          onClose={() => setModal(false)}
-          onEmitido={cargar}
+          onClose={() => { setModal(false); cargar(); }}
+          onCambio={cargar}
           emitir={(payload) => pedir(`${base}/comprobantes`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })}
+          consultar={(id) => pedir(`${base}/comprobantes/${id}`)}
           buscarReceptor={(cuit) => pedir(`${BACKEND_URL}/receptor/${cuit}`)}
         />
       )}
@@ -3344,9 +3309,9 @@ function ViewConfig({ topes, onRefresh }) {
           <div className="form-group" style={{marginTop:"20px",paddingTop:"16px",borderTop:"1px solid var(--border)"}}>
             <label style={{display:"flex",alignItems:"center",gap:"8px",fontSize:"13px",fontWeight:"600",cursor:"pointer"}}>
               <input type="checkbox" checked={!!factElec} disabled={factElec===null} onChange={e=>guardarFactElec(e.target.checked)}/>
-              Mostrar el botón "Emitir factura" en el portal de los clientes
+              Facturar desde la app (vos y los clientes que habilites en su pestaña "Facturar")
             </label>
-            <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"4px"}}>Lleva al ingreso de ARCA para emitir desde "Comprobantes en línea" con la clave fiscal del cliente.{factElecMsg?` ${factElecMsg}`:""}</div>
+            <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"4px"}}>El robot emite la Factura C en "Comprobantes en línea" con la clave fiscal del cliente.{factElecMsg?` ${factElecMsg}`:""}</div>
           </div>
         </div>
       )}

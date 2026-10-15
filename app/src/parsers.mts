@@ -433,6 +433,26 @@ export function leerCuentaCorrienteArt(tablas: string[][][]): AnticipoArt[] | nu
   return [...meses.values()].sort((x, y) => (x.periodo < y.periodo ? 1 : -1))
 }
 
+// ── PDF de una factura de Comprobantes en línea ──────────────────────────────
+
+export type DatosPdfFactura = { puntoVenta: number | null; numero: number | null; cae: string | null; caeVto: string | null; total: number | null }
+
+// Punto de venta, número, CAE, vencimiento del CAE e importe total del texto del PDF (trae
+// original, duplicado y triplicado: alcanza con la primera aparición).
+export function leerTextoFactura(texto: string): DatosPdfFactura {
+  const t = texto.replace(/\s+/g, " ")
+  const num = (re: RegExp) => { const m = t.match(re); return m ? Number(m[1]) : null }
+  const vto = t.match(/Vto\.?\s*de\s*CAE\s*:?\s*(\d{2})\/(\d{2})\/(\d{4})/i)
+  const total = t.match(/Importe\s+Total\s*:?\s*\$?\s*([\d.,]+\d)/i)
+  return {
+    puntoVenta: num(/Punto\s+de\s+Venta\s*:?\s*(\d{1,5})/i),
+    numero: num(/Comp\.?\s*Nro\.?\s*:?\s*(\d{1,8})/i),
+    cae: t.match(/CAE\s*N?[°º.]?\s*:?\s*(\d{14})/i)?.[1] ?? null,
+    caeVto: vto ? `${vto[3]}-${vto[2]}-${vto[1]}` : null,
+    total: total ? parseMonto(total[1]) : null,
+  }
+}
+
 // ── PDF ──────────────────────────────────────────────────────────────────────
 
 type Pieza ={ str: string; x: number; y: number; w: number; h: number }
