@@ -493,13 +493,15 @@ async function tocarEnArt(el: Locator, que: string) {
   else await el.evaluate((e) => (e as HTMLElement).click())
 }
 
-// Pestaña o marco que muestra el texto (ART abre la cuenta corriente en otra pantalla o en un marco).
-async function lugarCon(page: Page, texto: RegExp, timeout = T): Promise<Lugar | null> {
+// Pestaña o marco de ART que cumple la condición (ART abre sus pantallas en otra pestaña o en un marco).
+async function lugarDonde(page: Page, condicion: (l: Lugar) => Promise<boolean>, timeout = T): Promise<Lugar | null> {
   const limite = Date.now() + timeout
   while (Date.now() < limite) {
     for (const p of page.context().pages()) {
+      if (p.isClosed()) continue
       for (const f of p.frames()) {
-        if (texto.test(await textoVisible(f))) return f === p.mainFrame() ? p : f
+        if (!/rionegro\.gov\.ar/i.test(f.url())) continue
+        if (await condicion(f).catch(() => false)) return f === p.mainFrame() ? p : f
       }
     }
     await new Promise((r) => setTimeout(r, 700))
@@ -514,68 +516,99 @@ const menuDe = (page: Lugar) =>
 
 const urlsAbiertas = (page: Page) => page.context().pages().map((p) => p.url()).join(" | ")
 
-// Al entrar, ARCA y ART abren y cierran ventanas (pase de sesión): se usa la última pestaña de ART
-// abierta que cumpla la condición.
-async function pestanaArt(page: Page, condicion: (p: Page) => Promise<boolean>, timeout = 45_000): Promise<Page | null> {
-  const limite = Date.now() + timeout
-  while (Date.now() < limite) {
-    const candidatas = page.context().pages().filter((p) => !p.isClosed() && /rionegro\.gov\.ar/i.test(p.url())).reverse()
-    for (const p of candidatas) if (await condicion(p).catch(() => false)) return p
-    await new Promise((r) => setTimeout(r, 700))
+const corta = (u: string) => u.replace(/^https?:\/\//, "").replace(/\?.*$/, "").slice(0, 70)
+const esperarMs = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+// "Ingreso a Extranet": una lista con CUITs (las páginas de paso que se cierran solas no la tienen).
+const tieneListaCuit = (p: Page) => p.locator("select option").evaluateAll((os) =>
+  os.some((o) => /\d{11}/.test(((o as HTMLOptionElement).text + (o as HTMLOptionElement).value).replace(/\D/g, ""))))
+
+// Aviso "Existen notificaciones electrónicas pendientes": "Aceptar" solo lo cierra (no notifica).
+// Se toca únicamente el botón que está dentro de ese aviso, nunca el de otro cartel (por ejemplo,
+// uno que constituya el domicilio fiscal electrónico).
+const botonAceptar = (l: Page | Locator) =>
+  l.getByRole("button", { name: /^\s*aceptar\s*$/i }).or(l.getByRole("link", { name: /^\s*aceptar\s*$/i }))
+
+async function cerrarAvisoNotificaciones(p: Page): Promise<boolean> {
+  const avisos = p.locator("div").filter({ hasText: /notificaciones electr[oó]nicas pendientes/i }).filter({ has: botonAceptar(p) })
+  for (let i = (await avisos.count()) - 1; i >= 0; i--) {
+    const aviso = avisos.nth(i)
+    if (!(await aviso.isVisible().catch(() => false))) continue
+    if (/constitu|domicilio fiscal|adhe|acept[oa] los t[eé]rminos/i.test(await aviso.innerText().catch(() => ""))) continue
+    const boton = botonAceptar(aviso).first()
+    if (!(await boton.isVisible().catch(() => false))) continue
+    await boton.click({ timeout: 5000 })
+    return true
   }
-  return null
+  return false
 }
 
-// Entra a ART desde el portal de ARCA: elige el CUIT, cierra el aviso de notificaciones pendientes
-// (sin abrirlas) y queda en el panel principal.
+// Entra a ART desde el portal de ARCA. Al entrar, ARCA y ART abren y cierran ventanas (pase de
+// sesión), así que en cada vuelta se mira la pestaña de ART más reciente y se hace lo que pide:
+// elegir el CUIT e INGRESAR, cerrar el aviso de notificaciones (puede haber más de uno) y, cuando
+// aparece el menú, queda en el panel principal. Lo que va pasando queda anotado por si falla.
 export async function ingresarArt(page: Page, cuit: string): Promise<Page> {
+  const pasos: string[] = []
+  const anotar = (s: string) => { if (pasos.at(-1) !== s) pasos.push(s) }
   const servicio = await buscarServicio(page, /^\s*ART Provincia de R[ií]o Negro\s*$/i, "ART Provincia")
   await servicio.click()
-  // "Ingreso a Extranet": una lista con CUITs (las páginas de paso que se cierran solas no la tienen).
-  const conCuit = (p: Page) => p.locator("select option").evaluateAll((os) =>
-    os.some((o) => /\d{11}/.test(((o as HTMLOptionElement).text + (o as HTMLOptionElement).value).replace(/\D/g, ""))))
-  const enPanel = async (p: Page) => (await p.locator("a").filter({ hasText: /cuenta corriente/i }).count()) > 0
-  let art = await pestanaArt(page, async (p) => (await enPanel(p)) || (await conCuit(p)))
-  if (!art) throw new FalloArca("error", `ART no abrió después de elegir el servicio en ARCA. Pestañas: ${urlsAbiertas(page)}`)
-  await art.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
+  anotar("servicio ART")
 
-  // "Ingreso a Extranet": lista con los CUIT que representa la clave + INGRESAR.
-  const listas = art.locator("select")
-  let elegido = false
-  for (let i = 0, n = await listas.count(); i < n && !elegido; i++) {
-    const valor = await listas.nth(i).evaluate((el, c) =>
-      [...(el as HTMLSelectElement).options].find((o) => (o.text + o.value).replace(/\D/g, "").includes(c))?.value ?? null, cuit)
-    if (valor === null) continue
-    await listas.nth(i).selectOption(valor)
-    elegido = true
-  }
-  if (!elegido && (await listas.count())) {
-    throw new FalloArca("error", `ART no ofrece el CUIT ${cuit} para ingresar. Pantalla: ${resumen(await textoVisible(art))}`)
-  }
-  const ingresar = await primeroVisible([
-    art.getByRole("button", { name: /^\s*ingresar\s*$/i }), art.locator("input[value='INGRESAR' i]"), art.getByRole("link", { name: /^\s*ingresar\s*$/i }),
-  ], elegido ? 15_000 : 3000)
-  if (ingresar) {
-    await tocarEnArt(ingresar, "ingreso")
-    await art.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
-    // El panel puede abrirse en otra pestaña (y cerrar la del ingreso).
-    const panel = await pestanaArt(page, enPanel)
-    if (!panel) throw new FalloArca("error", `No se abrió el panel de ART después de INGRESAR. Pestañas: ${urlsAbiertas(page)}`)
-    art = panel
-    await art.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
+  const pestanas = () => page.context().pages().filter((p) => !p.isClosed() && /rionegro\.gov\.ar/i.test(p.url())).reverse()
+  let ingresado = false
+  let avisos = 0
+  const limite = Date.now() + 120_000
+  while (Date.now() < limite) {
+    let accion = false
+    for (const p of pestanas()) {
+      try {
+        if (avisos < 5 && (await cerrarAvisoNotificaciones(p))) {
+          avisos++
+          anotar(`aviso de notificaciones cerrado (${corta(p.url())})`)
+          accion = true
+          break
+        }
+        if (await p.locator("a").filter({ hasText: /cuenta corriente/i }).count()) {
+          anotar(`panel (${corta(p.url())})`)
+          await p.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
+          // Puede quedar otro aviso encima del menú: se cierra antes de seguir.
+          if (await cerrarAvisoNotificaciones(p)) anotar("aviso de notificaciones cerrado")
+          await detectarBloqueos(p)
+          return p
+        }
+        if (!ingresado && (await tieneListaCuit(p))) {
+          const listas = p.locator("select")
+          let elegido = false
+          for (let i = 0, n = await listas.count(); i < n && !elegido; i++) {
+            const valor = await listas.nth(i).evaluate((el, c) =>
+              [...(el as HTMLSelectElement).options].find((o) => (o.text + o.value).replace(/\D/g, "").includes(c))?.value ?? null, cuit)
+            if (valor === null) continue
+            await listas.nth(i).selectOption(valor)
+            elegido = true
+          }
+          if (!elegido) throw new FalloArca("error", `ART no ofrece el CUIT ${cuit} para ingresar. Pantalla: ${resumen(await textoVisible(p))}`)
+          const boton = await primeroVisible([
+            p.getByRole("button", { name: /^\s*ingresar\s*$/i }), p.locator("input[value='INGRESAR' i]"), p.getByRole("link", { name: /^\s*ingresar\s*$/i }),
+          ], 10_000)
+          if (!boton) throw new FalloArca("error", `No encontré INGRESAR en ART. Botones: ${await describirClickeables(p)}`)
+          await tocarEnArt(boton, "ingreso")
+          ingresado = true
+          anotar(`CUIT elegido e INGRESAR (${corta(p.url())})`)
+          accion = true
+          break
+        }
+      } catch (e: any) {
+        if (e instanceof FalloArca) throw e
+        anotar(`${corta(p.url())}: ${String(e?.message ?? e).split("\n")[0].slice(0, 80)}`)
+      }
+    }
+    await esperarMs(accion ? 2000 : 800)
   }
 
-  // Aviso "Existen notificaciones electrónicas pendientes": "Aceptar" solo lo cierra.
-  const aviso = await primeroVisible([art.getByRole("button", { name: /^\s*aceptar\s*$/i })], 8000)
-  if (aviso && /alerta|notificaciones electr[oó]nicas pendientes/i.test(await textoVisible(art))) {
-    await aviso.click()
-    await art.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
-  }
-  await detectarBloqueos(art)
-  if (!(await art.locator("a").filter({ hasText: /cuenta corriente/i }).count())) {
-    throw new FalloArca("error", `No se pudo entrar al panel de ART (${art.url()}). Pantalla: ${resumen(await textoVisible(art))} — Menú: ${await menuDe(art)}`)
-  }
-  return art
+  const ultima = pestanas()[0]
+  const pantalla = ultima ? (await textoVisible(ultima)).replace(/\s+/g, " ").slice(0, 900) : ""
+  throw new FalloArca("error", `No se pudo llegar al panel de ART. Pasos: ${pasos.join(" → ")}. Pestañas: ${urlsAbiertas(page)}. ` +
+    `Pantalla: ${pantalla}${ultima ? ` — Menú: ${await menuDe(ultima)}` : ""}`)
 }
 
 export type CuentaArt = { anticipos: AnticipoArt[]; regimen: string | null; inscripcion: string | null; pantalla: string }
@@ -589,18 +622,21 @@ export async function consultarCuentaArt(art: Page, desdeAnio: number): Promise<
   if (!(await menu.count())) throw new FalloArca("error", `No encontré "Consultar Cuenta Corriente" en el menú de ART. Menú: ${await menuDe(art)}`)
   await tocarEnArt(menu.first(), "menú IIBB")
 
-  const FORMULARIO = /consulta de cuenta corriente de iibb/i
-  let lugar = await lugarCon(art, /para efectuar consulta|consulta de cuenta corriente de iibb/i)
-  if (!lugar) throw new FalloArca("error", `No se abrió la cuenta corriente de ART (${art.url()}). Pantalla: ${resumen(await textoVisible(art))}`)
-  if (!FORMULARIO.test(await textoVisible(lugar))) {
-    // Pantalla intermedia: "Para efectuar consulta, Pulse: Consultar".
-    const consultar = await primeroVisible([lugar.getByRole("button", { name: /^\s*consultar\s*$/i }), lugar.locator("input[value='Consultar' i]")], 10_000)
-    if (!consultar) throw new FalloArca("error", `No encontré "Consultar" en ART. Botones: ${await describirClickeables(lugar)}`)
+  // Primero aparece una pantalla intermedia ("Para efectuar consulta, Pulse: Consultar") con el mismo
+  // título que el formulario: el formulario es el que tiene la lista de inscripciones.
+  const conInscripciones = (l: Lugar) => l.locator("select option").evaluateAll((os) =>
+    os.some((o) => /brutos|sellos/i.test(o.textContent ?? "")))
+  const intermedia = (l: Lugar) => textoVisible(l).then((t) => /para efectuar consulta/i.test(t))
+  let form = await lugarDonde(art, async (l) => (await conInscripciones(l)) || (await intermedia(l)))
+  if (!form) throw new FalloArca("error", `No se abrió la cuenta corriente de ART. Pestañas: ${urlsAbiertas(art)}. Pantalla: ${resumen(await textoVisible(art))}`)
+  if (!(await conInscripciones(form).catch(() => false))) {
+    const consultar = await primeroVisible([form.getByRole("button", { name: /^\s*consultar\s*$/i }), form.locator("input[value='Consultar' i]")], 10_000)
+    if (!consultar) throw new FalloArca("error", `No encontré "Consultar" en ART. Botones: ${await describirClickeables(form)}`)
     await tocarEnArt(consultar, "cuenta corriente")
-    lugar = await lugarCon(art, FORMULARIO)
-    if (!lugar) throw new FalloArca("error", `No apareció el formulario de cuenta corriente de ART. Pantalla: ${resumen(await textoVisible(art))}`)
+    const previa = form
+    form = await lugarDonde(art, conInscripciones)
+    if (!form) throw new FalloArca("error", `No apareció el formulario de cuenta corriente de ART. Pantalla: ${resumen(await textoVisible(previa))}`)
   }
-  const form = lugar
 
   // Inscripción de Ingresos Brutos (la lista también trae "Sellos y Tasas").
   const listas = form.locator("select")
