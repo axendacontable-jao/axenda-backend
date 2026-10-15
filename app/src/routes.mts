@@ -4,6 +4,10 @@ import {
 } from "./core.mts"
 import { buscarEnConstancia, buscarEnPadron, certPem, constanciaCompleta, cuitContador, keyPem, serviciosCacheados } from "./arca.mts"
 import { pdfConstancia } from "./constancia-pdf.mts"
+import {
+  facturacionDisponible, feAnular, feEmitirAdmin, feEstado, feGuardarConfig, fePortalEmitir, fePortalEstado, fePortalReceptor,
+  feProbar, feReceptorAdmin,
+} from "./facturacion-electronica.mts"
 import { cifrarClave, exigirSesionPortal, firmarTokenPortal } from "./secretos.mts"
 import { TAREAS, despacharSincronizacion, finPeriodoProximaRecategorizacion } from "./sincronizacion.mts"
 import { getStore } from "@netlify/blobs"
@@ -693,13 +697,8 @@ const datosPortal: Handler = async ({ req, p }) => {
   const deudaDesc = deudas.filter((x) => x.monto > 0).map((x) => `${x.organismo}: ${pesos(x.monto)}`).join(" · ") || null
   const deudaDe = (org: string) => deudas.filter((x) => x.organismo === org).reduce((s, x) => s + x.monto, 0)
 
-  let facturacionElectronica = false
-  try {
-    const est = await q(d.from("estudios").select("facturacion_electronica_habilitada").eq("id", cliente.estudio_id).maybeSingle())
-    facturacionElectronica = !!est?.facturacion_electronica_habilitada
-  } catch {
-    facturacionElectronica = false
-  }
+  // "Emitir factura" en el portal: estudio habilitado y cliente con la facturación configurada.
+  const facturacionElectronica = await facturacionDisponible(cliente).catch(() => false)
 
   const jurisdicciones = cliente.iibb_modalidad === "convenio_multilateral"
     ? (await q(d.from("cliente_jurisdicciones").select("jurisdiccion,nro_inscripcion,alicuota,coeficiente,es_sede")
@@ -1609,6 +1608,12 @@ export const rutas: [string, string, Handler][] = [
 
   ["GET", "/constancia/:cuit", constancia],
   ["GET", "/clientes/:slug/constancia", constanciaPdf],
+  ["GET", "/clientes/:slug/facturacion-electronica", feEstado],
+  ["PUT", "/clientes/:slug/facturacion-electronica", feGuardarConfig],
+  ["POST", "/clientes/:slug/facturacion-electronica/probar", feProbar],
+  ["POST", "/clientes/:slug/comprobantes", feEmitirAdmin],
+  ["POST", "/comprobantes/:id/anular", feAnular],
+  ["GET", "/receptor/:cuit", feReceptorAdmin],
   ["GET", "/padron/:cuit", padron],
 
   ["GET", "/clientes", listarClientes],
@@ -1648,6 +1653,9 @@ export const rutas: [string, string, Handler][] = [
   ["POST", "/portal/:slug/verificar-arca", portalVerificarArca],
   ["GET", "/portal/:slug/constancia", portalConstancia],
   ["POST", "/portal/:slug/documentos", portalSubirDocumento],
+  ["GET", "/portal/:slug/facturacion", fePortalEstado],
+  ["POST", "/portal/:slug/comprobantes", fePortalEmitir],
+  ["GET", "/portal/:slug/receptor/:cuit", fePortalReceptor],
   ["GET", "/portal/:slug", datosPortal],
 
   ["GET", "/planes", listarTodosPlanes],

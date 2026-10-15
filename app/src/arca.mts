@@ -26,7 +26,7 @@ const legacyAgent = new https.Agent({
   secureOptions: crypto.constants.SSL_OP_LEGACY_SERVER_CONNECT,
 })
 
-function postSoap(url: string, body: string, timeoutMs = 30000): Promise<{ status: number; text: string }> {
+export function postSoap(url: string, body: string, timeoutMs = 30000, soapAction = ""): Promise<{ status: number; text: string }> {
   return new Promise((resolve, reject) => {
     const u = new URL(url)
     const req = https.request(
@@ -38,7 +38,7 @@ function postSoap(url: string, body: string, timeoutMs = 30000): Promise<{ statu
         timeout: timeoutMs,
         headers: {
           "Content-Type": "text/xml; charset=UTF-8",
-          SOAPAction: "",
+          SOAPAction: soapAction,
           "Content-Length": Buffer.byteLength(body),
         },
       },
@@ -54,10 +54,10 @@ function postSoap(url: string, body: string, timeoutMs = 30000): Promise<{ statu
   })
 }
 
-const unescapeXml = (s: string) =>
+export const unescapeXml = (s: string) =>
   s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&")
 
-function tagText(xml: string, tag: string): string | null {
+export function tagText(xml: string, tag: string): string | null {
   const m = xml.match(new RegExp(`<(?:[\\w.-]+:)?${tag}(?:\\s[^>]*)?>([^<]*)</(?:[\\w.-]+:)?${tag}>`))
   return m ? unescapeXml(m[1]) : null
 }
@@ -106,7 +106,7 @@ export const serviciosCacheados = () => [...memoria.keys()]
 
 const vigente = (t: Ticket | null | undefined): t is Ticket => !!t && new Date(t.expira).getTime() > Date.now()
 
-async function obtenerToken(servicio: string): Promise<Ticket> {
+export async function obtenerToken(servicio: string): Promise<Ticket> {
   const enMemoria = memoria.get(servicio)
   if (vigente(enMemoria)) return enMemoria
 

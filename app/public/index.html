@@ -1297,9 +1297,9 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
 
       {/* Tabs */}
       <div className="tabs">
-        {["facturacion","planes","documentos","recategorizacion","arca","alertas"].map(t=>(
+        {["facturacion","facturar","planes","documentos","recategorizacion","arca","alertas"].map(t=>(
           <button key={t} className={`tab-btn ${tab===t?"active":""}`} onClick={()=>setTab(t)}>
-            {t==="facturacion"?"Facturación":t==="planes"?"Planes de pago":t==="documentos"?"Documentos":t==="recategorizacion"?"Recategorización":t==="arca"?"ARCA":"Alertas"}
+            {t==="facturacion"?"Facturación":t==="facturar"?"Facturar":t==="planes"?"Planes de pago":t==="documentos"?"Documentos":t==="recategorizacion"?"Recategorización":t==="arca"?"ARCA":"Alertas"}
             {t==="planes"&&planes&&planes.filter(p=>p.estado==="activo").length>0&&(
               <span style={{marginLeft:"6px",background:"var(--blue)",color:"#fff",borderRadius:"10px",fontSize:"10px",fontWeight:"700",padding:"1px 7px"}}>{planes.filter(p=>p.estado==="activo").length}</span>
             )}
@@ -1617,6 +1617,9 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
       })()}
 
       {modalRecat&&<ModalRegistrarRecat slug={cliente.slug} catActual={cliente.categoria} onClose={()=>setModalRecat(false)} onGuardado={()=>{setModalRecat(false);setRecats(null);setTimeout(()=>setTab("recategorizacion"),50);}}/>}
+
+      {/* Tab: Facturar (facturación electrónica con el web service de ARCA) */}
+      {tab==="facturar"&&<FacturacionElectronica cliente={cliente}/>}
 
       {/* Tab: ARCA */}
       {tab==="arca"&&(()=>{
@@ -2063,6 +2066,296 @@ function JurisdiccionesConvenio({ slug }) {
         </label>
         <button className="btn-primary" type="submit" disabled={guardando}>{guardando?"Agregando…":"+ Agregar"}</button>
       </form>
+    </div>
+  );
+}
+
+// ── Facturación electrónica (web service de ARCA, certificado del estudio) ──
+const pesosC = (n) => "$" + Number(n || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// "1.500,50" o "1500.50" → número.
+function numeroAr(s) {
+  const t = String(s ?? "").trim();
+  if (!t) return NaN;
+  if (t.includes(",")) return Number(t.replace(/\./g, "").replace(",", "."));
+  if (/^\d+\.\d{1,2}$/.test(t)) return Number(t);
+  return Number(t.replace(/\./g, ""));
+}
+const isoHoyAr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
+const isoMes = (fin) => { const d = new Date(); const x = fin ? new Date(d.getFullYear(), d.getMonth()+1, 0) : new Date(d.getFullYear(), d.getMonth(), 1); return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,"0")}-${String(x.getDate()).padStart(2,"0")}`; };
+
+function ModalEmitirFactura({ opciones, onClose, onEmitido, emitir, buscarReceptor }) {
+  const [f, setF] = useState({
+    concepto: "2", doc_tipo: "99", doc_nro: "", receptor_nombre: "", receptor_domicilio: "", condicion_iva: "5",
+    condicion_venta: "Contado", fecha: isoHoyAr(), serv_desde: isoMes(false), serv_hasta: isoMes(true), vto_pago: isoHoyAr(),
+  });
+  const [items, setItems] = useState([{ descripcion: "", cantidad: "1", precio: "" }]);
+  const [paso, setPaso] = useState("form");
+  const [error, setError] = useState("");
+  const [buscando, setBuscando] = useState(false);
+  const [resultado, setResultado] = useState(null);
+  const [clave] = useState(() => (window.crypto?.randomUUID ? window.crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2)));
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const setItem = (i, k, v) => setItems(prev => prev.map((it, j) => j === i ? { ...it, [k]: v } : it));
+  const renglones = items.map(it => ({ descripcion: it.descripcion.trim(), cantidad: numeroAr(it.cantidad), precio: numeroAr(it.precio) }));
+  const total = Math.round(renglones.reduce((s, it) => s + (it.cantidad > 0 && it.precio > 0 ? it.cantidad * it.precio : 0), 0) * 100) / 100;
+  const servicios = f.concepto !== "1";
+
+  async function traerReceptor() {
+    setBuscando(true); setError("");
+    try {
+      const d = await buscarReceptor(f.doc_nro.replace(/\D/g, ""));
+      setF(p => ({ ...p, receptor_nombre: d.nombre || p.receptor_nombre, receptor_domicilio: d.domicilio || p.receptor_domicilio, condicion_iva: d.condicion_iva ? String(d.condicion_iva) : p.condicion_iva }));
+    } catch (e) { setError(e.message); }
+    setBuscando(false);
+  }
+  function revisar() {
+    setError("");
+    if (renglones.some(it => !it.descripcion || !(it.cantidad > 0) || !(it.precio > 0))) { setError("Completá descripción, cantidad y precio de cada renglón"); return; }
+    if (f.doc_tipo !== "99" && !f.doc_nro.replace(/\D/g, "")) { setError("Completá el documento del receptor"); return; }
+    if (f.doc_tipo !== "99" && !f.receptor_nombre.trim()) { setError("Completá el nombre del receptor"); return; }
+    setPaso("confirmar");
+  }
+  async function confirmar() {
+    setPaso("emitiendo"); setError("");
+    try {
+      const d = await emitir({
+        concepto: Number(f.concepto), doc_tipo: Number(f.doc_tipo), doc_nro: f.doc_nro.replace(/\D/g, ""), condicion_iva: Number(f.doc_tipo === "99" ? 5 : f.condicion_iva),
+        receptor_nombre: f.receptor_nombre, receptor_domicilio: f.receptor_domicilio, condicion_venta: f.condicion_venta,
+        fecha: f.fecha, serv_desde: servicios ? f.serv_desde : null, serv_hasta: servicios ? f.serv_hasta : null, vto_pago: servicios ? f.vto_pago : null,
+        items: renglones, clave_idempotencia: clave,
+      });
+      setResultado(d); setPaso("listo"); onEmitido && onEmitido();
+    } catch (e) { setError(e.message); setPaso("confirmar"); }
+  }
+  const etq = (k) => ({ fontSize: "11px", color: "var(--muted)", marginBottom: "3px" });
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && paso !== "emitiendo" && onClose()}>
+      <div className="modal" style={{ maxWidth: "640px", maxHeight: "90vh", overflowY: "auto" }}>
+        <div className="modal-title">Emitir Factura C</div>
+        {paso === "form" && (<>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "10px" }}>
+            <div><div style={etq()}>Concepto</div>
+              <select className="form-input" value={f.concepto} onChange={e => set("concepto", e.target.value)}>
+                {Object.entries(opciones.conceptos).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select></div>
+            <div><div style={etq()}>Fecha de emisión</div><input type="date" className="form-input" value={f.fecha} onChange={e => set("fecha", e.target.value)} /></div>
+          </div>
+          {servicios && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px", marginBottom: "10px" }}>
+              <div><div style={etq()}>Período desde</div><input type="date" className="form-input" value={f.serv_desde} onChange={e => set("serv_desde", e.target.value)} /></div>
+              <div><div style={etq()}>Período hasta</div><input type="date" className="form-input" value={f.serv_hasta} onChange={e => set("serv_hasta", e.target.value)} /></div>
+              <div><div style={etq()}>Vencimiento del pago</div><input type="date" className="form-input" value={f.vto_pago} onChange={e => set("vto_pago", e.target.value)} /></div>
+            </div>
+          )}
+          <div style={{ fontSize: "12px", fontWeight: "600", margin: "6px 0" }}>Receptor</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "10px" }}>
+            <div><div style={etq()}>Documento</div>
+              <select className="form-input" value={f.doc_tipo} onChange={e => set("doc_tipo", e.target.value)}>
+                <option value="99">Consumidor final (sin documento)</option><option value="80">CUIT</option><option value="96">DNI</option><option value="86">CUIL</option>
+              </select></div>
+            {f.doc_tipo !== "99" && (
+              <div><div style={etq()}>Número</div>
+                <div style={{ display: "flex", gap: "6px" }}>
+                  <input className="form-input" style={{ marginBottom: 0 }} value={f.doc_nro} onChange={e => set("doc_nro", e.target.value)} placeholder={f.doc_tipo === "96" ? "30123456" : "20-12345678-9"} />
+                  {(f.doc_tipo === "80" || f.doc_tipo === "86") && <button type="button" className="table-action" onClick={traerReceptor} disabled={buscando}>{buscando ? "…" : "Buscar en ARCA"}</button>}
+                </div></div>
+            )}
+          </div>
+          {f.doc_tipo !== "99" && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "10px" }}>
+              <div><div style={etq()}>Nombre o razón social</div><input className="form-input" value={f.receptor_nombre} onChange={e => set("receptor_nombre", e.target.value)} /></div>
+              <div><div style={etq()}>Condición frente al IVA</div>
+                <select className="form-input" value={f.condicion_iva} onChange={e => set("condicion_iva", e.target.value)}>
+                  {Object.entries(opciones.condiciones_iva).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </select></div>
+              <div style={{ gridColumn: "1 / -1" }}><div style={etq()}>Domicilio (opcional)</div><input className="form-input" value={f.receptor_domicilio} onChange={e => set("receptor_domicilio", e.target.value)} /></div>
+            </div>
+          )}
+          <div style={{ fontSize: "12px", fontWeight: "600", margin: "6px 0" }}>Detalle</div>
+          {items.map((it, i) => (
+            <div key={i} style={{ display: "grid", gridTemplateColumns: "3fr 0.8fr 1.4fr auto", gap: "6px", marginBottom: "6px" }}>
+              <input className="form-input" style={{ marginBottom: 0 }} placeholder="Descripción" value={it.descripcion} onChange={e => setItem(i, "descripcion", e.target.value)} />
+              <input className="form-input" style={{ marginBottom: 0 }} placeholder="Cant." value={it.cantidad} onChange={e => setItem(i, "cantidad", e.target.value)} />
+              <input className="form-input" style={{ marginBottom: 0 }} placeholder="Precio $" value={it.precio} onChange={e => setItem(i, "precio", e.target.value)} />
+              <button type="button" className="table-action" disabled={items.length === 1} onClick={() => setItems(prev => prev.filter((_, j) => j !== i))}>✕</button>
+            </div>
+          ))}
+          {items.length < 12 && <button type="button" className="table-action" style={{ fontSize: "11px" }} onClick={() => setItems(prev => [...prev, { descripcion: "", cantidad: "1", precio: "" }])}>+ Renglón</button>}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", margin: "12px 0" }}>
+            <div><div style={etq()}>Condición de venta</div>
+              <select className="form-input" value={f.condicion_venta} onChange={e => set("condicion_venta", e.target.value)}>
+                {opciones.condiciones_venta.map(v => <option key={v} value={v}>{v}</option>)}
+              </select></div>
+            <div style={{ textAlign: "right", alignSelf: "end" }}><div style={etq()}>Total</div><div style={{ fontFamily: "'DM Mono',monospace", fontSize: "20px", fontWeight: "700" }}>{pesosC(total)}</div></div>
+          </div>
+          {error && <div style={{ color: "var(--red)", fontSize: "12px", marginBottom: "8px" }}>{error}</div>}
+          <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+            <button className="btn-secondary" onClick={onClose}>Cancelar</button>
+            <button className="btn-primary" onClick={revisar} disabled={!(total > 0)}>Revisar</button>
+          </div>
+        </>)}
+        {(paso === "confirmar" || paso === "emitiendo") && (<>
+          <div style={{ background: "var(--bg)", borderRadius: "10px", padding: "14px", fontSize: "13px", lineHeight: "1.7", marginBottom: "12px" }}>
+            <div><strong>Factura C</strong> · {opciones.conceptos[f.concepto]} · {formatArgDate(f.fecha)}</div>
+            {servicios && <div>Período {formatArgDate(f.serv_desde)} al {formatArgDate(f.serv_hasta)} · vence el pago {formatArgDate(f.vto_pago)}</div>}
+            <div>Receptor: <strong>{f.doc_tipo === "99" ? "Consumidor Final" : `${f.receptor_nombre} (${opciones.tipos_doc[f.doc_tipo]} ${f.doc_nro})`}</strong> · {opciones.condiciones_iva[f.doc_tipo === "99" ? "5" : f.condicion_iva]}</div>
+            {renglones.map((it, i) => <div key={i}>• {it.descripcion}: {it.cantidad} × {pesosC(it.precio)}</div>)}
+            <div style={{ fontSize: "16px", marginTop: "6px" }}>Total: <strong>{pesosC(total)}</strong></div>
+          </div>
+          <div style={{ fontSize: "12px", color: "var(--red)", marginBottom: "12px" }}>Se emite una factura real ante ARCA. No se puede borrar: para anularla hay que emitir una nota de crédito.</div>
+          {error && <div style={{ color: "var(--red)", fontSize: "12px", marginBottom: "8px" }}>{error}</div>}
+          <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+            <button className="btn-secondary" onClick={() => setPaso("form")} disabled={paso === "emitiendo"}>Volver</button>
+            <button className="btn-primary" onClick={confirmar} disabled={paso === "emitiendo"}>{paso === "emitiendo" ? "Pidiendo CAE a ARCA…" : `Emitir factura por ${pesosC(total)}`}</button>
+          </div>
+        </>)}
+        {paso === "listo" && resultado && (<>
+          <div style={{ fontSize: "14px", lineHeight: "1.8", marginBottom: "12px" }}>
+            <div style={{ color: "var(--green)", fontWeight: "700", fontSize: "16px" }}>✓ {resultado.comprobante.nombre} autorizada</div>
+            <div>CAE {resultado.comprobante.cae} · vence {formatArgDate(resultado.comprobante.cae_vto)}</div>
+            {resultado.comprobante.url_pdf && <a className="table-action" href={resultado.comprobante.url_pdf} target="_blank" rel="noopener" style={{ textDecoration: "none" }}>↗ Ver PDF</a>}
+            {(resultado.avisos || []).map((a, i) => <div key={i} style={{ color: "#E8A020", fontSize: "12px" }}>⚠ {a}</div>)}
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end" }}><button className="btn-primary" onClick={onClose}>Listo</button></div>
+        </>)}
+      </div>
+    </div>
+  );
+}
+
+function FacturacionElectronica({ cliente }) {
+  const [datos, setDatos] = useState(null);
+  const [cfg, setCfg] = useState(null);
+  const [guardando, setGuardando] = useState(false);
+  const [probando, setProbando] = useState(false);
+  const [prueba, setPrueba] = useState(null);
+  const [modal, setModal] = useState(false);
+  const [aviso, setAviso] = useState("");
+  const base = `${BACKEND_URL}/clientes/${cliente.slug}`;
+  const pedir = async (url, opts) => {
+    const r = await apiFetch(url, opts);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || `Error ${r.status}`);
+    return d;
+  };
+  function cargar() {
+    pedir(`${base}/facturacion-electronica`).then(d => { setDatos(d); setCfg({ ...d.config }); }).catch(e => setDatos({ error: e.message }));
+  }
+  useEffect(cargar, [cliente.slug]);
+
+  async function guardar() {
+    setGuardando(true); setAviso("");
+    try {
+      await pedir(`${base}/facturacion-electronica`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+        habilitada: !!cfg.habilitada, punto_venta: cfg.punto_venta === "" ? null : cfg.punto_venta, domicilio: cfg.domicilio,
+        ingresos_brutos: cfg.ingresos_brutos, inicio_actividades: cfg.inicio_actividades || null,
+      }) });
+      setAviso("✓ Guardado"); cargar();
+    } catch (e) { setAviso("No se pudo guardar: " + e.message); }
+    setGuardando(false);
+  }
+  async function probar() {
+    setProbando(true); setPrueba(null);
+    try { setPrueba(await pedir(`${base}/facturacion-electronica/probar`, { method: "POST" })); }
+    catch (e) { setPrueba({ ok: false, mensaje: e.message }); }
+    setProbando(false);
+  }
+  async function anular(c) {
+    if (!confirm(`¿Anular la ${c.nombre} por ${pesosC(c.importe)}?\n\nSe emite una Nota de Crédito C real en ARCA por el total. No se puede deshacer.`)) return;
+    try {
+      const d = await pedir(`${BACKEND_URL}/comprobantes/${c.id}/anular`, { method: "POST" });
+      alert(`✓ ${d.comprobante.nombre} autorizada (CAE ${d.comprobante.cae})${(d.avisos || []).length ? "\n\n" + d.avisos.join("\n") : ""}`);
+      cargar();
+    } catch (e) { alert("No se pudo anular: " + e.message); }
+  }
+
+  if (!datos || !cfg) return <div style={{ height: "80px", borderRadius: "8px" }} className="skeleton" />;
+  if (datos.error) return <div style={{ color: "var(--red)", fontSize: "13px" }}>{datos.error}</div>;
+  const listo = datos.config.lista && datos.estudio_habilitado;
+  return (
+    <div>
+      {!datos.estudio_habilitado && (
+        <div style={{ padding: "10px 14px", borderRadius: "8px", background: "#E8A02012", border: "1px solid #E8A02040", fontSize: "12px", marginBottom: "14px" }}>
+          La facturación electrónica está desactivada para el estudio. Activala en Configuración → Estudio.
+        </div>
+      )}
+      <div className="detail-section" style={{ marginBottom: "16px" }}>
+        <div className="section-title">Facturación electrónica de {cliente.nombre}</div>
+        <details style={{ fontSize: "12px", color: "var(--muted)", marginBottom: "12px" }}>
+          <summary style={{ cursor: "pointer" }}>Qué hace falta en ARCA (una sola vez)</summary>
+          <ol style={{ margin: "8px 0 0 18px", lineHeight: "1.6" }}>
+            <li>Tu certificado (el mismo que usa la app) autorizado para el servicio "Facturación Electrónica" en tu Administrador de Relaciones.</li>
+            <li>El cliente te delega "Facturación Electrónica" en su Administrador de Relaciones, y vos se lo asociás a tu certificado eligiéndolo como representado.</li>
+            <li>El cliente tiene un punto de venta "Factura Electrónica - Monotributo - Web Services" (Administración de Puntos de Venta y Domicilios).</li>
+          </ol>
+          Con "Probar conexión" la app verifica los tres pasos sin emitir nada.
+        </details>
+        <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", fontWeight: "600", marginBottom: "12px" }}>
+          <input type="checkbox" checked={!!cfg.habilitada} onChange={e => setCfg(c => ({ ...c, habilitada: e.target.checked }))} />
+          Habilitado para facturar desde la app (vos y el cliente desde su portal)
+        </label>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: "10px" }}>
+          <div><div style={{ fontSize: "11px", color: "var(--muted)", marginBottom: "3px" }}>Punto de venta (Web Services)</div>
+            <input className="form-input" value={cfg.punto_venta ?? ""} onChange={e => setCfg(c => ({ ...c, punto_venta: e.target.value.replace(/\D/g, "") }))} placeholder="3" /></div>
+          <div><div style={{ fontSize: "11px", color: "var(--muted)", marginBottom: "3px" }}>Ingresos Brutos N°</div>
+            <input className="form-input" value={cfg.ingresos_brutos ?? ""} onChange={e => setCfg(c => ({ ...c, ingresos_brutos: e.target.value }))} placeholder="47292067" /></div>
+          <div><div style={{ fontSize: "11px", color: "var(--muted)", marginBottom: "3px" }}>Inicio de actividades</div>
+            <input type="date" className="form-input" value={cfg.inicio_actividades ?? ""} onChange={e => setCfg(c => ({ ...c, inicio_actividades: e.target.value }))} /></div>
+          <div style={{ gridColumn: "1 / -1" }}><div style={{ fontSize: "11px", color: "var(--muted)", marginBottom: "3px" }}>Domicilio comercial (sale en la factura)</div>
+            <input className="form-input" value={cfg.domicilio ?? ""} onChange={e => setCfg(c => ({ ...c, domicilio: e.target.value }))} placeholder="Calle 123 - Localidad, Provincia" /></div>
+        </div>
+        <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+          <button className="btn-primary" onClick={guardar} disabled={guardando}>{guardando ? "Guardando…" : "Guardar"}</button>
+          <button className="btn-secondary" onClick={probar} disabled={probando}>{probando ? "Consultando ARCA…" : "Probar conexión con ARCA"}</button>
+          {aviso && <span style={{ fontSize: "12px", color: aviso.startsWith("✓") ? "var(--green)" : "var(--red)" }}>{aviso}</span>}
+        </div>
+        {prueba && (
+          <div style={{ marginTop: "12px", padding: "10px 14px", borderRadius: "8px", fontSize: "12px", background: prueba.ok ? "#2BAF8210" : "#E0454510", border: `1px solid ${prueba.ok ? "#2BAF8240" : "#E0454540"}` }}>
+            {prueba.ok ? "✓ " : "✗ "}{prueba.mensaje}
+            {Array.isArray(prueba.puntos) && prueba.puntos.length > 0 && <div style={{ color: "var(--muted)", marginTop: "4px" }}>Puntos de venta de Web Services: {prueba.puntos.map(p => `${p.numero}${p.bloqueado ? " (bloqueado)" : ""}${p.baja ? " (baja)" : ""}`).join(", ")}</div>}
+          </div>
+        )}
+      </div>
+
+      <div className="detail-section">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+          <div className="section-title" style={{ marginBottom: 0 }}>Comprobantes emitidos desde la app</div>
+          <button className="add-btn" disabled={!listo} title={listo ? "" : "Completá y guardá la configuración (y activala en Configuración → Estudio)"} onClick={() => setModal(true)}>+ Emitir factura</button>
+        </div>
+        {datos.comprobantes.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "20px", color: "var(--muted)", fontSize: "13px" }}>Todavía no se emitieron comprobantes desde la app.</div>
+        ) : (
+          <div className="table-wrap"><table className="data-table">
+            <thead><tr><th>Comprobante</th><th>Fecha</th><th>Receptor</th><th>Importe</th><th>Emitió</th><th>CAE</th><th></th></tr></thead>
+            <tbody>
+              {datos.comprobantes.map(c => (
+                <tr key={c.id || c.cae} style={c.anulado ? { opacity: 0.55 } : undefined}>
+                  <td style={{ whiteSpace: "nowrap", fontWeight: "600" }}>{c.nombre}{c.anulado && <span style={{ fontSize: "10px", color: "var(--red)", marginLeft: "6px" }}>anulada</span>}</td>
+                  <td>{formatArgDate(c.fecha)}</td>
+                  <td>{c.receptor || "—"}</td>
+                  <td style={{ fontFamily: "'DM Mono',monospace", color: c.tipo === 13 ? "var(--red)" : "inherit" }}>{c.tipo === 13 ? "−" : ""}{pesosC(c.importe)}</td>
+                  <td>{c.emitido_por === "cliente" ? "Cliente" : "Contador"}</td>
+                  <td style={{ fontFamily: "'DM Mono',monospace", fontSize: "11px" }}>{c.cae}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    {c.url_pdf && <a className="table-action" href={c.url_pdf} target="_blank" rel="noopener" style={{ textDecoration: "none" }}>PDF</a>}
+                    {c.tipo === 11 && !c.anulado && c.id && <button className="table-action danger" style={{ marginLeft: "4px" }} onClick={() => anular(c)}>Anular</button>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table></div>
+        )}
+      </div>
+
+      {modal && (
+        <ModalEmitirFactura
+          opciones={datos}
+          onClose={() => setModal(false)}
+          onEmitido={cargar}
+          emitir={(payload) => pedir(`${base}/comprobantes`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })}
+          buscarReceptor={(cuit) => pedir(`${BACKEND_URL}/receptor/${cuit}`)}
+        />
+      )}
     </div>
   );
 }
