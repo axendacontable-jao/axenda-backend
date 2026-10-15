@@ -1149,6 +1149,21 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
     if (d.captura) setCapturaArca(d.captura); else alert("No hay captura guardada.");
   }
 
+  // Constancia de inscripción en PDF con los datos que informa ARCA (certificado del estudio).
+  async function descargarConstanciaPdf() {
+    try {
+      const r = await apiFetch(`${BACKEND_URL}/clientes/${cliente.slug}/constancia`);
+      if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e.detail || `Error ${r.status}`); }
+      const url = URL.createObjectURL(await r.blob());
+      const a = document.createElement("a");
+      a.href = url; a.download = `constancia-inscripcion-${cliente.cuit||cliente.slug}.pdf`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 10000);
+    } catch(e) {
+      alert("No se pudo bajar la constancia: " + e.message);
+    }
+  }
+
   useEffect(() => {
     if (!cliente) return;
     if (tab === "planes") {
@@ -1540,7 +1555,7 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
           ) : docs.map((d,i)=>(
             <div key={i} className="doc-row">
               <div className="doc-info">
-                <div className="doc-nombre">{d.nombre||d.url||"Documento"}</div>
+                <div className="doc-nombre">{d.nombre||d.url||"Documento"}{d.subido_por_cliente&&<span style={{fontSize:"10px",fontWeight:"600",background:"#2BAF8218",color:"#1E8A66",borderRadius:"5px",padding:"1px 6px",marginLeft:"6px"}}>Lo subió el cliente</span>}</div>
                 <div className="doc-meta">{d.tipo||""} {d.created_at?`· ${new Date(d.created_at).toLocaleDateString("es-AR")}`:""}</div>
               </div>
               {d.url&&<a className="doc-link" href={d.url} target="_blank" rel="noopener">↗ Abrir</a>}
@@ -1618,9 +1633,13 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
                   <div style={{marginBottom:"16px",padding:"14px 16px",borderRadius:"10px",border:"1px solid var(--border)"}}>
                     <div style={{fontSize:"11px",fontWeight:"600",color:"var(--muted)",textTransform:"uppercase",letterSpacing:".05em",marginBottom:"8px"}}>Situación fiscal en ARCA</div>
                     <div style={{display:"flex",gap:"16px",flexWrap:"wrap",fontSize:"13px",marginBottom:"8px"}}>
-                      <span>Categoría <strong>{arca.situacion.categoria||"—"}</strong></span>
+                      <span>Categoría en ARCA <strong>{arca.situacion.categoria_arca||"—"}</strong></span>
+                      {arca.situacion.categoria_arca&&arca.situacion.categoria&&arca.situacion.categoria_arca!==String(arca.situacion.categoria).toUpperCase()&&(
+                        <span style={{color:"var(--red)",fontWeight:"600"}}>⚠ En el sistema figura {arca.situacion.categoria}</span>
+                      )}
                       {arca.situacion.estado&&<span>Estado <strong style={{color:/^activ/i.test(arca.situacion.estado)?"var(--green)":"var(--red)"}}>{arca.situacion.estado}</strong></span>}
                       {arca.situacion.actualizada_at&&<span style={{color:"var(--muted)"}}>Consultado {tiempoRelativo(arca.situacion.actualizada_at)}</span>}
+                      <button className="table-action" style={{fontSize:"11px"}} onClick={descargarConstanciaPdf}>⬇ Constancia (PDF)</button>
                     </div>
                     {Array.isArray(arca.situacion.ultimos_comprobantes)&&(arca.situacion.ultimos_comprobantes.length===0 ? (
                       <div style={{fontSize:"12px",color:"var(--muted)"}}>Sin comprobantes emitidos en el período de recategorización.</div>
@@ -2823,6 +2842,25 @@ function ViewConfig({ topes, onRefresh }) {
 
   function setVal(k,v){ setCfg(prev=>({...prev,[k]:v})); }
 
+  // Botón "Emitir factura" del portal (columna del estudio, no de configuración).
+  const [factElec, setFactElec] = useState(null);
+  const [factElecMsg, setFactElecMsg] = useState("");
+  useEffect(()=>{
+    apiFetch(`${BACKEND_URL}/estudios/me`).then(r=>r.json())
+      .then(d=>setFactElec(!!d.facturacion_electronica_habilitada)).catch(()=>setFactElec(false));
+  },[]);
+  async function guardarFactElec(valor) {
+    const anterior = factElec;
+    setFactElec(valor); setFactElecMsg("");
+    try {
+      const r = await apiFetch(`${BACKEND_URL}/estudios/me`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({facturacion_electronica_habilitada:valor})});
+      if (!r.ok) throw new Error(`Error ${r.status}`);
+      setFactElecMsg("✓ Guardado.");
+    } catch(e) {
+      setFactElec(anterior); setFactElecMsg("No se pudo guardar: "+e.message);
+    }
+  }
+
   async function guardar(claves, sKey) {
     setGKey(sKey);
     const payload={};
@@ -3010,6 +3048,13 @@ function ViewConfig({ topes, onRefresh }) {
             <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"4px"}}>Se muestra en el portal de los clientes en Convenio. Actualizalo según el calendario de la Comisión Arbitral.</div>
           </div>
           <SaveRow claves={["nombre_estudio","whatsapp_estudio","email_estudio","cm05_vencimiento"]} sKey="estudio"/>
+          <div className="form-group" style={{marginTop:"20px",paddingTop:"16px",borderTop:"1px solid var(--border)"}}>
+            <label style={{display:"flex",alignItems:"center",gap:"8px",fontSize:"13px",fontWeight:"600",cursor:"pointer"}}>
+              <input type="checkbox" checked={!!factElec} disabled={factElec===null} onChange={e=>guardarFactElec(e.target.checked)}/>
+              Mostrar el botón "Emitir factura" en el portal de los clientes
+            </label>
+            <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"4px"}}>Lleva al ingreso de ARCA para emitir desde "Comprobantes en línea" con la clave fiscal del cliente.{factElecMsg?` ${factElecMsg}`:""}</div>
+          </div>
         </div>
       )}
 

@@ -293,6 +293,31 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 /* ── WA FAB ── */
 .wa-fab { position:fixed; bottom:24px; right:22px; width:56px; height:56px; background:#25D366; border-radius:50%; display:flex; align-items:center; justify-content:center; text-decoration:none; box-shadow:0 4px 18px rgba(37,211,102,.4); z-index:400; }
 
+/* ── FASE 2: situación fiscal, deuda por organismo, bóveda ── */
+.btn-sec { display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:8px 14px; background:#fff; color:var(--blue); border:1.5px solid var(--border); border-radius:9px; font-family:inherit; font-size:12px; font-weight:600; text-decoration:none; cursor:pointer; transition:border-color .15s; }
+.btn-sec:hover { border-color:var(--green); }
+.btn-sec:disabled { opacity:.55; cursor:default; }
+.nota-chica { font-size:11px; color:var(--muted); margin-top:6px; line-height:1.4; }
+.situacion-top { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:14px; flex-wrap:wrap; }
+.situacion-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
+.situacion-val { font-size:22px; font-weight:300; font-family:'DM Mono',monospace; color:var(--blue); }
+.estado-pill { display:inline-block; font-size:12px; font-weight:600; padding:3px 10px; border-radius:12px; margin-top:4px; }
+.deuda-items { display:flex; flex-direction:column; gap:7px; margin-top:12px; }
+.deuda-item { display:flex; gap:10px; align-items:flex-start; padding:8px 10px; border-radius:9px; background:var(--light); border:1px solid var(--border); }
+.org-badge { font-size:10px; font-weight:700; padding:2px 7px; border-radius:5px; flex-shrink:0; margin-top:2px; }
+.org-ARCA { background:#E8F0FE; color:#1a56db; }
+.org-ART { background:#FFF3CD; color:#856404; }
+.org-otro { background:var(--border); color:var(--muted); }
+.deuda-item-info { flex:1; min-width:0; }
+.deuda-item-monto { font-family:'DM Mono',monospace; font-weight:600; font-size:13px; }
+.deuda-item-desc { font-size:11px; color:var(--muted); margin-top:2px; line-height:1.35; }
+.doc-badge { font-size:10px; font-weight:600; padding:1px 6px; border-radius:5px; margin-left:6px; vertical-align:1px; }
+.tb-constancia { background:#E8F0FE; color:#1a56db; }
+.tb-comprobante { background:#2BAF8218; color:#1E8A66; }
+.tb-plan_pago { background:#FFF3CD; color:#856404; }
+.tb-otro { background:var(--border); color:var(--muted); }
+@media (max-width:600px) { .situacion-grid { grid-template-columns:1fr 1fr; } }
+
 /* ── RESPONSIVE ── */
 @media (max-width:900px) {
   .grid-top, .grid-mid, .grid-bot { grid-template-columns:1fr; }
@@ -461,7 +486,28 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
             <div class="legend-item"><div class="legend-dot" style="background:#E8A020;border-radius:0;height:2px;width:16px"></div>Referencia mensual</div>
           </div>
           <div class="proj-warning" id="proj-warning"></div>
+          <div id="factura-wrap" style="display:none;margin-top:12px">
+            <a class="btn-sec" href="https://auth.afip.gob.ar/contribuyente_/login.xhtml" target="_blank" rel="noreferrer">🧾 Emitir factura ↗</a>
+            <div class="nota-chica">Ingresá con tu clave fiscal para emitir tu factura desde ARCA (servicio “Comprobantes en línea”). Después podés subirla a tu bóveda.</div>
+          </div>
         </div>
+      </div>
+
+      <!-- SITUACIÓN FISCAL EN ARCA -->
+      <div class="card" style="margin-bottom:20px">
+        <div class="situacion-top">
+          <div>
+            <div class="card-label" style="margin-bottom:3px">Situación fiscal en ARCA</div>
+            <div style="font-size:12px;color:var(--muted)" id="situacion-fecha">—</div>
+          </div>
+          <button class="btn-sec" id="btn-verificar-arca" onclick="verificarArca()">↻ Actualizar desde ARCA</button>
+        </div>
+        <div class="situacion-grid">
+          <div><div class="salud-label">Categoría en ARCA</div><div class="situacion-val" id="situacion-cat">—</div></div>
+          <div><div class="salud-label">Estado</div><div id="situacion-estado">—</div></div>
+          <div><div class="salud-label">Categoría registrada</div><div class="situacion-val" id="situacion-cat-sis">—</div></div>
+        </div>
+        <div class="proj-warning alerta-yellow" id="situacion-aviso" style="display:none"></div>
       </div>
 
       <!-- ROW 2 -->
@@ -472,6 +518,10 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
           <div class="stat-sub" id="stat-cuota-sub">—</div>
           <div class="stat-badge sbadge-up" id="stat-cuota-badge">✓ Al día</div>
           <button class="btn-ya-pague" id="main-ya-pague-btn" style="display:none;margin-top:12px" onclick="marcarPagado()">✓ Ya pagué</button>
+          <div style="margin-top:12px">
+            <a class="btn-sec" href="https://auth.afip.gob.ar/contribuyente_/login.xhtml" target="_blank" rel="noreferrer">Generar VEP en ARCA ↗</a>
+            <div class="nota-chica">Entrá con tu clave fiscal, andá a CCMA y generá el VEP del mes.</div>
+          </div>
         </div>
         <div class="card">
           <div class="card-label">Total facturado</div>
@@ -480,10 +530,12 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
           <div class="stat-badge sbadge-up" id="stat-prom-badge">—</div>
         </div>
         <div class="card">
-          <div class="card-label" id="deuda-label">Deuda estimada</div>
+          <div class="card-label" id="deuda-label">Deuda</div>
           <div class="stat-val" id="stat-deuda" style="color:var(--green)">$0</div>
           <div class="stat-sub" id="stat-deuda-sub">Sin deuda registrada</div>
           <div class="stat-badge sbadge-up" id="stat-deuda-badge">✓ Sin deuda</div>
+          <div class="deuda-items" id="deuda-items"></div>
+          <div class="nota-chica" id="deuda-aviso" style="display:none">Para ver tu deuda actualizada automáticamente, pedile a tu contadora que configure tu acceso.</div>
           <a class="btn-contactar" id="wa-deuda" href="#" target="_blank" rel="noreferrer" style="display:none;margin-top:10px">💬 Contactar a tu contador</a>
         </div>
       </div>
@@ -502,6 +554,9 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
           <div class="boveda-list" id="boveda-list">
             <div style="color:var(--muted);font-size:13px">Cargando...</div>
           </div>
+          <input type="file" id="subir-input" accept="application/pdf,image/jpeg,image/png" style="display:none" onchange="subirComprobante(this)">
+          <button class="btn-sec" id="btn-subir" style="margin-top:10px" onclick="document.getElementById('subir-input').click()">＋ Subir comprobante</button>
+          <div class="nota-chica" id="subir-msg"></div>
 
           <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:14px">
             <div class="card-label">Salud del negocio</div>
@@ -858,17 +913,9 @@ function renderPortal() {
     warnEl.innerHTML=`<span style="color:var(--green);font-weight:600">✓ Dentro del límite de la categoría</span> — Podés facturar hasta ${$$(restante)} este período sin recategorizarte`;
   } else { warnEl.innerHTML=""; }
 
-  // Deuda calculada (historial_cuotas no pagadas + deuda_manual)
+  // Deuda por organismo: ARCA y ART (automáticas con clave fiscal) + la que carga el contador
+  renderDeudas();
   const deudaMonto = DATOS.deuda_total || 0;
-  const deudaEl = document.getElementById("stat-deuda");
-  deudaEl.textContent = $$(deudaMonto);
-  deudaEl.style.color = deudaMonto > 0 ? "var(--red)" : "var(--green)";
-  const deudaSubEl = document.getElementById("stat-deuda-sub");
-  if (deudaMonto > 0 && DATOS.deuda_desc) {
-    deudaSubEl.textContent = DATOS.deuda_desc;
-  } else {
-    deudaSubEl.textContent = deudaMonto > 0 ? "Pendiente de regularización" : "Sin deuda registrada";
-  }
   const deudaBadge = document.getElementById("stat-deuda-badge");
   const waDeudaBtn = document.getElementById("wa-deuda");
   if (deudaMonto > 0) {
@@ -924,9 +971,10 @@ function renderPortal() {
 
   // Convenio Multilateral
   renderConvenio();
-  if (DATOS.arca_auto && CLIENTE.deuda_actualizada_at) {
-    document.getElementById("deuda-label").textContent = "Deuda según ARCA";
-  }
+
+  // Situación fiscal en ARCA y facturación electrónica
+  renderSituacion();
+  document.getElementById("factura-wrap").style.display = DATOS.facturacion_electronica ? "block" : "none";
 
   // Novedades
   renderNovedades(novedades);
@@ -989,6 +1037,76 @@ function renderConvenio() {
       <span><strong>${escHtml(j.jurisdiccion)}</strong>${j.es_sede ? ' <span style="font-size:10px;background:var(--navy,#1B2D4F);color:#fff;border-radius:4px;padding:1px 6px">Sede</span>' : ""}</span>
       <span style="color:var(--muted);white-space:nowrap">Alícuota ${j.alicuota === null || j.alicuota === undefined ? "—" : num(j.alicuota, 2) + " %"} · Coef. ${num(j.coeficiente, 4)}</span>
     </div>`).join("");
+}
+
+// ── DEUDA POR ORGANISMO ────────────────────────────────────────────────────────
+function renderDeudas() {
+  const deudas = DATOS.deudas || [];
+  const total = DATOS.deuda_total || 0;
+  const el = document.getElementById("stat-deuda");
+  el.textContent = $$(total);
+  el.style.color = total > 0 ? "var(--red)" : "var(--green)";
+  const conDeuda = deudas.filter(x => x.monto > 0).length;
+  document.getElementById("stat-deuda-sub").textContent = total > 0
+    ? `${conDeuda} ${conDeuda === 1 ? "organismo" : "organismos"} con deuda`
+    : (DATOS.deuda_automatica ? "Sin deuda en ARCA ni en ART" : "Sin deuda registrada");
+  document.getElementById("deuda-items").innerHTML = deudas.map(x => {
+    const org = x.organismo === "ARCA" || x.organismo === "ART" ? x.organismo : "otro";
+    const fecha = x.fecha ? ` · al ${fmtFecha(String(x.fecha).slice(0, 10))}` : "";
+    return `<div class="deuda-item">
+      <span class="org-badge org-${org}">${escHtml(x.organismo)}</span>
+      <div class="deuda-item-info">
+        <div class="deuda-item-monto" style="color:${x.monto > 0 ? "var(--red)" : "var(--green)"}">${x.monto > 0 ? $$(x.monto) : "Al día ✓"}</div>
+        <div class="deuda-item-desc">${escHtml(x.descripcion)}${fecha}${x.estimado ? " · estimado" : ""}</div>
+      </div>
+    </div>`;
+  }).join("");
+  document.getElementById("deuda-aviso").style.display = DATOS.deuda_automatica ? "none" : "block";
+}
+
+// ── SITUACIÓN FISCAL EN ARCA ───────────────────────────────────────────────────
+function renderSituacion() {
+  const s = DATOS.situacion_arca || {};
+  const catSis = (CLIENTE.categoria || "").toUpperCase();
+  document.getElementById("situacion-cat").textContent = s.categoria_arca ? `Cat. ${s.categoria_arca}` : "—";
+  document.getElementById("situacion-cat-sis").textContent = catSis ? `Cat. ${catSis}` : "—";
+  const est = (s.estado_arca || "").toUpperCase();
+  const [txt, bg, col] = !est ? ["Sin verificar", "var(--light)", "var(--muted)"]
+    : /SUSP/.test(est) ? ["Suspendido", "#E8A02018", "var(--yellow)"]
+    : /INACTIV|BAJA/.test(est) ? ["Inactivo", "#E0454514", "var(--red)"]
+    : /ACTIV/.test(est) ? ["Activo", "#2BAF8218", "var(--green)"]
+    : [est.charAt(0) + est.slice(1).toLowerCase(), "var(--light)", "var(--text)"];
+  document.getElementById("situacion-estado").innerHTML =
+    `<span class="estado-pill" style="background:${bg};color:${col}" title="${escHtml(est)}">${escHtml(txt)}</span>`;
+  document.getElementById("situacion-fecha").textContent = s.ultima_verificacion_arca
+    ? `Verificado el ${new Date(s.ultima_verificacion_arca).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" })}`
+    : "Todavía no se verificó en ARCA";
+  const aviso = document.getElementById("situacion-aviso");
+  if (s.difiere) {
+    aviso.style.display = "block";
+    aviso.innerHTML = `<span style="color:var(--yellow);font-weight:600">⚠ Tu categoría en ARCA (${escHtml(s.categoria_arca)}) es distinta a la registrada (${escHtml(catSis)}).</span> Contactá a tu contadora.`;
+  } else {
+    aviso.style.display = "none";
+  }
+}
+
+async function verificarArca() {
+  const btn = document.getElementById("btn-verificar-arca");
+  btn.disabled = true; btn.textContent = "Consultando ARCA…";
+  try {
+    const r = await fetch(`${API}/portal/${SESSION.slug}/verificar-arca`, { method: "POST", headers: authHeaders() });
+    if (r.status === 401) { sesionVencida(); return; }
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || `Error ${r.status}`);
+    DATOS.situacion_arca = { categoria_arca: d.categoria_arca, estado_arca: d.estado_arca, ultima_verificacion_arca: d.ultima_verificacion_arca, difiere: d.difiere };
+    renderSituacion();
+    ALERTAS_GENERADAS = generarAlertas(DATOS.pct, DATOS.total_fac, DATOS.tope, CLIENTE, DATOS.planes);
+    renderAlertas();
+    renderBellBadge();
+  } catch (e) {
+    document.getElementById("situacion-fecha").textContent = e.message;
+  }
+  btn.disabled = false; btn.textContent = "↻ Actualizar desde ARCA";
 }
 
 // ── YA PAGUÉ ───────────────────────────────────────────────────────────────────
@@ -1133,6 +1251,25 @@ function generarAlertas(pct, totalFac, tope, cli, planes) {
       desc:`Última recategorización: ${_fR}${_catR}.`, fecha:"Hecho" });
   }
 
+  const _sit = DATOS && DATOS.situacion_arca;
+  if (_sit && _sit.difiere) {
+    al.push({ tipo:"rojo", ico:"🏛️", titulo:"Tu categoría en ARCA cambió — contactá a tu contadora",
+      desc:`ARCA informa Cat. ${escHtml(_sit.categoria_arca)} y en el sistema figura Cat. ${escHtml((cli.categoria||"").toUpperCase())}.`, fecha:"Hoy" });
+  }
+
+  // Convenio Multilateral: CM03 (mensual) y CM05 (anual) cuando faltan 5 días o menos.
+  if (DATOS && (DATOS.jurisdicciones || []).length) {
+    const hoy0 = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
+    [["CM03", "mensual", proximoCm03(hoy)], ["CM05", "anual", proximoCm05(DATOS.cm05_vencimiento, hoy)]].forEach(([f, per, d]) => {
+      if (!d) return;
+      const dias = Math.round((d - hoy0) / 86400000);
+      if (dias >= 0 && dias <= 5) {
+        al.push({ tipo:"amarillo", ico:"🗂️", titulo:`${f} vence ${dias === 0 ? "hoy" : `en ${dias} días`}`,
+          desc:`Declaración jurada ${per} de Convenio Multilateral · ${fechaCorta(d)}.`, fecha:`${dias}d` });
+      }
+    });
+  }
+
   (planes||[]).filter(p=>p.estado==="activo"&&p.proximo_venc).forEach(p => {
     const dias = Math.ceil((new Date(p.proximo_venc+"T12:00:00") - hoy) / 86400000);
     if (dias >= 0 && dias <= 7) {
@@ -1205,40 +1342,103 @@ function closeDrawer() {
 }
 
 // ── BÓVEDA ─────────────────────────────────────────────────────────────────────
+// Constancia (al momento, desde ARCA) + documentos del contador + los que sube el cliente + PDFs de
+// planes de pago. Ordenados por tipo y, dentro de cada tipo, del más reciente al más viejo.
+const TIPO_DOC = {
+  constancia: ["Constancia", "tb-constancia", 0], comprobante: ["Comprobante", "tb-comprobante", 1],
+  vep: ["Comprobante", "tb-comprobante", 1], plan_pago: ["Plan de pago", "tb-plan_pago", 2],
+};
+const tipoDoc = (t) => TIPO_DOC[String(t || "").toLowerCase()] || ["Otro", "tb-otro", 3];
+
 function renderBoveda(docs) {
   const el = document.getElementById("boveda-list");
-  const cuit = CLIENTE.cuit || SESSION.cuit || "";
-  let html = `<div class="doc-item" id="doc-constancia-item">
+  const planesPdf = (DATOS.planes || []).filter(p => p.url_pdf).map(p => ({
+    tipo: "plan_pago", nombre: `Plan ${p.numero_plan || p.organismo || ""}`, fecha: p.fecha_consolidacion, url: p.url_pdf, generado_auto: true,
+  }));
+  const fechaDe = (d) => String(d.fecha || d.created_at || "");
+  const lista = [...(docs || []), ...planesPdf].sort((a, b) =>
+    tipoDoc(a.tipo)[2] - tipoDoc(b.tipo)[2] || fechaDe(b).localeCompare(fechaDe(a)));
+
+  let html = `<div class="doc-item">
     <div class="doc-icon">🏛️</div>
-    <div class="doc-info"><div class="doc-name">Constancia de inscripción</div><div class="doc-date">ARCA · Monotributo</div></div>
-    <button class="doc-dl-btn" id="btn-constancia" onclick="descargarConstancia('${cuit}')">⬇ Descargar</button>
+    <div class="doc-info">
+      <div class="doc-name">Constancia de inscripción<span class="doc-badge tb-constancia">Constancia</span></div>
+      <div class="doc-date">Al día de hoy, desde ARCA · <a href="#" onclick="verConstanciaOficial(event)" style="color:var(--muted)">ver la oficial</a></div>
+    </div>
+    <button class="doc-dl-btn" id="btn-constancia" onclick="descargarConstancia()">⬇ PDF</button>
   </div>`;
-  const iconos = { pdf:"📄", imagen:"🖼️", excel:"📊", word:"📝" };
-  (docs||[]).forEach(d => {
-    const t = (d.tipo||"").toLowerCase();
-    const ico = Object.entries(iconos).find(([k])=>t.includes(k))?.[1] || "📎";
-    html += `<${d.url?`a href="${d.url}" target="_blank" rel="noreferrer"`:"div"} class="doc-item">
-      <div class="doc-icon" style="background:#2BAF8215">${ico}</div>
-      <div class="doc-info"><div class="doc-name">${d.nombre||"—"}</div><div class="doc-date">${d.fecha?fmtFecha(d.fecha):""}</div></div>
-      ${d.url?'<div class="doc-action">↓ Bajar</div>':""}
-    </${d.url?"a":"div"}>`;
+  lista.forEach(d => {
+    const [etq, cls] = tipoDoc(d.tipo);
+    const origen = d.subido_por_cliente ? "Subido por vos" : d.generado_auto ? "Automático" : "";
+    const fecha = fechaDe(d) ? fmtFecha(fechaDe(d).slice(0, 10)) : "";
+    const url = d.url ? escHtml(d.url) : "";
+    html += `<${url ? `a href="${url}" target="_blank" rel="noreferrer"` : "div"} class="doc-item">
+      <div class="doc-icon" style="background:#2BAF8215">${d.tipo === "plan_pago" ? "📋" : d.tipo === "constancia" ? "🏛️" : "📄"}</div>
+      <div class="doc-info">
+        <div class="doc-name">${escHtml(d.nombre || "—")}<span class="doc-badge ${cls}">${etq}</span></div>
+        <div class="doc-date">${[fecha, origen].filter(Boolean).join(" · ")}</div>
+      </div>
+      ${url ? '<div class="doc-action">↓ Bajar</div>' : ""}
+    </${url ? "a" : "div"}>`;
   });
-  if (!docs || docs.length === 0) {
-    html += `<div style="color:var(--muted);font-size:13px;padding:8px 0">No hay documentos cargados todavía</div>`;
-  }
+  if (!lista.length) html += `<div style="color:var(--muted);font-size:13px;padding:8px 0">Todavía no hay otros documentos</div>`;
   el.innerHTML = html;
 }
 
-async function descargarConstancia(cuit) {
-  const cuitFmt = cuit.replace(/(\d{2})(\d{8})(\d)/, '$1-$2-$3');
-  try { await navigator.clipboard.writeText(cuitFmt); } catch(_) {}
-  window.open('https://seti.afip.gob.ar/padron-puc-constancia-internet/ConsultaConstanciaAction.do', '_blank', 'noreferrer');
+// PDF con los datos de la constancia que informa ARCA, consultados con el certificado del estudio
+// (no hace falta la clave fiscal del cliente).
+async function descargarConstancia() {
   const btn = document.getElementById("btn-constancia");
-  if (btn) {
-    const orig = btn.textContent;
-    btn.textContent = `CUIT copiado: ${cuitFmt} ✓`;
-    setTimeout(() => { btn.textContent = orig; }, 3000);
+  const msg = document.getElementById("subir-msg");
+  btn.disabled = true; btn.textContent = "Consultando ARCA…";
+  try {
+    const r = await fetch(`${API}/portal/${SESSION.slug}/constancia`, { headers: authHeaders() });
+    if (r.status === 401) { sesionVencida(); return; }
+    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || `Error ${r.status}`); }
+    const url = URL.createObjectURL(await r.blob());
+    const a = document.createElement("a");
+    a.href = url; a.download = `constancia-inscripcion-${(CLIENTE.cuit || SESSION.cuit || "").replace(/\D/g, "")}.pdf`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    msg.textContent = "";
+  } catch (e) {
+    msg.textContent = "No se pudo bajar la constancia: " + e.message;
   }
+  btn.disabled = false; btn.textContent = "⬇ PDF";
+}
+
+// La constancia oficial se pide en la web pública de ARCA: se copia el CUIT para pegarlo.
+async function verConstanciaOficial(ev) {
+  ev.preventDefault();
+  const cuitFmt = (CLIENTE.cuit || SESSION.cuit || "").replace(/(\d{2})(\d{8})(\d)/, "$1-$2-$3");
+  try { await navigator.clipboard.writeText(cuitFmt); } catch (_) {}
+  window.open("https://seti.afip.gob.ar/padron-puc-constancia-internet/ConsultaConstanciaAction.do", "_blank", "noreferrer");
+  document.getElementById("subir-msg").textContent = `CUIT copiado (${cuitFmt}): pegalo en la página de ARCA.`;
+}
+
+async function subirComprobante(input) {
+  const f = input.files && input.files[0];
+  input.value = "";
+  if (!f) return;
+  const msg = document.getElementById("subir-msg");
+  if (f.size > 4 * 1024 * 1024) { msg.textContent = "El archivo supera los 4 MB."; return; }
+  const btn = document.getElementById("btn-subir");
+  btn.disabled = true; btn.textContent = "Subiendo…";
+  const fd = new FormData();
+  fd.append("archivo", f);
+  fd.append("nombre", f.name);
+  try {
+    const r = await fetch(`${API}/portal/${SESSION.slug}/documentos`, { method: "POST", headers: authHeaders(), body: fd });
+    if (r.status === 401) { sesionVencida(); return; }
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || `Error ${r.status}`);
+    DATOS.documentos = [d.documento, ...(DATOS.documentos || [])];
+    renderBoveda(DATOS.documentos);
+    msg.textContent = "✓ Guardado en tu bóveda. Tu contadora también lo ve.";
+  } catch (e) {
+    msg.textContent = "No se pudo subir: " + e.message;
+  }
+  btn.disabled = false; btn.textContent = "＋ Subir comprobante";
 }
 
 // ── PLANES ─────────────────────────────────────────────────────────────────────

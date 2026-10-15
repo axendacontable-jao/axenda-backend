@@ -557,10 +557,19 @@ export async function ingresarArt(page: Page, cuit: string): Promise<Page> {
   const pestanas = () => page.context().pages().filter((p) => !p.isClosed() && /rionegro\.gov\.ar/i.test(p.url())).reverse()
   let ingresado = false
   let avisos = 0
+  let sinDfe = 0
   const limite = Date.now() + 120_000
   while (Date.now() < limite) {
     let accion = false
     for (const p of pestanas()) {
+      // Sin Domicilio Fiscal Electrónico, ART limita el menú a ese trámite: no hay cuenta corriente.
+      // Registrarlo es un trámite del contribuyente; el robot no lo hace.
+      if (ingresado && /constituci[oó]n obligatoria del domicilio fiscal electr/i.test(await textoVisible(p))
+        && !(await p.locator("a").filter({ hasText: /cuenta corriente/i }).count().catch(() => 0)) && ++sinDfe >= 3) {
+        throw new FalloArca("error", "ART limita el acceso de este CUIT porque no tiene registrado el Domicilio Fiscal " +
+          "Electrónico ni un celular (en ART: menú DOMICILIO FISCAL ELECTRÓNICO). Es un trámite del contribuyente y el robot " +
+          "no lo hace. Mientras tanto, la deuda de ART se estima.")
+      }
       try {
         if (avisos < 5 && (await cerrarAvisoNotificaciones(p))) {
           avisos++

@@ -2,7 +2,8 @@ import {
   HttpError, ahoraIsoZ, clientePorSlug, db, esFechaIso, getEstudioId, hoy, hoyIso, isoDate,
   logActividad, pyStr, q, sumarMeses, fechaValida,
 } from "./core.mts"
-import { buscarEnConstancia, buscarEnPadron, certPem, cuitContador, keyPem, serviciosCacheados } from "./arca.mts"
+import { buscarEnConstancia, buscarEnPadron, certPem, constanciaCompleta, cuitContador, keyPem, serviciosCacheados } from "./arca.mts"
+import { pdfConstancia } from "./constancia-pdf.mts"
 import { cifrarClave, exigirSesionPortal, firmarTokenPortal } from "./secretos.mts"
 import { TAREAS, despacharSincronizacion, finPeriodoProximaRecategorizacion } from "./sincronizacion.mts"
 import { getStore } from "@netlify/blobs"
@@ -140,7 +141,7 @@ const estudiosMe: Handler = async ({ req }) => {
 
 const actualizarEstudio: Handler = async ({ req }) => {
   const estudioId = await getEstudioId(req)
-  const update = elegir(await body(req), ["nombre", "onboarding_completo"])
+  const update = elegir(await body(req), ["nombre", "onboarding_completo", "facturacion_electronica_habilitada"])
   if (!Object.keys(update).length) throw new HttpError(400, "Sin campos válidos")
   await q(db().from("estudios").update(update).eq("id", estudioId))
   return { ok: true }
@@ -219,7 +220,8 @@ const componenteProvincial: Handler = async ({ p, query }) => {
 
 // ── ARCA ─────────────────────────────────────────────────────────────────────
 
-const constancia: Handler = async ({ p }) => {
+const constancia: Handler = async ({ req, p }) => {
+  await getEstudioId(req)
   const cuit = soloDigitos(p.cuit)
   if (cuit.length !== 11) throw new HttpError(400, "CUIT inválido")
   try {
@@ -239,7 +241,8 @@ const constancia: Handler = async ({ p }) => {
   }
 }
 
-const padron: Handler = async ({ p }) => {
+const padron: Handler = async ({ req, p }) => {
+  await getEstudioId(req)
   const cuit = soloDigitos(p.cuit)
   if (cuit.length !== 11) throw new HttpError(400, "CUIT invalido: debe tener 11 digitos")
   try {
@@ -513,6 +516,108 @@ const portalMarcarPago: Handler = async ({ req, p }) => {
   return { ok: true, estado_cuota: "al_dia" }
 }
 
+// Períodos vencidos con saldo de un detalle de deuda (CCMA o ART), como "09/2026".
+function periodosVencidos(detalle: unknown, hoyStr: string): string[] {
+  if (!Array.isArray(detalle)) return []
+  return detalle
+    .filter((p: any) => p?.periodo && (p.a_vencer === undefined ? !(p.vencimiento && p.vencimiento >= hoyStr) : !p.a_vencer))
+    .map((p: any) => `${String(p.periodo).slice(5, 7)}/${String(p.periodo).slice(0, 4)}`)
+}
+
+const listaCorta = (xs: string[]) => (xs.length <= 4 ? xs.join(", ") : `${xs.slice(0, 3).join(", ")} y ${xs.length - 3} más`)
+
+type DeudaPortal = { organismo: string; monto: number; descripcion: string; fecha: string | null; fuente: string; estimado?: boolean }
+
+function deudasPortal(cliente: any, arcaAuto: boolean, historial: any[], manuales: any[], hoyStr: string): DeudaPortal[] {
+  const deudas: DeudaPortal[] = []
+  let arcaLeida = false
+  let artReal = false
+  if (arcaAuto && cliente.deuda_actualizada_at) {
+    arcaLeida = true
+    const ps = periodosVencidos(cliente.deuda_detalle, hoyStr)
+    deudas.push({
+      organismo: "ARCA", monto: Number(cliente.deuda_monto) || 0, fecha: cliente.deuda_actualizada_at, fuente: "arca",
+      descripcion: ps.length ? `Monotributo: ${ps.length} ${ps.length === 1 ? "período" : "períodos"} con deuda (${listaCorta(ps)}), con intereses` : "Monotributo al día",
+    })
+    const art = deudaArtDe(cliente, historial)
+    artReal = art.real
+    if (art.real) {
+      const pa = periodosVencidos(cliente.art_deuda_detalle, hoyStr)
+      deudas.push({
+        organismo: "ART", monto: art.monto, fecha: art.actualizada_at, fuente: "art",
+        descripcion: pa.length ? `Ingresos Brutos Río Negro: ${pa.length} ${pa.length === 1 ? "anticipo" : "anticipos"} con deuda (${listaCorta(pa)}), con intereses` : "Ingresos Brutos Río Negro al día",
+      })
+    } else if (art.monto > 0) {
+      deudas.push({
+        organismo: "ART", monto: art.monto, fecha: cliente.deuda_actualizada_at, fuente: "art", estimado: true,
+        descripcion: "Ingresos Brutos Río Negro (estimado: no figura en ARCA)",
+      })
+    }
+  }
+  // La deuda manual de ARCA o ART no se suma cuando ese organismo ya viene leído de forma automática.
+  for (const x of manuales) {
+    if ((x.organismo === "ARCA" && arcaLeida) || (x.organismo === "ART" && artReal)) continue
+    deudas.push({
+      organismo: x.organismo || "Otro", monto: Number(x.monto) || 0, fecha: x.created_at ?? null, fuente: "manual",
+      descripcion: x.descripcion || "Deuda registrada por tu contador",
+    })
+  }
+  return deudas
+}
+
+const situacionDe = (c: any) => ({
+  categoria_arca: c.categoria_arca ?? null, estado_arca: c.estado_arca ?? null,
+  ultima_verificacion_arca: c.ultima_verificacion_arca ?? null,
+  difiere: !!c.categoria_arca && !!c.categoria && String(c.categoria_arca).toUpperCase() !== String(c.categoria).toUpperCase(),
+})
+
+// Categoría y estado según ARCA (constancia A5; si no responde, el estado del padrón A13). La categoría
+// de ARCA se guarda aparte de la del sistema: si no coinciden, queda una alerta para el contador.
+async function verificarSituacionArca(cliente: any) {
+  let categoria: string | null = null
+  let estado: string | null = null
+  try {
+    const datos = await buscarEnConstancia(cliente.cuit)
+    categoria = /^[A-K]$/.test(datos.categoria) ? datos.categoria : null
+    estado = datos.estado || null
+  } catch {
+    estado = (await buscarEnPadron(cliente.cuit)).estado || null
+  }
+  const cambios: Record<string, unknown> = { estado_arca: estado, ultima_verificacion_arca: ahoraIsoZ() }
+  if (categoria) cambios.categoria_arca = categoria
+  await q(db().from("clientes").update(cambios).eq("id", cliente.id))
+  const actual = { ...cliente, ...cambios }
+  const situacion = situacionDe(actual)
+  if (situacion.difiere) {
+    const titulo = `Categoría en ARCA: ${actual.categoria_arca} (en el sistema: ${String(cliente.categoria).toUpperCase()})`
+    const ya = await q(db().from("alertas").select("id").eq("cliente_id", cliente.id).eq("titulo", titulo).eq("leida", false))
+    if (!ya?.length) {
+      await q(db().from("alertas").insert({
+        cliente_id: cliente.id, estudio_id: cliente.estudio_id, tipo: "arca", icono: "⚠️", leida: false, titulo,
+        descripcion: "La categoría que informa ARCA no coincide con la cargada en el sistema. Revisá si hubo una recategorización.",
+      })).catch(() => {})
+    }
+  }
+  return situacion
+}
+
+async function respuestaConstancia(cuit: string) {
+  let datos
+  try {
+    datos = await constanciaCompleta(cuit)
+  } catch (e: any) {
+    throw new HttpError(503, `ARCA no devolvió la constancia en este momento: ${e?.message ?? e}`)
+  }
+  const pdf = await pdfConstancia(datos, new Date())
+  return new Response(pdf, {
+    headers: {
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename="constancia-inscripcion-${cuit}.pdf"`,
+      "Cache-Control": "no-store",
+    },
+  })
+}
+
 const desdeHace12 = (anio: number, mes: number, ref: { y: number; m: number }) =>
   anio > ref.y - 1 || (anio === ref.y - 1 && mes >= ref.m)
 
@@ -555,62 +660,29 @@ const datosPortal: Handler = async ({ req, p }) => {
 
   const t = hoy()
   let pagadosDb: Set<string> | null = null
-  let deudaTotal = 0, deudaDesc: string | null = null, deudaArt = 0, deudaArca = 0, deudaOtroMan = 0
   let historialFilas: any[] = []
   try {
-    const cat = String(cliente.categoria ?? "").toUpperCase()
-    const cuotaMensual = cliente.cuota || 0
-    const artPorMes = ART_RIO_NEGRO[cat] ?? 0
-
-    // Los meses sin registro en historial_cuotas también cuentan como no pagados (igual que el admin).
-    const historial = (await q(d.from("historial_cuotas").select("*").eq("cliente_id", cliente.id))) ?? []
-    historialFilas = historial
-    pagadosDb = new Set(historial.filter((h: any) => h.pagado).map((h: any) => `${h["año"]}-${h.mes}`))
-    let vencidos = 0, sinVencer = 0
-    for (const [y, m] of ultimosMeses(6)) {
-      if (pagadosDb.has(`${y}-${m}`)) continue
-      const esMesActual = y === t.y && m === t.m
-      if (!esMesActual || t.d > 20) vencidos += 1
-      else sinVencer += 1
-    }
-    const deudaArtHist = vencidos * artPorMes
-    const deudaArcaHist = vencidos * (cuotaMensual - artPorMes) + sinVencer * cuotaMensual
-
-    const deudasMan = (await q(d.from("deuda_manual").select("*").eq("cliente_id", cliente.id).neq("pagado", true))) ?? []
-    const suma = (f: (x: any) => boolean) => deudasMan.filter(f).reduce((a: number, x: any) => a + (x.monto || 0), 0)
-    const deudaArtMan = suma((x) => x.organismo === "ART")
-    const deudaArcaMan = suma((x) => x.organismo === "ARCA")
-    deudaOtroMan = suma((x) => x.organismo !== "ART" && x.organismo !== "ARCA")
-
-    deudaArt = deudaArtHist + deudaArtMan
-    deudaArca = deudaArcaHist + deudaArcaMan
-    deudaTotal = deudaArt + deudaArca + deudaOtroMan
-    const partes: string[] = []
-    if (deudaArt > 0) partes.push(`ART Río Negro: ${pesos(deudaArt)}`)
-    if (deudaArca > 0) partes.push(`ARCA: ${pesos(deudaArca)}`)
-    if (deudaOtroMan > 0) partes.push(`Otros: ${pesos(deudaOtroMan)}`)
-    deudaDesc = partes.length ? partes.join(" · ") : null
+    historialFilas = (await q(d.from("historial_cuotas").select("*").eq("cliente_id", cliente.id))) ?? []
+    pagadosDb = new Set(historialFilas.filter((h: any) => h.pagado).map((h: any) => `${h["año"]}-${h.mes}`))
   } catch {
-    deudaTotal = 0
-    deudaDesc = null
-    deudaArt = 0
-    deudaArca = 0
+    historialFilas = []
   }
 
-  // Con clave fiscal, la deuda de ARCA es la real de la CCMA (cuotas e intereses). ART Río Negro no
-  // figura en la CCMA: es la de su cuenta corriente si el robot ya la leyó, o una estimación.
+  // Deuda por organismo: ARCA (CCMA) y ART Río Negro salen solas cuando hay clave fiscal; a eso se
+  // suma la que carga el contador. Sin clave fiscal solo se muestra la manual.
   const arcaAuto = await tieneClaveFiscal(cliente.id)
-  if (arcaAuto && cliente.deuda_actualizada_at) {
-    deudaArca = Number(cliente.deuda_monto) || 0
-    const art = deudaArtDe(cliente, historialFilas)
-    deudaArt = art.monto
-    deudaTotal = deudaArca + deudaArt + deudaOtroMan
-    const partes = [
-      deudaArca > 0 && `ARCA: ${pesos(deudaArca)}`,
-      deudaArt > 0 && `ART Río Negro${art.real ? "" : " (estimado)"}: ${pesos(deudaArt)}`,
-      deudaOtroMan > 0 && `Otros: ${pesos(deudaOtroMan)}`,
-    ].filter(Boolean)
-    deudaDesc = partes.length ? partes.join(" · ") : null
+  const deudasMan: any[] = (await q(d.from("deuda_manual").select("*").eq("cliente_id", cliente.id).neq("pagado", true)).catch(() => [])) ?? []
+  const deudas = deudasPortal(cliente, arcaAuto, historialFilas, deudasMan, isoDate(t.y, t.m, t.d))
+  const deudaTotal = Math.round(deudas.reduce((s, x) => s + x.monto, 0) * 100) / 100
+  const deudaDesc = deudas.filter((x) => x.monto > 0).map((x) => `${x.organismo}: ${pesos(x.monto)}`).join(" · ") || null
+  const deudaDe = (org: string) => deudas.filter((x) => x.organismo === org).reduce((s, x) => s + x.monto, 0)
+
+  let facturacionElectronica = false
+  try {
+    const est = await q(d.from("estudios").select("facturacion_electronica_habilitada").eq("id", cliente.estudio_id).maybeSingle())
+    facturacionElectronica = !!est?.facturacion_electronica_habilitada
+  } catch {
+    facturacionElectronica = false
   }
 
   const jurisdicciones = cliente.iibb_modalidad === "convenio_multilateral"
@@ -657,13 +729,70 @@ const datosPortal: Handler = async ({ req, p }) => {
     pct, planes: planes ?? [],
     documentos: docs ?? [], alertas: alertas ?? [],
     novedades, whatsapp: cfg.whatsapp_estudio ?? null,
-    deuda_total: deudaTotal, deuda_desc: deudaDesc,
-    deuda_art: deudaArt, deuda_arca: deudaArca,
+    deudas, deuda_total: deudaTotal, deuda_desc: deudaDesc, deuda_automatica: arcaAuto,
+    deuda_art: deudaDe("ART"), deuda_arca: deudaDe("ARCA"),
+    situacion_arca: situacionDe(cliente),
+    facturacion_electronica: facturacionElectronica,
     estado_cuota: estadoCuota,
     ultima_recat: ultimaRecat, recat_pendiente: recatPendiente,
     gastos: gastos12, total_gastos: totalGastos,
     arca_auto: arcaAuto, jurisdicciones, cm05_vencimiento: cfg.cm05_vencimiento ?? null,
   }
+}
+
+// Botón "Actualizar desde ARCA" de la tarjeta de situación fiscal del portal.
+const portalVerificarArca: Handler = async ({ req, p }) => {
+  await exigirSesionPortal(req, p.slug)
+  const cliente = await q(db().from("clientes")
+    .select("id,cuit,categoria,estudio_id,categoria_arca,estado_arca,ultima_verificacion_arca").eq("slug", p.slug).single())
+  // Una consulta por minuto alcanza: evita repetir el pedido a ARCA con cada clic.
+  const ultima = cliente.ultima_verificacion_arca ? Date.parse(cliente.ultima_verificacion_arca) : 0
+  if (Date.now() - ultima < 60_000) return { ok: true, ...situacionDe(cliente) }
+  try {
+    return { ok: true, ...(await verificarSituacionArca(cliente)) }
+  } catch {
+    throw new HttpError(503, "ARCA no responde en este momento. Probá de nuevo en unos minutos.")
+  }
+}
+
+const portalConstancia: Handler = async ({ req, p }) => {
+  await exigirSesionPortal(req, p.slug)
+  const cliente = await q(db().from("clientes").select("cuit").eq("slug", p.slug).single())
+  return respuestaConstancia(cliente.cuit)
+}
+
+const constanciaPdf: Handler = async ({ req, p }) => {
+  const estudioId = await getEstudioId(req)
+  const cliente = await clientePorSlug(p.slug, estudioId, "id,cuit")
+  return respuestaConstancia(cliente.cuit)
+}
+
+// El cliente sube un comprobante a su bóveda (por ejemplo, la factura que emitió en ARCA).
+// Las funciones de Netlify aceptan pedidos de hasta 6 MB: se limita a 4 MB por archivo.
+const TIPOS_SUBIDA: Record<string, string> = { "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" }
+
+const portalSubirDocumento: Handler = async ({ req, p }) => {
+  await exigirSesionPortal(req, p.slug)
+  const cliente = await q(db().from("clientes").select("id,estudio_id").eq("slug", p.slug).single())
+  const form = await formulario(req)
+  const adjunto = form.get("archivo")
+  if (!esArchivo(adjunto) || !adjunto.name) throw new HttpError(422, "Elegí un archivo")
+  const ext = TIPOS_SUBIDA[adjunto.type]
+  if (!ext) throw new HttpError(415, "Solo se aceptan PDF o imágenes (JPG o PNG)")
+  if (adjunto.size > 4 * 1024 * 1024) throw new HttpError(413, "El archivo supera los 4 MB")
+  const nombreForm = form.get("nombre")
+  const nombre = (typeof nombreForm === "string" && nombreForm.trim() ? nombreForm.trim() : adjunto.name).slice(0, 120)
+  const ruta = `${cliente.id}/${randomUUID()}.${ext}`
+  const storage = db().storage.from(BUCKET_DOCS)
+  const { error } = await storage.upload(ruta, await bytes(adjunto), { contentType: adjunto.type })
+  if (error) throw new HttpError(500, `No se pudo subir el archivo: ${error.message}`)
+  const doc = {
+    cliente_id: cliente.id, estudio_id: cliente.estudio_id, tipo: "comprobante", nombre, fecha: hoyIso(),
+    url: storage.getPublicUrl(ruta).data.publicUrl, subido_por_cliente: true,
+  }
+  const filas = await q(db().from("documentos").insert(doc).select())
+  await logActividad(cliente.id, `El cliente subió "${nombre}" a su bóveda`, cliente.estudio_id)
+  return { ok: true, documento: filas?.[0] ?? doc }
 }
 
 async function clientePorCuit(cuit: string, cols: string) {
@@ -1285,7 +1414,7 @@ const estadoArca: Handler = async ({ req, p }) => {
   const estudioId = await getEstudioId(req)
   const cliente = await clientePorSlug(
     p.slug, estudioId,
-    "id,categoria,provincia,iibb_modalidad,estado_arca,situacion_arca_at,ultimos_comprobantes,deuda_monto,deuda_descripcion,deuda_actualizada_at,art_deuda_monto,art_actualizada_at,art_regimen",
+    "id,categoria,provincia,iibb_modalidad,estado_arca,categoria_arca,ultima_verificacion_arca,ultimos_comprobantes,deuda_monto,deuda_descripcion,deuda_actualizada_at,art_deuda_monto,art_actualizada_at,art_regimen",
   )
   const [cred, sincronizaciones, historial] = await Promise.all([
     q(db().from("credenciales_arca").select("actualizada_at").eq("cliente_id", cliente.id).maybeSingle()),
@@ -1304,8 +1433,8 @@ const estadoArca: Handler = async ({ req, p }) => {
       : null,
     art: art.real ? { monto: art.monto, actualizada_at: art.actualizada_at, regimen: cliente.art_regimen } : null,
     situacion: {
-      categoria: cliente.categoria, estado: cliente.estado_arca, actualizada_at: cliente.situacion_arca_at,
-      ultimos_comprobantes: cliente.ultimos_comprobantes,
+      categoria: cliente.categoria, categoria_arca: cliente.categoria_arca, estado: cliente.estado_arca,
+      actualizada_at: cliente.ultima_verificacion_arca, ultimos_comprobantes: cliente.ultimos_comprobantes,
     },
   }
 }
@@ -1341,8 +1470,9 @@ const actualizarDesdeArca: Handler = async ({ req, p }) => {
   let errorConstancia: string | null = null
   try {
     const datos = await buscarEnConstancia(cliente.cuit)
-    const update: Record<string, unknown> = { estado_arca: datos.estado || null, situacion_arca_at: ahoraIsoZ() }
+    const update: Record<string, unknown> = { estado_arca: datos.estado || null, ultima_verificacion_arca: ahoraIsoZ() }
     const nueva = /^[A-K]$/.test(datos.categoria) ? datos.categoria : null
+    if (nueva) update.categoria_arca = nueva
     if (nueva && nueva !== cliente.categoria) update.categoria = nueva
     await q(db().from("clientes").update(update).eq("id", cliente.id))
     if (update.categoria) {
@@ -1459,6 +1589,7 @@ export const rutas: [string, string, Handler][] = [
   ["GET", "/componentes-provinciales/:provincia/:categoria", componenteProvincial],
 
   ["GET", "/constancia/:cuit", constancia],
+  ["GET", "/clientes/:slug/constancia", constanciaPdf],
   ["GET", "/padron/:cuit", padron],
 
   ["GET", "/clientes", listarClientes],
@@ -1495,6 +1626,9 @@ export const rutas: [string, string, Handler][] = [
   ["POST", "/portal/login", portalLogin],
   ["PATCH", "/portal/cambiar-password", portalCambiarPassword],
   ["PATCH", "/portal/:slug/marcar-pago", portalMarcarPago],
+  ["POST", "/portal/:slug/verificar-arca", portalVerificarArca],
+  ["GET", "/portal/:slug/constancia", portalConstancia],
+  ["POST", "/portal/:slug/documentos", portalSubirDocumento],
   ["GET", "/portal/:slug", datosPortal],
 
   ["GET", "/planes", listarTodosPlanes],

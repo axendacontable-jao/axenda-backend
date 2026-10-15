@@ -30,7 +30,9 @@ export default async (req: Request) => {
     }
     try {
       const p = Object.fromEntries(ruta.nombres.map((n, i) => [n, decodeURIComponent(m[i + 1])]))
-      return json(await ruta.handler({ req, p, query: url.searchParams }), 200)
+      const resultado = await ruta.handler({ req, p, query: url.searchParams })
+      // Un handler puede devolver un archivo (por ejemplo, la constancia en PDF).
+      return resultado instanceof Response ? resultado : json(resultado, 200)
     } catch (e: any) {
       if (e instanceof HttpError) return json({ detail: e.message }, e.status)
       console.error(`[${req.method} ${url.pathname}]`, e)

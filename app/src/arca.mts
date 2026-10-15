@@ -189,6 +189,56 @@ export async function buscarEnConstancia(cuit: string) {
   return { cuit, nombre, apellido, categoria, estado, fuente: "constancia" }
 }
 
+export type ConstanciaArca = {
+  cuit: string; nombre: string; apellido: string; razonSocial: string; tipoPersona: string; estado: string
+  categoria: string; categoriaDescripcion: string; actividad: string; domicilio: string
+  impuestos: string[]; actividades: string[]; errores: string[]
+}
+
+// Constancia de inscripción completa (padrón A5) para armar el PDF del portal.
+export async function constanciaCompleta(cuit: string): Promise<ConstanciaArca> {
+  const auth = await obtenerToken("ws_sr_constancia_inscripcion")
+  const r = await postSoap(A5_URL, soapPersona("http://a5.soap.ws.server.puc.sr/", "con", auth, cuit))
+  const xml = r.text
+  falloArca(xml)
+  const patron = (tag: string, g = "") => new RegExp(`<(?:[\\w.-]+:)?${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</(?:[\\w.-]+:)?${tag}>`, g)
+  const bloque = (tag: string, en = xml) => en.match(patron(tag))?.[1] ?? ""
+  const bloques = (tag: string, en = xml) => [...en.matchAll(patron(tag, "g"))].map((m) => m[1])
+  const texto = (tag: string, en: string) => {
+    const m = en.match(new RegExp(`<(?:[\\w.-]+:)?${tag}(?:\\s[^>]*)?>([^<]*)</`))
+    return m ? unescapeXml(m[1]).replace(/\s+/g, " ").trim() : ""
+  }
+  const unicos = (xs: string[]) => [...new Set(xs.filter(Boolean))]
+
+  const generales = bloque("datosGenerales")
+  const dom = bloque("domicilioFiscal", generales)
+  const mono = bloque("datosMonotributo")
+  const general = bloque("datosRegimenGeneral")
+  const catMono = bloque("categoriaMonotributo", mono)
+  const categoriaDescripcion = texto("descripcionCategoria", catMono)
+  const errores = unicos(["errorConstancia", "errorMonotributo", "errorRegimenGeneral"]
+    .flatMap((t) => bloques("error", bloque(t)).map((e) => unescapeXml(e.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim())))
+
+  const datos: ConstanciaArca = {
+    cuit,
+    nombre: texto("nombre", generales),
+    apellido: texto("apellido", generales),
+    razonSocial: texto("razonSocial", generales),
+    tipoPersona: texto("tipoPersona", generales),
+    estado: texto("estadoClave", generales) || texto("estadoClave", xml),
+    categoria: (categoriaDescripcion.split(/\s+/)[0] ?? "").toUpperCase().match(/^[A-K]$/)?.[0] ?? "",
+    categoriaDescripcion,
+    actividad: texto("descripcionActividad", bloque("actividadMonotributista", mono)),
+    domicilio: [texto("direccion", dom), texto("localidad", dom), texto("descripcionProvincia", dom), texto("codPostal", dom) && `CP ${texto("codPostal", dom)}`]
+      .filter(Boolean).join(", "),
+    impuestos: unicos([...bloques("impuesto", mono), ...bloques("impuesto", general)].map((b) => texto("descripcionImpuesto", b))),
+    actividades: unicos(bloques("actividad", general).map((b) => texto("descripcionActividad", b))),
+    errores,
+  }
+  if (!datos.nombre && !datos.apellido && !datos.razonSocial && !errores.length) throw new Error("CUIT no encontrado en la constancia de ARCA")
+  return datos
+}
+
 export async function buscarEnPadron(cuit: string) {
   const auth = await obtenerToken("ws_sr_padron_a13")
   const r = await postSoap(A13_URL, soapPersona("http://a13.soap.ws.server.puc.sr/", "a13", auth, cuit))
