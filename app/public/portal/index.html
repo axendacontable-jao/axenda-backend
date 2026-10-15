@@ -534,8 +534,8 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
           <div class="stat-badge sbadge-up" id="stat-cuota-badge">✓ Al día</div>
           <button class="btn-ya-pague" id="main-ya-pague-btn" style="display:none;margin-top:12px" onclick="marcarPagado()">✓ Ya pagué</button>
           <div style="margin-top:12px">
-            <a class="btn-accion" href="https://auth.afip.gob.ar/contribuyente_/login.xhtml" target="_blank" rel="noreferrer">Generar VEP en ARCA ↗</a>
-            <div class="nota-chica">Entrá con tu clave fiscal, andá a CCMA y generá el VEP del mes.</div>
+            <a class="btn-accion" id="btn-vep" href="#" target="_blank" rel="noreferrer">💬 Pedir VEP / regularizar deuda</a>
+            <div class="nota-chica">Tu contadora te genera el VEP con el detalle de tu deuda.</div>
           </div>
         </div>
         <div class="card">
@@ -874,6 +874,8 @@ function renderPortal() {
   if (DATOS.whatsapp) WA = "549" + DATOS.whatsapp.replace(/\D/g, '');
   const waBase = waUrl("Hola! Te contacto desde el portal de Axenda Contable.");
   document.getElementById("wa-fab").href      = waBase;
+  // El VEP lo genera el contador: el botón abre su WhatsApp con el pedido.
+  document.getElementById("btn-vep").href = waUrl("Hola! Necesito regularizar mi cuenta o quiero pagar mi deuda.");
   document.getElementById("wa-inactive").href = waUrl("Hola! Consulto sobre mi acceso al portal de Axenda Contable.");
   document.getElementById("wa-forgot").href   = waUrl("Hola! Olvidé mi contraseña del portal de Axenda Contable.");
 
