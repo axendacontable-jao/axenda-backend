@@ -833,6 +833,14 @@ async function escribir(p: Page, selector: string, valor: string, que: string) {
   }).catch(() => {})
 }
 
+// Fecha del comprobante tal como la muestra el resumen ("Fecha del Comprobante 15/10/2026"), o null.
+export function fechaEnResumen(texto: string): string | null {
+  const m = texto.match(/Fecha\s+(?:del?\s+)?(?:Comprobante|Emisi[oó]n)\s*:?\s*(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})/i)
+  if (!m) return null
+  const anio = m[3].length === 2 ? `20${m[3]}` : m[3]
+  return `${m[1].padStart(2, "0")}/${m[2].padStart(2, "0")}/${anio}`
+}
+
 // Campos visibles del formulario (id=valor) para diagnosticar un rechazo de ARCA.
 const camposDe = (p: Page) => p.locator("input:visible, select:visible, textarea:visible").evaluateAll((els) =>
   els.map((e) => {
@@ -921,7 +929,13 @@ export async function emitirFacturaRcel(
 
   // 4. Datos de emisión: fecha, concepto y, si son servicios, período y vencimiento del pago.
   await avanzar("emision")
-  await escribir(rcel, "#fc", ddmmIso(pedido.fecha), "fecha del comprobante")
+  const fecha = ddmmIso(pedido.fecha)
+  await escribir(rcel, "#fc", fecha, "fecha del comprobante")
+  if ((await rcel.locator("#fc").inputValue().catch(() => "")).trim() !== fecha) await tipear(rcel, "#fc", fecha)
+  const fechaCargada = (await rcel.locator("#fc").inputValue().catch(() => "")).trim()
+  if (fechaCargada !== fecha) {
+    throw new FalloArca("error", `Comprobantes en línea no tomó la fecha ${fecha} (quedó "${fechaCargada}")`, `Campos: ${await camposDe(rcel)}`)
+  }
   await elegirEnLista(rcel, "#idconcepto", (o) => o.valor === String(pedido.concepto), "el concepto")
   if (pedido.concepto !== 1) {
     await escribir(rcel, "#fsd", ddmmIso(pedido.servDesde!), "período desde")
@@ -999,13 +1013,14 @@ export async function emitirFacturaRcel(
     pedido.importe.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })]
   const faltan = [
     !/factura/i.test(resumenArca) && "tipo Factura C",
-    !resumenArca.includes(ddmmIso(pedido.fecha)) && `fecha ${ddmmIso(pedido.fecha)}`,
+    fechaEnResumen(resumenArca) !== null && fechaEnResumen(resumenArca) !== ddmmIso(pedido.fecha) && `fecha ${ddmmIso(pedido.fecha)}`,
     !importes.some((i) => resumenArca.includes(i)) && `importe ${importes[2]}`,
     pedido.docTipo !== 99 && !digitos.includes(String(pedido.docNro)) && `documento ${pedido.docNro}`,
     !normalizar(resumenArca).includes(normalizar(pedido.descripcion).slice(0, 25)) && "descripción",
   ].filter(Boolean)
   if (faltan.length) {
-    throw new FalloArca("error", `El resumen de ARCA no coincide con lo pedido (${faltan.join(", ")}): no se confirmó la factura. Pantalla: ${resumenArca.slice(0, 600)}`)
+    throw new FalloArca("error", `El resumen de ARCA no coincide con lo pedido (${faltan.join(", ")}): no se confirmó la factura`,
+      `Resumen de ARCA: ${resumenArca}`)
   }
   const confirmar = await primeroVisible([rcel.locator("#btngenerar"), rcel.locator("input[value^='Confirmar Datos']")], 10_000)
   if (!confirmar) throw new FalloArca("error", `No encontré "Confirmar Datos..." en el resumen. Botones: ${await describirClickeables(rcel)}`)
