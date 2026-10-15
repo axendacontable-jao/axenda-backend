@@ -2086,6 +2086,36 @@ const ESTADO_FACTURA = {
   emitida: ["✓ Emitida", "var(--green)"], error: ["✗ No se emitió", "var(--red)"], revisar: ["⚠ Revisar en ARCA", "#E8A020"],
 };
 const EN_CURSO_FACTURA = ["pendiente", "procesando", "confirmando"];
+const PASOS_FACTURA = [
+  ["ingreso", "Ingreso a ARCA con la clave fiscal"], ["servicio", "Apertura de Comprobantes en línea"],
+  ["comprobante", "Punto de venta y Factura C"], ["emision", "Fecha y concepto"], ["receptor", "Datos del receptor"],
+  ["detalle", "Descripción y monto"], ["verificacion", "Verificación del resumen"], ["confirmacion", "Confirmación en ARCA"],
+  ["pdf", "Descarga del PDF"],
+];
+// Estado de cada etapa: hecho, actual, error o pendiente.
+function etapasFactura(c) {
+  const i = PASOS_FACTURA.findIndex(([k]) => k === c.paso);
+  return PASOS_FACTURA.map(([k, txt], j) => {
+    const estado = c.estado === "emitida" ? "hecho"
+      : j < i ? "hecho"
+      : j === i ? ((c.estado === "error" || c.estado === "revisar") ? "error" : "actual")
+      : (i < 0 && j === 0 && EN_CURSO_FACTURA.includes(c.estado) && c.estado !== "pendiente") ? "actual" : "pendiente";
+    return { clave: k, texto: txt, estado };
+  });
+}
+function PasosFactura({ comp }) {
+  const color = { hecho: "var(--green)", actual: "var(--blue)", error: "var(--red)", pendiente: "var(--muted)" };
+  return (
+    <div style={{ margin: "6px 0 14px" }}>
+      {etapasFactura(comp).map(p => (
+        <div key={p.clave} style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "13px", padding: "4px 0", color: color[p.estado], fontWeight: p.estado === "actual" || p.estado === "error" ? "600" : "400" }}>
+          <span style={{ width: "18px", textAlign: "center" }}>{p.estado === "hecho" ? "✓" : p.estado === "error" ? "✕" : p.estado === "actual" ? "◌" : "○"}</span>
+          {p.texto}{p.estado === "actual" ? "…" : ""}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 // Formulario: receptor (CUIT, DNI o consumidor final), descripción, fecha y monto. Pide revisar antes
 // de mandar el pedido y después sigue el estado hasta que el robot termina.
@@ -2103,7 +2133,7 @@ function ModalEmitirFactura({ opciones, onClose, onCambio, emitir, consultar, bu
     if (!comp || !EN_CURSO_FACTURA.includes(comp.estado)) return;
     const t = setTimeout(async () => {
       try { const c = await consultar(comp.id); setComp(c); if (!EN_CURSO_FACTURA.includes(c.estado)) onCambio && onCambio(); } catch {}
-    }, 5000);
+    }, 3000);
     return () => clearTimeout(t);
   }, [comp]);
 
@@ -2197,7 +2227,8 @@ function ModalEmitirFactura({ opciones, onClose, onCambio, emitir, consultar, bu
         </>)}
         {paso === "siguiendo" && comp && (<>
           <div style={{ fontSize: "14px", lineHeight: "1.8", marginBottom: "12px" }}>
-            {enCurso && <div style={{ color: "var(--blue)", fontWeight: "600" }}>{(ESTADO_FACTURA[comp.estado] || [comp.estado])[0]}… (1 a 2 minutos)</div>}
+            {enCurso && <div style={{ color: "var(--blue)", fontWeight: "600" }}>{comp.estado === "pendiente" ? "En cola…" : "Generando la factura en ARCA"} (1 a 2 minutos)</div>}
+            <PasosFactura comp={comp} />
             {comp.estado === "emitida" && <>
               <div style={{ color: "var(--green)", fontWeight: "700", fontSize: "16px" }}>✓ {comp.nombre} emitida</div>
               {comp.cae && <div>CAE {comp.cae}{comp.cae_vto ? ` · vence ${formatArgDate(comp.cae_vto)}` : ""}</div>}
@@ -2292,7 +2323,9 @@ function FacturacionElectronica({ cliente }) {
                 const [etqEst, color] = ESTADO_FACTURA[c.estado] || [c.estado, "var(--muted)"];
                 return (
                   <tr key={c.id}>
-                    <td style={{ color, fontWeight: "600", whiteSpace: "nowrap", fontSize: "12px" }} title={c.error || ""}>{etqEst}</td>
+                    <td style={{ color, fontWeight: "600", whiteSpace: "nowrap", fontSize: "12px" }} title={c.error || ""}>{etqEst}
+                      {EN_CURSO_FACTURA.includes(c.estado) && c.paso && <div style={{ fontWeight: "400", color: "var(--muted)" }}>{(PASOS_FACTURA.find(([k]) => k === c.paso) || [])[1]}…</div>}
+                      {c.estado === "error" && c.paso && <div style={{ fontWeight: "400", color: "var(--muted)" }}>en: {(PASOS_FACTURA.find(([k]) => k === c.paso) || [])[1]}</div>}</td>
                     <td style={{ whiteSpace: "nowrap" }}>{c.nombre}{c.cae && <div style={{ fontSize: "10px", color: "var(--muted)", fontFamily: "'DM Mono',monospace" }}>CAE {c.cae}</div>}
                       {c.error && <div style={{ fontSize: "11px", color: c.estado === "emitida" ? "#E8A020" : "var(--red)", maxWidth: "260px", whiteSpace: "normal" }}>{c.error}</div>}</td>
                     <td>{formatArgDate(c.fecha)}</td>

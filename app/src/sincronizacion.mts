@@ -578,6 +578,7 @@ export async function procesarFactura(facturaId: string) {
   let browser: Browser | null = null
   let generada = false
   try {
+    await actualizar({ paso: "ingreso" })
     browser = await abrirNavegador()
     const page = await browser.newPage({ acceptDownloads: true })
     await ingresar(page, cliente.cuit, clave)
@@ -585,7 +586,7 @@ export async function procesarFactura(facturaId: string) {
       nombreEmisor: emisor, puntoVenta: cliente.fe_punto_venta ?? null, concepto: f.concepto, fecha: f.fecha,
       servDesde: f.fch_serv_desde, servHasta: f.fch_serv_hasta, vtoPago: f.fch_vto_pago, condicionIva: f.receptor_condicion_iva,
       docTipo: f.doc_tipo, docNro: Number(f.doc_nro), descripcion: f.items?.[0]?.descripcion ?? "", importe,
-    }, () => actualizar({ estado: "confirmando" }))
+    }, () => actualizar({ estado: "confirmando" }), (paso) => actualizar({ paso }).catch(() => {}))
     if (r.estado === "revisar") {
       await actualizar({ estado: "revisar", error: limpiar(r.mensaje), pantalla: limpiar(r.pantalla) })
       await alerta(`Revisar una factura de ${emisor}`, r.mensaje)

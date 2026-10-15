@@ -853,7 +853,13 @@ async function tipear(p: Page, selector: string, valor: string) {
   }).catch(() => {})
 }
 
-export async function emitirFacturaRcel(page: Page, pedido: PedidoFactura, alConfirmar: () => Promise<void>): Promise<ResultadoRcel> {
+// Etapas que se muestran en la pantalla de carga (en orden).
+export type PasoFactura = "ingreso" | "servicio" | "comprobante" | "emision" | "receptor" | "detalle" | "verificacion" | "confirmacion" | "pdf"
+
+export async function emitirFacturaRcel(
+  page: Page, pedido: PedidoFactura, alConfirmar: () => Promise<void>, avanzar: (paso: PasoFactura) => Promise<unknown> = async () => {},
+): Promise<ResultadoRcel> {
+  await avanzar("servicio")
   const rcel = await abrirServicio(page, /^\s*Comprobantes en l[ií]nea\s*$/i, "Comprobantes en línea")
   const dialogos: string[] = []
   let puedeConfirmar = false
@@ -902,6 +908,7 @@ export async function emitirFacturaRcel(page: Page, pedido: PedidoFactura, alCon
   await espera()
 
   // 3. Punto de venta y tipo de comprobante.
+  await avanzar("comprobante")
   const pvs = (await opcionesDe(rcel.locator("#puntodeventa").first())).filter((o) => o.valor && /\d/.test(o.texto))
   const numeroPv = (o: { texto: string; valor: string }) => Number((o.texto.match(/\d+/) ?? [o.valor])[0])
   if (pedido.puntoVenta === null && pvs.length > 1) {
@@ -913,6 +920,7 @@ export async function emitirFacturaRcel(page: Page, pedido: PedidoFactura, alCon
   await continuar("punto de venta")
 
   // 4. Datos de emisión: fecha, concepto y, si son servicios, período y vencimiento del pago.
+  await avanzar("emision")
   await escribir(rcel, "#fc", ddmmIso(pedido.fecha), "fecha del comprobante")
   await elegirEnLista(rcel, "#idconcepto", (o) => o.valor === String(pedido.concepto), "el concepto")
   if (pedido.concepto !== 1) {
@@ -930,6 +938,7 @@ export async function emitirFacturaRcel(page: Page, pedido: PedidoFactura, alCon
   await continuar("datos de emisión")
 
   // 5. Receptor: condición frente al IVA, documento y condición de venta (contado).
+  await avanzar("receptor")
   await elegirEnLista(rcel, "#idivareceptor", (o) => o.valor === String(pedido.condicionIva), "la condición frente al IVA del receptor")
   if (pedido.docTipo !== 99) {
     await elegirEnLista(rcel, "#idtipodocreceptor", (o) => o.valor === String(pedido.docTipo), "el tipo de documento del receptor")
@@ -947,6 +956,7 @@ export async function emitirFacturaRcel(page: Page, pedido: PedidoFactura, alCon
   await continuar("receptor")
 
   // 6. Detalle: un renglón con la descripción y el monto.
+  await avanzar("detalle")
   await escribir(rcel, "#detalle_descripcion1", pedido.descripcion, "descripción")
   await escribir(rcel, "#detalle_cantidad1", "1", "cantidad")
   const medida = rcel.locator("#detalle_medida1").first()
@@ -982,6 +992,7 @@ export async function emitirFacturaRcel(page: Page, pedido: PedidoFactura, alCon
   await continuar("detalle")
 
   // 7. Resumen: se confirma solo si coincide con lo pedido.
+  await avanzar("verificacion")
   const resumenArca = (await textoVisible(rcel)).replace(/\s+/g, " ")
   const digitos = resumenArca.replace(/\D/g, "")
   const importes = [pedido.importe.toFixed(2), pedido.importe.toFixed(2).replace(".", ","),
@@ -1000,6 +1011,7 @@ export async function emitirFacturaRcel(page: Page, pedido: PedidoFactura, alCon
   if (!confirmar) throw new FalloArca("error", `No encontré "Confirmar Datos..." en el resumen. Botones: ${await describirClickeables(rcel)}`)
 
   await alConfirmar()
+  await avanzar("confirmacion")
   puedeConfirmar = true
   try {
     await confirmar.click()
@@ -1014,6 +1026,7 @@ export async function emitirFacturaRcel(page: Page, pedido: PedidoFactura, alCon
   const pantalla = (await textoVisible(rcel)).replace(/\s+/g, " ").slice(0, 3000)
 
   // 8. PDF: "Imprimir..." lo descarga o lo abre en otra pestaña.
+  await avanzar("pdf")
   let pdf: Uint8Array | null = null
   try {
     const imprimir = await primeroVisible([rcel.locator("input[value^='Imprimir']"), rcel.getByRole("button", { name: /imprimir/i })], 15_000)

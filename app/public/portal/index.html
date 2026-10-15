@@ -328,6 +328,16 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 .fe-item input { margin-bottom:8px; padding:11px 10px; font-size:14px; }
 .fe-x { border:none; background:none; color:var(--muted); font-size:18px; cursor:pointer; padding:10px 4px; }
 .fe-total { font-family:'DM Mono',monospace; font-size:22px; font-weight:600; }
+.fe-pasos { text-align:left; margin:4px 0 16px; }
+.fe-paso { display:flex; align-items:center; gap:10px; font-size:13px; padding:5px 0; color:var(--muted); }
+.fe-paso .ico { width:20px; height:20px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; flex-shrink:0; border:1.5px solid var(--border); }
+.fe-paso.hecho { color:var(--text); }
+.fe-paso.hecho .ico { background:var(--green); border-color:var(--green); color:#fff; }
+.fe-paso.actual { color:var(--blue); font-weight:600; }
+.fe-paso.actual .ico { border-color:var(--blue); border-top-color:transparent; animation:fe-gira .8s linear infinite; }
+.fe-paso.error { color:var(--red); font-weight:600; }
+.fe-paso.error .ico { background:var(--red); border-color:var(--red); color:#fff; }
+@keyframes fe-gira { to { transform:rotate(360deg); } }
 .fe-resumen { background:var(--light); border-radius:12px; padding:14px; font-size:13px; line-height:1.7; margin-bottom:12px; }
 @media (max-width:600px) { .fe-grid { grid-template-columns:1fr; } }
 
@@ -1140,6 +1150,23 @@ const ESTADO_FACTURA = {
   emitida: ["✓ Emitida", "var(--green)"], error: ["✗ No se emitió", "var(--red)"], revisar: ["⚠ En revisión", "var(--yellow)"],
 };
 const EN_CURSO_FACTURA = ["pendiente", "procesando", "confirmando"];
+const PASOS_FACTURA = [
+  ["ingreso", "Ingreso a ARCA con la clave fiscal"], ["servicio", "Apertura de Comprobantes en línea"],
+  ["comprobante", "Punto de venta y Factura C"], ["emision", "Fecha y concepto"], ["receptor", "Datos del receptor"],
+  ["detalle", "Descripción y monto"], ["verificacion", "Verificación del resumen"], ["confirmacion", "Confirmación en ARCA"],
+  ["pdf", "Descarga del PDF"],
+];
+// Estado de cada etapa: hecho, actual, error o pendiente.
+function etapasFactura(c) {
+  const i = PASOS_FACTURA.findIndex(([k]) => k === c.paso);
+  return PASOS_FACTURA.map(([k, txt], j) => {
+    const estado = c.estado === "emitida" ? "hecho"
+      : j < i ? "hecho"
+      : j === i ? ((c.estado === "error" || c.estado === "revisar") ? "error" : "actual")
+      : (i < 0 && j === 0 && EN_CURSO_FACTURA.includes(c.estado) && c.estado !== "pendiente") ? "actual" : "pendiente";
+    return { clave: k, texto: txt, estado };
+  });
+}
 let FE = null;
 let FE_FORM = null;
 let FE_SEGUIMIENTO = null;
@@ -1251,10 +1278,11 @@ function renderFormFactura() {
     const c = f.comprobante;
     const enCurso = EN_CURSO_FACTURA.includes(c.estado);
     const [etq] = ESTADO_FACTURA[c.estado] || [c.estado];
+    const pasos = etapasFactura(c).map(p => `<div class="fe-paso ${p.estado}"><span class="ico">${p.estado === "hecho" ? "✓" : p.estado === "error" ? "✕" : ""}</span>${escHtml(p.texto)}${p.estado === "actual" ? "…" : ""}</div>`).join("");
     el.innerHTML = `<div class="modal-ok">
-      <div class="ok-ico">${enCurso ? "⏳" : c.estado === "emitida" ? "✅" : "⚠️"}</div>
-      <h4>${enCurso ? `${etq}…` : c.estado === "emitida" ? `${escHtml(c.nombre)} emitida` : etq}</h4>
-      <p>${enCurso ? "El robot está generando tu factura en ARCA. Tarda 1 a 2 minutos: podés cerrar esta ventana, queda en “Últimas facturas”."
+      <h4>${enCurso ? (c.estado === "pendiente" ? "En cola…" : "Generando tu factura en ARCA") : c.estado === "emitida" ? `✅ ${escHtml(c.nombre)} emitida` : etq}</h4>
+      <div class="fe-pasos">${pasos}</div>
+      <p>${enCurso ? "Tarda 1 a 2 minutos. Podés cerrar esta ventana: queda en “Últimas facturas”."
         : c.estado === "emitida" ? `${c.cae ? `CAE ${escHtml(c.cae)}${c.cae_vto ? ` · vence ${fmtFecha(c.cae_vto)}` : ""}<br>` : ""}Quedó guardada en tu bóveda.`
         : c.estado === "error" ? "No se generó ninguna factura en ARCA. Tu contadora ya lo ve en su panel y lo resuelve."
         : "Hay que revisarla en ARCA antes de volver a emitirla. Tu contadora ya lo ve en su panel."}</p>
@@ -1335,7 +1363,7 @@ function seguirFactura() {
       }
     } catch {}
     seguirFactura();
-  }, 5000);
+  }, 3000);
 }
 
 // ── YA PAGUÉ ───────────────────────────────────────────────────────────────────

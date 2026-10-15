@@ -50,7 +50,7 @@ export async function facturacionDisponible(cliente: any) {
 }
 
 const resumen = (c: any) => ({
-  id: c.id, estado: c.estado, nombre: c.estado === "emitida" ? nombreFactura(c.punto_venta, c.numero) : "Factura C",
+  id: c.id, estado: c.estado, paso: c.paso ?? null, nombre: c.estado === "emitida" ? nombreFactura(c.punto_venta, c.numero) : "Factura C",
   fecha: c.fecha, importe: Number(c.importe), receptor: c.receptor_nombre, descripcion: c.items?.[0]?.descripcion ?? "",
   cae: c.cae, cae_vto: c.cae_vto, url_pdf: c.url_pdf, emitido_por: c.emitido_por, error: c.error, creado: c.created_at,
 })
@@ -200,7 +200,7 @@ export async function feComprobanteAdmin({ req, p }: Ctx) {
 export async function feReintentar({ req, p }: Ctx) {
   const estudioId = await getEstudioId(req)
   const cliente = await clientePorSlug(p.slug, estudioId)
-  const filas = await q(db().from("comprobantes_emitidos").update({ estado: "pendiente", error: null, actualizado_at: new Date().toISOString() })
+  const filas = await q(db().from("comprobantes_emitidos").update({ estado: "pendiente", paso: null, error: null, actualizado_at: new Date().toISOString() })
     .eq("id", p.id).eq("cliente_id", cliente.id).eq("estado", "error").select())
   if (!filas?.length) throw new HttpError(409, "Solo se pueden reintentar las facturas con error")
   await despacharFactura(new URL(req.url).origin, p.id)
