@@ -57,7 +57,7 @@ export async function pdfConstancia(datos: ConstanciaArca, consultadaEl: Date): 
     timeZone: "America/Argentina/Buenos_Aires", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false,
   })
 
-  escribir("Constancia de inscripción", { fuente: negrita, tam: 20, color: AZUL, despues: 2 })
+  escribir("Detalle de inscripción", { fuente: negrita, tam: 20, color: AZUL, despues: 2 })
   escribir(`Datos registrados en ARCA · consultados el ${fecha}`, { tam: 9.5, color: GRIS, despues: 14 })
   pagina.drawLine({ start: { x: margen, y: y + 6 }, end: { x: margen + ancho, y: y + 6 }, thickness: 0.8, color: rgb(0.85, 0.88, 0.92) })
   y -= 8
@@ -77,11 +77,11 @@ export async function pdfConstancia(datos: ConstanciaArca, consultadaEl: Date): 
   }
 
   y = Math.max(y, margen + 60)
-  escribir("Este documento resume los datos de la constancia de inscripción que informa ARCA (servicio de padrón A5), " +
-    "consultados por tu estudio contable con su certificado digital. La constancia oficial se obtiene en arca.gob.ar " +
+  escribir("Este documento resume los datos de inscripción que informa ARCA (servicio de padrón A5), consultados por " +
+    "tu estudio contable con su certificado digital. No reemplaza a la constancia oficial, que se obtiene en arca.gob.ar " +
     "(Constancia de inscripción) ingresando el CUIT.", { tam: 8.5, color: GRIS })
 
-  doc.setTitle(`Constancia de inscripción ${cuitFmt}`)
+  doc.setTitle(`Detalle de inscripción ${cuitFmt}`)
   doc.setProducer("Axenda Contable")
   return doc.save()
 }

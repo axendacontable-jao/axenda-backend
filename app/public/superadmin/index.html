@@ -265,6 +265,8 @@ function DetalleEstudio({ id, onVolver, onCambio }) {
   const [nueva,setNueva] = useState(null);       // { anio, mes, monto }
   const [pagando,setPagando] = useState(null);   // { id, fecha }
   const [borrar,setBorrar] = useState(null);     // texto de la segunda confirmación
+  const [temporal,setTemporal] = useState(null); // contraseña temporal recién generada (se muestra una vez)
+  const [copiada,setCopiada] = useState(false);
 
   async function cargar() {
     try {
@@ -287,6 +289,16 @@ function DetalleEstudio({ id, onVolver, onCambio }) {
     const extra = estado==="suspendida" ? "\n\nEl estudio no va a poder entrar al panel y el portal de sus clientes queda en pausa." : "";
     if (!confirm(`¿Seguro que querés ${txt} "${d.estudio.nombre}"?${extra}`)) return;
     accion(()=>patchEstudio({ estado }), `✓ Estudio ${ESTADO_TXT[estado].toLowerCase()}.`);
+  }
+
+  async function restablecer() {
+    if (!confirm(`¿Generar una contraseña temporal para ${d.estudio.email||"la cuenta del estudio"}?\n\nLa contraseña actual deja de funcionar. Vas a ver la nueva una sola vez para pasársela.`)) return;
+    setOcupado(true); setAviso(null);
+    try {
+      const r = await api(`/superadmin/estudios/${id}/password`, { method:"POST", body:"{}" });
+      setTemporal(r.password); setCopiada(false);
+    } catch(e) { setAviso({ ok:false, txt:e.message }); }
+    setOcupado(false);
   }
 
   function pedirEliminar() {
@@ -322,6 +334,7 @@ function DetalleEstudio({ id, onVolver, onCambio }) {
           <span style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
             {e.estado!=="activa" && <button className="btn btn-pri btn-chico" disabled={ocupado} onClick={()=>cambiarEstado("activa")}>Activar</button>}
             {e.estado!=="trial" && <button className="btn btn-chico" disabled={ocupado} onClick={()=>cambiarEstado("trial")}>Pasar a trial</button>}
+            {!e.es_superadmin && <button className="btn btn-chico" disabled={ocupado} onClick={restablecer}>🔑 Restablecer contraseña</button>}
             {e.estado!=="suspendida" && !e.es_superadmin && <button className="btn btn-rojo btn-chico" disabled={ocupado} onClick={()=>cambiarEstado("suspendida")}>Suspender</button>}
             {!e.es_superadmin && <button className="btn btn-rojo btn-chico" disabled={ocupado} onClick={pedirEliminar}>Eliminar</button>}
           </span>
@@ -391,6 +404,22 @@ function DetalleEstudio({ id, onVolver, onCambio }) {
         <div className="muted" style={{fontSize:"12px",marginTop:"10px"}}>Cada cuota vence el día 10 de su mes; si no está paga después de esa fecha figura como vencida.</div>
       </div>
 
+      {temporal && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <h3>Contraseña temporal</h3>
+            <p>Pasásela a <strong style={{color:"var(--text)"}}>{e.nombre}</strong>. Entra con su email <strong style={{color:"var(--text)"}}>{e.email}</strong> y después la cambia en Configuración → Mi cuenta. <strong style={{color:"var(--red)"}}>No se vuelve a mostrar.</strong></p>
+            <div className="mono" style={{fontSize:"20px",fontWeight:"600",background:"var(--light)",borderRadius:"10px",padding:"12px",textAlign:"center",userSelect:"all",wordBreak:"break-all"}}>{temporal}</div>
+            <div style={{display:"flex",gap:"8px",justifyContent:"flex-end",flexWrap:"wrap",marginTop:"16px"}}>
+              <button className="btn" onClick={async()=>{ try { await navigator.clipboard.writeText(temporal); setCopiada(true); } catch {} }}>{copiada?"✓ Copiada":"Copiar"}</button>
+              {e.whatsapp && <a className="btn" style={{textDecoration:"none"}} target="_blank" rel="noopener"
+                href={`https://wa.me/549${String(e.whatsapp).replace(/\D/g,"")}?text=${encodeURIComponent(`Hola! Te generé una contraseña temporal para entrar a tu panel: ${temporal}\nEntrá en ${location.origin} con tu email ${e.email} y cambiala desde Configuración → Mi cuenta.`)}`}>💬 Mandar por WhatsApp</a>}
+              <button className="btn btn-pri" onClick={()=>setTemporal(null)}>Listo</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {borrar!==null && (
         <div className="modal-overlay" onClick={x=>x.target===x.currentTarget&&setBorrar(null)}>
           <div className="modal">
@@ -408,6 +437,81 @@ function DetalleEstudio({ id, onVolver, onCambio }) {
   );
 }
 
+// ── Tablas de topes y componentes (las usan todos los estudios) ──
+const TIPOS_TABLA = {
+  topes_nacionales: ["Topes nacionales ARCA", "PDF o Excel — columnas: Categoría, Tope anual, Imp. integrado servicios, Imp. integrado bienes, SIPA, Obra social"],
+  componente_rio_negro: ["Componente provincial — Río Negro", "PDF o Excel — columnas: Categoría, Tipo (servicios/bienes/único), Monto, Vigente desde"],
+  componente_neuquen: ["Componente provincial — Neuquén", "PDF o Excel — columnas: Categoría, Monto, Vigente desde"],
+  componente_buenos_aires: ["Componente provincial — Buenos Aires", "PDF o Excel — columnas: Categoría, Tipo (servicios/bienes), Monto, Vigente desde"],
+};
+function Tablas() {
+  const [datos,setDatos] = useState(null);
+  const [tipo,setTipo] = useState("topes_nacionales");
+  const [subiendo,setSubiendo] = useState(false);
+  const [aviso,setAviso] = useState(null);
+  async function cargar() {
+    try { setDatos(await api("/superadmin/tablas")); } catch(e) { setAviso({ ok:false, txt:e.message }); }
+  }
+  useEffect(()=>{ cargar(); },[]);
+  async function subir(ev) {
+    const f = ev.target.files[0]; if (!f) return;
+    setSubiendo(true); setAviso(null);
+    try {
+      const fd = new FormData(); fd.append("file", f);
+      const r = await fetch(`${API}/configuracion/importar-tabla/${tipo}`, { method:"POST", body:fd, headers:{ Authorization:`Bearer ${_session?.access_token ?? ""}` } });
+      const d = await r.json().catch(()=>({}));
+      if (!r.ok || !d.ok) throw new Error(d.detail || `Error ${r.status}`);
+      setAviso({ ok:true, txt:`✓ ${d.actualizados || d.importados || 0} filas actualizadas en ${TIPOS_TABLA[tipo][0]}.` });
+      cargar();
+    } catch(e) { setAviso({ ok:false, txt:"No se pudo importar: "+e.message }); }
+    setSubiendo(false); ev.target.value = "";
+  }
+  const provincias = datos ? [...new Set(datos.componentes.map(c=>c.provincia))] : [];
+  return (
+    <div>
+      <div className="card">
+        <div className="card-title"><span>Cargar o actualizar una tabla</span></div>
+        <p className="muted" style={{fontSize:"13px",marginBottom:"12px"}}>Estas tablas son las mismas para todos los estudios: los topes se usan en el semáforo y los componentes provinciales en la cuota y la deuda estimada. Actualizalas cuando ARCA o la provincia publiquen valores nuevos.</p>
+        {aviso && <div className={`aviso ${aviso.ok?"aviso-ok":"aviso-error"}`}>{aviso.txt}</div>}
+        <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>
+          <select className="input" value={tipo} onChange={e=>setTipo(e.target.value)}>
+            {Object.entries(TIPOS_TABLA).map(([k,[l]])=><option key={k} value={k}>{l}</option>)}
+          </select>
+          <label className="btn btn-pri" style={{cursor:"pointer"}}>{subiendo?"Procesando...":"↑ Subir archivo"}
+            <input type="file" accept=".pdf,.xlsx" style={{display:"none"}} disabled={subiendo} onChange={subir}/>
+          </label>
+        </div>
+        <div className="muted mono" style={{fontSize:"11px",marginTop:"8px"}}>{TIPOS_TABLA[tipo][1]}</div>
+      </div>
+      {!datos ? <div className="vacio">Cargando tablas...</div> : (<>
+        <div className="card">
+          <div className="card-title"><span>Topes nacionales</span></div>
+          {datos.topes.length===0 ? <div className="vacio">Sin topes cargados.</div> : (
+            <div className="tabla-wrap"><table>
+              <thead><tr><th>Cat.</th><th style={{textAlign:"right"}}>Tope anual</th><th style={{textAlign:"right"}}>Imp. serv.</th><th style={{textAlign:"right"}}>Imp. bienes</th><th style={{textAlign:"right"}}>SIPA</th><th style={{textAlign:"right"}}>Obra social</th></tr></thead>
+              <tbody>{datos.topes.map(t=>(
+                <tr key={t.categoria}><td style={{fontWeight:"700"}}>{t.categoria}</td>
+                  {[t.tope_anual,t.imp_integrado_servicios??t.cuota_servicios,t.imp_integrado_bienes??t.cuota_bienes,t.aportes_sipa,t.obra_social].map((v,i)=><td key={i} className="mono" style={{textAlign:"right"}}>{$$(v)}</td>)}
+                </tr>))}</tbody>
+            </table></div>
+          )}
+        </div>
+        {provincias.map(prov=>(
+          <div className="card" key={prov}>
+            <div className="card-title"><span>Componente provincial — {prov}</span></div>
+            <div className="tabla-wrap"><table>
+              <thead><tr><th>Cat.</th><th>Tipo</th><th style={{textAlign:"right"}}>Monto</th><th>Vigente desde</th></tr></thead>
+              <tbody>{datos.componentes.filter(c=>c.provincia===prov).sort((a,b)=>a.categoria.localeCompare(b.categoria)||String(a.tipo).localeCompare(String(b.tipo))).map(c=>(
+                <tr key={`${c.categoria}-${c.tipo}`}><td style={{fontWeight:"700"}}>{c.categoria}</td><td>{c.tipo}</td><td className="mono" style={{textAlign:"right"}}>{$$(c.monto)}</td><td className="mono">{fecha(c.vigente_desde)}</td></tr>
+              ))}</tbody>
+            </table></div>
+          </div>
+        ))}
+      </>)}
+    </div>
+  );
+}
+
 // ── App ──
 function App() {
   const [session,setSession] = useState(undefined);
@@ -416,6 +520,7 @@ function App() {
   const [error,setError] = useState(null);
   const [abierto,setAbierto] = useState(null);
   const [aviso,setAviso] = useState(null);
+  const [vista,setVista] = useState("estudios");
 
   useEffect(()=>{
     db.auth.getSession().then(({ data:{ session:s } })=>{ _session = s; setSession(s); });
@@ -453,7 +558,8 @@ function App() {
       <aside className="sidebar">
         <div className="sidebar-logo"><div className="logo-main">AXENDA</div><div className="logo-sub">Superadmin</div></div>
         <nav className="sidebar-nav">
-          <button className={`nav-btn ${!abierto?"active":""}`} onClick={()=>{ setAbierto(null); setAviso(null); }}>🏢 &nbsp;Estudios</button>
+          <button className={`nav-btn ${vista==="estudios"?"active":""}`} onClick={()=>{ setVista("estudios"); setAbierto(null); setAviso(null); }}>🏢 &nbsp;Estudios</button>
+          <button className={`nav-btn ${vista==="tablas"?"active":""}`} onClick={()=>{ setVista("tablas"); setAbierto(null); setAviso(null); }}>📊 &nbsp;Topes y componentes</button>
           <a className="nav-btn" href="/" target="_blank" rel="noopener">↗ &nbsp;Mi estudio</a>
           <a className="nav-btn" href="/ayuda/" target="_blank" rel="noopener">❓ &nbsp;Ayuda</a>
         </nav>
@@ -465,7 +571,7 @@ function App() {
       <main className="main">
         <div className="topbar">
           <div>
-            <div className="topbar-title">{abierto ? "Detalle del estudio" : "Todos los estudios"}</div>
+            <div className="topbar-title">{vista==="tablas" ? "Topes y componentes" : abierto ? "Detalle del estudio" : "Todos los estudios"}</div>
             <div className="topbar-sub">Vista de superadmin · separada del panel de tu estudio</div>
           </div>
           <button className="btn btn-chico" onClick={cargar}>↻ Actualizar</button>
@@ -473,7 +579,8 @@ function App() {
         <div className="content">
           {error && <div className="aviso aviso-error">{error}</div>}
           {aviso && !abierto && <div className="aviso aviso-ok">{aviso}</div>}
-          {!datos ? <div className="vacio">Cargando estudios...</div>
+          {vista==="tablas" ? <Tablas/>
+            : !datos ? <div className="vacio">Cargando estudios...</div>
             : abierto ? <DetalleEstudio id={abierto} onCambio={cargar} onVolver={msg=>{ setAbierto(null); setAviso(msg||null); }}/>
             : <Dashboard datos={datos} onAbrir={id=>{ setAbierto(id); setAviso(null); window.scrollTo(0,0); }} onRecargar={cargar}/>}
         </div>

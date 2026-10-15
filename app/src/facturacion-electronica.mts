@@ -154,6 +154,37 @@ async function unComprobante(clienteId: string, id: string) {
   return resumen(c)
 }
 
+// A quién le factura seguido el cliente y con qué descripciones, para sugerirlo en el formulario.
+async function sugerencias(clienteId: string) {
+  const filas = (await q(db().from("comprobantes_emitidos")
+    .select("doc_tipo,doc_nro,receptor_nombre,receptor_condicion_iva,items,importe")
+    .eq("cliente_id", clienteId).eq("estado", "emitida").order("created_at", { ascending: false }).limit(200))) ?? []
+  const receptores = new Map<string, any>()
+  const descripciones = new Map<string, { texto: string; veces: number }>()
+  for (const f of filas) {
+    const descripcion = String(f.items?.[0]?.descripcion ?? "").trim()
+    if (f.doc_tipo !== 99 && f.doc_nro) {
+      const k = `${f.doc_tipo}-${f.doc_nro}`
+      // La primera vez que aparece es la factura más reciente a ese receptor.
+      const r = receptores.get(k) ?? {
+        doc_tipo: f.doc_tipo, doc_nro: String(f.doc_nro), nombre: f.receptor_nombre, condicion_iva: f.receptor_condicion_iva,
+        ultima_descripcion: descripcion, ultimo_importe: Number(f.importe), veces: 0,
+      }
+      r.veces++
+      receptores.set(k, r)
+    }
+    if (descripcion) {
+      const k = descripcion.toLowerCase()
+      const d = descripciones.get(k) ?? { texto: descripcion, veces: 0 }
+      d.veces++
+      descripciones.set(k, d)
+    }
+  }
+  // Las más usadas primero; entre iguales, la más reciente (sort estable).
+  const top = <T extends { veces: number }>(m: Map<string, T>) => [...m.values()].sort((a, b) => b.veces - a.veces).slice(0, 6)
+  return { receptores: top(receptores), descripciones: top(descripciones).map((d) => d.texto) }
+}
+
 // ── Admin ────────────────────────────────────────────────────────────────────
 
 export async function feEstado({ req, p }: Ctx) {
@@ -162,7 +193,7 @@ export async function feEstado({ req, p }: Ctx) {
   return {
     estudio_habilitado: await estudioHabilitado(estudioId), clave_fiscal: await tieneClave(cliente.id),
     config: { habilitada: !!cliente.fe_habilitada, punto_venta: cliente.fe_punto_venta ?? null },
-    comprobantes: await comprobantesDe(cliente.id, 50), ...opciones(cliente),
+    comprobantes: await comprobantesDe(cliente.id, 50), sugerencias: await sugerencias(cliente.id), ...opciones(cliente),
   }
 }
 
@@ -231,7 +262,10 @@ async function clienteDelPortal(req: Request, slug: string) {
 
 export async function fePortalEstado({ req, p }: Ctx) {
   const cliente = await clienteDelPortal(req, p.slug)
-  return { disponible: await facturacionDisponible(cliente), comprobantes: await comprobantesDe(cliente.id, 20), ...opciones(cliente) }
+  return {
+    disponible: await facturacionDisponible(cliente), comprobantes: await comprobantesDe(cliente.id, 20),
+    sugerencias: await sugerencias(cliente.id), ...opciones(cliente),
+  }
 }
 
 export async function fePortalEmitir({ req, p }: Ctx) {

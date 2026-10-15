@@ -22,18 +22,18 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 
 /* SIDEBAR */
 .sidebar { width:220px; background:var(--sidebar); position:fixed; top:0; left:0; bottom:0; display:flex; flex-direction:column; z-index:100; }
-.sidebar-logo { padding:24px 20px 18px; border-bottom:1px solid #1F3358; }
+.sidebar-logo { padding:24px 20px 18px; border-bottom:1px solid color-mix(in srgb, var(--sidebar) 84%, white); }
 .logo-main { font-size:16px; font-weight:700; color:var(--green-claro); letter-spacing:0.04em; }
-.logo-sub { font-size:10px; color:#5D8AB0; letter-spacing:0.14em; text-transform:uppercase; margin-top:2px; }
+.logo-sub { font-size:10px; color:rgba(255,255,255,0.5); letter-spacing:0.14em; text-transform:uppercase; margin-top:2px; }
 .sidebar-nav { padding:16px 12px; flex:1; overflow-y:auto; }
-.nav-section { font-size:10px; color:#4D6A8A; letter-spacing:0.12em; text-transform:uppercase; padding:8px 10px 4px; font-weight:500; }
-.nav-btn { display:flex; align-items:center; gap:9px; padding:9px 10px; border-radius:8px; font-size:13px; color:#8CA0BE; cursor:pointer; transition:0.15s; margin-bottom:2px; border:none; background:none; width:100%; text-align:left; font-family:inherit; }
-.nav-btn:hover { background:#243C65; color:#E8EDF5; }
-.nav-btn.active { background:#1E3A62; color:var(--green-claro); font-weight:600; }
-.sidebar-footer { padding:14px 16px; border-top:1px solid #1F3358; }
-.footer-text { font-size:11px; color:#4D6A8A; text-align:center; }
-.footer-text a { color:#6F8BAD; text-decoration:none; }
-.footer-text a:hover { color:#E8EDF5; }
+.nav-section { font-size:10px; color:rgba(255,255,255,0.4); letter-spacing:0.12em; text-transform:uppercase; padding:8px 10px 4px; font-weight:500; }
+.nav-btn { display:flex; align-items:center; gap:9px; padding:9px 10px; border-radius:8px; font-size:13px; color:rgba(255,255,255,0.66); cursor:pointer; transition:0.15s; margin-bottom:2px; border:none; background:none; width:100%; text-align:left; font-family:inherit; }
+.nav-btn:hover { background:color-mix(in srgb, var(--sidebar) 80%, white); color:#fff; }
+.nav-btn.active { background:color-mix(in srgb, var(--sidebar) 84%, white); color:var(--green-claro); font-weight:600; }
+.sidebar-footer { padding:14px 16px; border-top:1px solid color-mix(in srgb, var(--sidebar) 84%, white); }
+.footer-text { font-size:11px; color:rgba(255,255,255,0.45); text-align:center; }
+.footer-text a { color:rgba(255,255,255,0.6); text-decoration:none; }
+.footer-text a:hover { color:#fff; }
 .logo-img { display:block; max-width:100%; max-height:52px; object-fit:contain; background:#fff; border-radius:8px; padding:5px 8px; margin-bottom:10px; }
 .logo-estudio { font-size:15px; font-weight:700; color:var(--green-claro); line-height:1.25; word-break:break-word; }
 .topbar-ayuda { font-size:12px; font-weight:600; color:var(--muted); text-decoration:none; border:1px solid var(--border); border-radius:8px; padding:5px 10px; }
@@ -43,6 +43,9 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 .marca-preview { background:var(--sidebar); border-radius:12px; padding:16px 18px; width:220px; }
 .swatch { width:26px; height:26px; border-radius:50%; border:2px solid #fff; box-shadow:0 0 0 1px var(--border); cursor:pointer; padding:0; }
 .swatch.sel { box-shadow:0 0 0 2px var(--text); }
+.chip-sug { font-size:12px; padding:5px 11px; border:1px solid var(--border); border-radius:16px; background:#fff; cursor:pointer; font-family:inherit; color:var(--text); max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.chip-sug:hover { border-color:var(--green); color:var(--green); }
+.hon-estado { display:inline-block; padding:3px 10px; border-radius:20px; font-size:11px; font-weight:600; white-space:nowrap; }
 
 /* MAIN */
 .main { margin-left:220px; flex:1; }
@@ -69,7 +72,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 .cliente-card:hover { border-color:var(--green); transform:translateY(-1px); box-shadow:0 4px 16px rgba(27,45,79,0.1); }
 .cliente-card.inactivo { opacity:0.55; }
 .cliente-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
-.cliente-avatar { width:38px; height:38px; border-radius:50%; background:linear-gradient(135deg,var(--green),#1B2D4F); display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:700; color:#fff; flex-shrink:0; }
+.cliente-avatar { width:38px; height:38px; border-radius:50%; background:linear-gradient(135deg,var(--green),var(--sidebar)); display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:700; color:#fff; flex-shrink:0; }
 .cliente-nombre { font-size:14px; font-weight:600; }
 .cliente-cat { font-size:12px; color:var(--muted); margin-top:1px; }
 .semaforo-pill { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:600; padding:4px 10px; border-radius:20px; letter-spacing:0.04em; }
@@ -151,7 +154,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 .back-btn:hover { color:var(--text); }
 .detail-header { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:20px 24px; margin-bottom:20px; }
 .detail-header-top { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; }
-.detail-avatar { width:48px; height:48px; border-radius:50%; background:linear-gradient(135deg,var(--green),#1B2D4F); display:flex; align-items:center; justify-content:center; font-size:16px; font-weight:700; color:#fff; flex-shrink:0; }
+.detail-avatar { width:48px; height:48px; border-radius:50%; background:linear-gradient(135deg,var(--green),var(--sidebar)); display:flex; align-items:center; justify-content:center; font-size:16px; font-weight:700; color:#fff; flex-shrink:0; }
 .detail-nombre { font-size:18px; font-weight:700; }
 .detail-sub { font-size:13px; color:var(--muted); margin-top:3px; }
 .detail-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:14px; padding-top:14px; border-top:1px solid var(--border); }
@@ -331,7 +334,9 @@ let _session = null;
 // ── Marca blanca: nombre, logo y color del estudio ───────────────────────────
 let _estudio = null;
 const COLOR_AXENDA = "#2BAF82";
-const COLORES_SUGERIDOS = ["#2BAF82","#1E88E5","#3949AB","#7C3AED","#C2185B","#B23A48","#E8711A","#00897B","#455A64"];
+const SECUNDARIO_AXENDA = "#1B2D4F";
+const COLORES_SUGERIDOS = ["#2BAF82","#1E88E5","#3949AB","#7C3AED","#C2185B","#B23A48","#E8711A","#00897B","#8E5E1A"];
+const FONDOS_SUGERIDOS = ["#1B2D4F","#0F172A","#1F2937","#14532D","#134E4A","#3B0764","#4A1D1D","#3E2723","#262626"];
 const esColorHex = c => /^#[0-9a-f]{6}$/i.test(c || "");
 function oscurecer(hex, f = 0.8) {
   const n = parseInt(hex.slice(1), 16);
@@ -356,12 +361,60 @@ function aplicarColor(color) {
   document.documentElement.style.setProperty("--green-dark", oscurecer(c));
   document.documentElement.style.setProperty("--green-claro", aclarar(c));
 }
+// El fondo (barra lateral y encabezados) lleva texto blanco: si el color es claro, se oscurece hasta que se lea.
+function oscuroLegible(hex) {
+  const lin = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+  const n = parseInt(hex.slice(1), 16);
+  let rgb = [n >> 16, (n >> 8) & 255, n & 255];
+  for (let i = 0; i < 14; i++) {
+    if (0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2]) <= 0.16) break;
+    rgb = rgb.map(v => Math.round(v * 0.85));
+  }
+  return "#" + rgb.map(v => v.toString(16).padStart(2, "0")).join("");
+}
+function aplicarColores(primario, secundario) {
+  aplicarColor(primario);
+  const fondo = esColorHex(secundario) ? oscuroLegible(secundario) : SECUNDARIO_AXENDA;
+  document.documentElement.style.setProperty("--sidebar", fondo);
+  document.documentElement.style.setProperty("--blue", fondo);
+}
 function aplicarMarca(e) {
   _estudio = e || null;
-  aplicarColor(e?.color_primario);
+  aplicarColores(e?.color_primario, e?.color_secundario);
   document.title = `${e?.nombre || "Axenda Contable"} — Panel de Administración`;
 }
 const nombreEstudio = () => _estudio?.nombre || "Axenda Contable";
+// Achica el logo en el navegador antes de subirlo (cualquier imagen, de cualquier tamaño, queda liviana).
+async function achicarLogo(file, maxAncho = 800, maxAlto = 320) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((ok, mal) => {
+      const i = new Image();
+      i.onload = () => ok(i);
+      i.onerror = () => mal(new Error("No se pudo leer la imagen. Probá con un PNG o un JPG."));
+      i.src = url;
+    });
+    const w0 = img.naturalWidth || maxAncho, h0 = img.naturalHeight || maxAlto;
+    const k = Math.min(1, maxAncho / w0, maxAlto / h0);
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(w0 * k)); c.height = Math.max(1, Math.round(h0 * k));
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    let blob = await new Promise(ok => c.toBlob(ok, "image/png"));
+    if (blob && blob.size > 1500000) blob = await new Promise(ok => c.toBlob(ok, "image/webp", 0.9));
+    if (!blob) throw new Error("No se pudo procesar la imagen");
+    return new File([blob], blob.type === "image/webp" ? "logo.webp" : "logo.png", { type: blob.type });
+  } finally { URL.revokeObjectURL(url); }
+}
+
+// Constancia oficial: la página pública de ARCA pide el CUIT; se copia para pegarlo.
+const URL_CONSTANCIA_ARCA = "https://seti.afip.gob.ar/padron-puc-constancia-internet/ConsultaConstanciaAction.do";
+async function abrirConstanciaOficial(cuit) {
+  const c = String(cuit||"").replace(/\D/g,"");
+  const fmt = c.length===11 ? `${c.slice(0,2)}-${c.slice(2,10)}-${c.slice(10)}` : c;
+  try { await navigator.clipboard.writeText(fmt); } catch {}
+  window.open(URL_CONSTANCIA_ARCA, "_blank", "noopener");
+}
+
 // El link al portal lleva el estudio para que el login muestre su logo y su color.
 const portalUrl = () => _estudio?.id ? `${PORTAL_URL}?e=${_estudio.id}` : PORTAL_URL;
 
@@ -382,11 +435,13 @@ const TPL_VARS = {
   tpl_vencimiento_cuota: ["{nombre}", "{monto}", "{mes}", "{link_portal}"],
   tpl_alerta_limite:     ["{nombre}", "{porcentaje}", "{margen}", "{fecha_corte}", "{link_portal}"],
   tpl_vencimiento_plan:  ["{nombre}", "{numero_cuota}", "{nombre_plan}", "{fecha_venc}", "{monto}", "{link_portal}"],
+  tpl_honorarios:        ["{nombre}", "{monto}", "{mes}", "{fecha_venc}", "{estudio}"],
 };
 const TPL_DEFAULTS = {
   tpl_vencimiento_cuota: "Hola {nombre}, te recordamos que tu cuota de monotributo ({monto}) vence el 20 de {mes}. Podés ver tu portal acá: {link_portal}",
   tpl_alerta_limite:     "Hola {nombre}, llevás el {porcentaje}% de tu límite de facturación. Te quedan {margen} para el corte de {fecha_corte}. Consultá tu portal: {link_portal}",
   tpl_vencimiento_plan:  "Hola {nombre}, tu cuota N° {numero_cuota} del plan {nombre_plan} vence el {fecha_venc} por {monto}. Consultá tu portal: {link_portal}",
+  tpl_honorarios:        "Hola {nombre}, te recuerdo que los honorarios de {mes} ({monto}) vencen el {fecha_venc}. ¡Gracias! {estudio}",
 };
 const TAREAS_DEFAULT = [
   {label:"Emitir cuotas del mes",           dia:20},
@@ -649,6 +704,7 @@ function ModalEditarDatos({ cliente, topes, onClose, onGuardado }) {
   const [tipoActividad,setTipoActividad] = useState(cliente.tipo_actividad||"servicios");
   const [enRelDep,setEnRelDep]           = useState(Boolean(cliente.en_relacion_dependencia));
   const [cuota,setCuota]                 = useState(cliente.cuota?String(Math.round(cliente.cuota)):"");
+  const [honorarios,setHonorarios]       = useState(cliente.honorarios?String(Math.round(cliente.honorarios)):"");
   const [sinDatosProv,setSinDatosProv]   = useState(false);
   const [guardando,setGuardando]         = useState(false);
 
@@ -684,11 +740,11 @@ function ModalEditarDatos({ cliente, topes, onClose, onGuardado }) {
     try {
       const res = await apiFetch(`${BACKEND_URL}/clientes/${cliente.slug}/datos`, {
         method:"PATCH", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({ provincia, iibb_modalidad:iibbModalidad, tipo_actividad:tipoActividad, en_relacion_dependencia:enRelDep, cuota:cuota?parseFloat(cuota):null }),
+        body:JSON.stringify({ provincia, iibb_modalidad:iibbModalidad, tipo_actividad:tipoActividad, en_relacion_dependencia:enRelDep, cuota:cuota?parseFloat(cuota):null, honorarios:honorarios?parseFloat(honorarios):null }),
       });
       const d = await res.json();
       if (d.ok) {
-        onGuardado({ provincia, iibb_modalidad:iibbModalidad, tipo_actividad:tipoActividad, en_relacion_dependencia:enRelDep, cuota:cuota?parseFloat(cuota):null });
+        onGuardado({ provincia, iibb_modalidad:iibbModalidad, tipo_actividad:tipoActividad, en_relacion_dependencia:enRelDep, cuota:cuota?parseFloat(cuota):null, honorarios:honorarios?parseFloat(honorarios):null });
         onClose();
       } else { alert("Error: "+JSON.stringify(d)); }
     } catch(e) { alert("Error: "+e.message); }
@@ -745,6 +801,11 @@ function ModalEditarDatos({ cliente, topes, onClose, onGuardado }) {
               </div>
             )}
           </div>
+          <div className="form-group">
+            <label className="form-label">Honorarios mensuales del estudio</label>
+            <input className="form-input" type="number" min="0" value={honorarios} onChange={e=>setHonorarios(e.target.value)} placeholder="ej: 25000"/>
+            <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"4px"}}>Lo que el cliente te paga por mes. Se controla en Cuotas del mes.</div>
+          </div>
         </div>
         <div className="modal-footer">
           <button className="btn-secondary" onClick={onClose}>Cancelar</button>
@@ -757,7 +818,7 @@ function ModalEditarDatos({ cliente, topes, onClose, onGuardado }) {
 
 function ModalNuevoCliente({ onClose, onGuardado, topes, cuitInicial="" }) {
   const [cuit,setCuit]=useState(cuitInicial||""); const [nombre,setNombre]=useState(""); const [apellido,setApellido]=useState("");
-  const [whatsapp,setWhatsapp]=useState(""); const [categoria,setCategoria]=useState(""); const [cuota,setCuota]=useState("");
+  const [whatsapp,setWhatsapp]=useState(""); const [categoria,setCategoria]=useState(""); const [cuota,setCuota]=useState(""); const [honorarios,setHonorarios]=useState("");
   const [provincia,setProvincia]=useState("Rio Negro");
   const [iibb_modalidad,setIibbModalidad]=useState("monotributo_unificado");
   const [tipoActividad,setTipoActividad]=useState("servicios");
@@ -827,7 +888,7 @@ function ModalNuevoCliente({ onClose, onGuardado, topes, cuitInicial="" }) {
     setGuardando(true);
     try {
       const res=await apiFetch(`${BACKEND_URL}/clientes`,{method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({nombre,apellido,cuit:cuit.replace(/\D/g,""),whatsapp,categoria:categoria.toUpperCase()||null,cuota:cuota?parseFloat(cuota):null,provincia,iibb_modalidad,tipo_actividad:tipoActividad,en_relacion_dependencia:enRelDep})});
+        body:JSON.stringify({nombre,apellido,cuit:cuit.replace(/\D/g,""),whatsapp,categoria:categoria.toUpperCase()||null,cuota:cuota?parseFloat(cuota):null,honorarios:honorarios?parseFloat(honorarios):null,provincia,iibb_modalidad,tipo_actividad:tipoActividad,en_relacion_dependencia:enRelDep})});
       const d=await res.json();
       if(d.ok){onGuardado(d.slug);onClose();}else alert("Error: "+JSON.stringify(d));
     }catch(e){alert("Error: "+e.message);}
@@ -859,10 +920,14 @@ function ModalNuevoCliente({ onClose, onGuardado, topes, cuitInicial="" }) {
             </select>
           </div>
           <div className="form-group">
-            <label className="form-label">Cuota mensual</label>
+            <label className="form-label">Cuota del monotributo</label>
             <input className="form-input" value={cuota} onChange={e=>setCuota(e.target.value)} placeholder="28400" type="number"/>
             {sinDatosProv&&categoria&&<div style={{fontSize:"11px",color:"var(--yellow)",marginTop:"4px"}}>⚠ Sin componente provincial para {provincia} — cuota solo nacional</div>}
           </div>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Honorarios mensuales del estudio</label>
+          <input className="form-input" value={honorarios} onChange={e=>setHonorarios(e.target.value)} placeholder="ej: 25000" type="number" min="0"/>
         </div>
         <div className="form-row">
           <div className="form-group">
@@ -1249,18 +1314,18 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
     if (d.captura) setCapturaArca(d.captura); else alert("No hay captura guardada.");
   }
 
-  // Constancia de inscripción en PDF con los datos que informa ARCA (certificado del estudio).
+  // Detalle de inscripción en PDF con los datos que informa ARCA (certificado del estudio).
   async function descargarConstanciaPdf() {
     try {
       const r = await apiFetch(`${BACKEND_URL}/clientes/${cliente.slug}/constancia`);
       if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e.detail || `Error ${r.status}`); }
       const url = URL.createObjectURL(await r.blob());
       const a = document.createElement("a");
-      a.href = url; a.download = `constancia-inscripcion-${cliente.cuit||cliente.slug}.pdf`;
+      a.href = url; a.download = `detalle-inscripcion-${cliente.cuit||cliente.slug}.pdf`;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(()=>URL.revokeObjectURL(url), 10000);
     } catch(e) {
-      alert("No se pudo bajar la constancia: " + e.message);
+      alert("No se pudo bajar el detalle de inscripción: " + e.message);
     }
   }
 
@@ -1750,7 +1815,8 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onImportarFacturas, 
                       )}
                       {arca.situacion.estado&&<span>Estado <strong style={{color:/^activ/i.test(arca.situacion.estado)?"var(--green)":"var(--red)"}}>{arca.situacion.estado}</strong></span>}
                       {arca.situacion.actualizada_at&&<span style={{color:"var(--muted)"}}>Consultado {tiempoRelativo(arca.situacion.actualizada_at)}</span>}
-                      <button className="table-action" style={{fontSize:"11px"}} onClick={descargarConstanciaPdf}>⬇ Constancia (PDF)</button>
+                      <button className="table-action" style={{fontSize:"11px"}} onClick={()=>abrirConstanciaOficial(cliente.cuit)} title="Abre la página de ARCA con el CUIT copiado para pegar">Constancia oficial ↗</button>
+                      <button className="table-action" style={{fontSize:"11px"}} onClick={descargarConstanciaPdf}>⬇ Detalle de inscripción</button>
                     </div>
                     {Array.isArray(arca.situacion.ultimos_comprobantes)&&(arca.situacion.ultimos_comprobantes.length===0 ? (
                       <div style={{fontSize:"12px",color:"var(--muted)"}}>Sin comprobantes emitidos en el período de recategorización.</div>
@@ -1989,7 +2055,7 @@ function ViewPlanes({ clientes }) {
                       <td>
                         {c ? (
                           <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
-                            <div style={{width:"28px",height:"28px",borderRadius:"50%",background:"linear-gradient(135deg,var(--green),#1B2D4F)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"11px",fontWeight:"700",color:"#fff",flexShrink:0}}>{initials(c.nombre,c.apellido)}</div>
+                            <div style={{width:"28px",height:"28px",borderRadius:"50%",background:"linear-gradient(135deg,var(--green),var(--sidebar))",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"11px",fontWeight:"700",color:"#fff",flexShrink:0}}>{initials(c.nombre,c.apellido)}</div>
                             <div style={{fontWeight:"600"}}>{c.nombre} {c.apellido}</div>
                           </div>
                         ) : "—"}
@@ -2245,6 +2311,11 @@ function ModalEmitirFactura({ opciones, onClose, onCambio, emitir, consultar, bu
     return () => clearTimeout(t);
   }, [comp]);
 
+  const sug = opciones.sugerencias || { receptores: [], descripciones: [] };
+  function usarReceptor(r) {
+    setF(p => ({ ...p, doc_tipo: String(r.doc_tipo), doc_nro: r.doc_nro, receptor_nombre: r.nombre || "",
+      condicion_iva: r.condicion_iva ? String(r.condicion_iva) : p.condicion_iva, descripcion: p.descripcion || r.ultima_descripcion || "" }));
+  }
   async function traerReceptor() {
     setBuscando(true); setError("");
     try {
@@ -2299,6 +2370,12 @@ function ModalEmitirFactura({ opciones, onClose, onCambio, emitir, consultar, bu
                 </div></div>
             )}
           </div>
+          {sug.receptores.length > 0 && (
+            <div style={{ marginTop: "10px" }}><div style={etq}>Le facturó antes a</div>
+              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                {sug.receptores.map(r => <button key={`${r.doc_tipo}-${r.doc_nro}`} type="button" className="chip-sug" title={`${opciones.tipos_doc[r.doc_tipo] || ""} ${r.doc_nro} · ${r.veces} factura${r.veces === 1 ? "" : "s"}`} onClick={() => usarReceptor(r)}>{r.nombre}</button>)}
+              </div></div>
+          )}
           {f.doc_tipo !== "99" && (
             <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: "10px", marginTop: "10px" }}>
               <div><div style={etq}>Nombre o razón social</div><input className="form-input" value={f.receptor_nombre} onChange={e => set("receptor_nombre", e.target.value)} /></div>
@@ -2308,7 +2385,10 @@ function ModalEmitirFactura({ opciones, onClose, onCambio, emitir, consultar, bu
                 </select></div>
             </div>
           )}
-          <div style={{ marginTop: "10px" }}><div style={etq}>Descripción</div><textarea className="form-input" rows="2" value={f.descripcion} onChange={e => set("descripcion", e.target.value)} placeholder="Honorarios profesionales de octubre" /></div>
+          <div style={{ marginTop: "10px" }}><div style={etq}>Descripción</div><textarea className="form-input" rows="2" value={f.descripcion} onChange={e => set("descripcion", e.target.value)} placeholder="Honorarios profesionales de octubre" />
+            {sug.descripciones.length > 0 && <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", margin: "-6px 0 10px" }}>
+              {sug.descripciones.map(d => <button key={d} type="button" className="chip-sug" title={d} onClick={() => set("descripcion", d)}>{d}</button>)}
+            </div>}</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", alignItems: "end" }}>
             <div><div style={etq}>Monto total</div><input className="form-input" value={f.importe} onChange={e => set("importe", e.target.value)} placeholder="150.000,00" /></div>
             <div style={{ textAlign: "right", fontFamily: "'DM Mono',monospace", fontSize: "18px", fontWeight: "700", marginBottom: "14px" }}>{importe > 0 ? pesosC(importe) : ""}</div>
@@ -2821,7 +2901,227 @@ function HistorialCuotas({ slug, cuota, categoria, onToggleMesActual, automatico
 }
 
 // ── Vista cuotas del mes ──
-function ViewCuotas({ clientes, onActualizar }) {
+// ── Cuotas del mes: honorarios que cada cliente le paga al estudio ──
+function ViewHonorarios({ onCambioCliente }) {
+  const ahora = new Date();
+  const [periodo, setPeriodo] = useState({ anio: ahora.getFullYear(), mes: ahora.getMonth() + 1 });
+  const [datos, setDatos] = useState(null);
+  const [error, setError] = useState(null);
+  const [cobrando, setCobrando] = useState(null);   // { slug, fecha, monto }
+  const [montos, setMontos] = useState({});         // honorarios en edición, por slug
+  const [abierto, setAbierto] = useState(null);
+  const [ocupado, setOcupado] = useState(null);
+  const [cfg, setCfg] = useState({});
+
+  async function cargar() {
+    setError(null);
+    try {
+      const r = await apiFetch(`${BACKEND_URL}/honorarios?anio=${periodo.anio}&mes=${periodo.mes}`);
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.detail || `Error ${r.status}`);
+      setDatos(d);
+    } catch (e) { setError(e.message); }
+  }
+  useEffect(() => { cargar(); }, [periodo.anio, periodo.mes]);
+  useEffect(() => { apiFetch(`${BACKEND_URL}/configuracion`).then(r => r.json()).then(d => setCfg(d || {})).catch(() => {}); }, []);
+
+  function mover(n) {
+    setDatos(null); setCobrando(null); setAbierto(null);
+    setPeriodo(p => { const i = p.anio * 12 + p.mes - 1 + n; return { anio: Math.floor(i / 12), mes: i % 12 + 1 }; });
+  }
+  async function pedir(url, opts) {
+    const r = await apiFetch(url, opts);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || `Error ${r.status}`);
+    return d;
+  }
+  async function cobrar(c) {
+    const monto = numeroAr(cobrando.monto);
+    if (!(monto >= 0)) { alert("Monto inválido"); return; }
+    setOcupado(c.slug);
+    try {
+      await pedir(`${BACKEND_URL}/honorarios/${c.slug}/${datos.anio}/${datos.mes}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fecha_pago: cobrando.fecha, monto }) });
+      setCobrando(null); await cargar();
+    } catch (e) { alert("No se pudo marcar: " + e.message); }
+    setOcupado(null);
+  }
+  async function anular(c) {
+    if (!confirm(`¿Desmarcar los honorarios de ${MESES_FULL[datos.mes - 1].toLowerCase()} de ${c.nombre} ${c.apellido}?`)) return;
+    setOcupado(c.slug);
+    try { await pedir(`${BACKEND_URL}/honorarios/${c.slug}/${datos.anio}/${datos.mes}`, { method: "DELETE" }); await cargar(); }
+    catch (e) { alert("No se pudo desmarcar: " + e.message); }
+    setOcupado(null);
+  }
+  async function guardarMonto(c) {
+    const txt = String(montos[c.slug] ?? "").trim();
+    const valor = txt === "" ? null : numeroAr(txt);
+    if (valor !== null && !(valor >= 0)) { alert("Monto inválido"); return; }
+    setOcupado(c.slug);
+    try {
+      await pedir(`${BACKEND_URL}/clientes/${c.slug}/datos`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ honorarios: valor }) });
+      onCambioCliente && onCambioCliente(c.slug, { honorarios: valor });
+      setMontos(m => { const x = { ...m }; delete x[c.slug]; return x; });
+      await cargar();
+    } catch (e) { alert("No se pudo guardar: " + e.message); }
+    setOcupado(null);
+  }
+  function recordar(c) {
+    const tpl = cfg.tpl_honorarios || TPL_DEFAULTS.tpl_honorarios;
+    const msg = tpl.replace(/\{nombre\}/g, c.nombre || "").replace(/\{monto\}/g, $$(c.honorarios))
+      .replace(/\{mes\}/g, MESES_FULL[datos.mes - 1].toLowerCase()).replace(/\{fecha_venc\}/g, `${dia}/${datos.mes}`)
+      .replace(/\{estudio\}/g, nombreEstudio());
+    window.open(`https://wa.me/549${String(c.whatsapp).replace(/\D/g, "")}?text=${encodeURIComponent(msg)}`, "_blank");
+  }
+
+  if (error) return (
+    <div className="detail-section"><div style={{ color: "var(--red)", marginBottom: "10px" }}>{error}</div>
+      <button className="btn-secondary" onClick={cargar}>Reintentar</button></div>
+  );
+  if (!datos) return <div className="skeleton" style={{ height: "220px", borderRadius: "14px" }} />;
+
+  const dia = datos.dia_vencimiento || 10;
+  const vence = `${datos.anio}-${String(datos.mes).padStart(2, "0")}-${String(dia).padStart(2, "0")}`;
+  const estadoDe = c => c.pago ? "pagado" : isoHoyAr() > vence ? "vencido" : "pendiente";
+  const ESTADO = {
+    pagado: ["✓ Cobrado", "color-mix(in srgb, var(--green) 14%, transparent)", "var(--green-dark)"],
+    pendiente: ["Pendiente", "#E8A02018", "#B07400"],
+    vencido: ["Vencido", "#E0454515", "var(--red)"],
+  };
+  const lista = datos.clientes.filter(c => c.honorarios > 0 || c.pago);
+  const sinHonorarios = datos.clientes.filter(c => !(c.honorarios > 0) && !c.pago);
+  const esperado = lista.reduce((s, c) => s + (c.pago ? c.pago.monto : c.honorarios || 0), 0);
+  const cobrado = lista.reduce((s, c) => s + (c.pago?.monto || 0), 0);
+  const pagaron = lista.filter(c => c.pago).length;
+  const meses12 = Array.from({ length: 12 }, (_, i) => { const n = datos.anio * 12 + datos.mes - 12 + i; return { anio: Math.floor(n / 12), mes: n % 12 + 1 }; });
+
+  const montoCelda = c => montos[c.slug] !== undefined ? (
+    <span style={{ display: "inline-flex", gap: "4px" }}>
+      <input className="form-input" style={{ width: "110px", marginBottom: 0, padding: "6px 8px" }} value={montos[c.slug]} autoFocus
+        onChange={e => setMontos(m => ({ ...m, [c.slug]: e.target.value }))} onKeyDown={e => e.key === "Enter" && guardarMonto(c)} placeholder="25.000" />
+      <button className="table-action success" disabled={ocupado === c.slug} onClick={() => guardarMonto(c)}>✓</button>
+      <button className="table-action" onClick={() => setMontos(m => { const x = { ...m }; delete x[c.slug]; return x; })}>✕</button>
+    </span>
+  ) : (
+    <span style={{ fontFamily: "'DM Mono',monospace", fontWeight: "500" }}>
+      {c.honorarios > 0 ? $$(c.honorarios) : "—"}
+      <button className="table-action" style={{ marginLeft: "6px", padding: "2px 7px" }} title="Cambiar honorarios" onClick={() => setMontos(m => ({ ...m, [c.slug]: c.honorarios ? String(c.honorarios) : "" }))}>✎</button>
+    </span>
+  );
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap", marginBottom: "14px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <button className="filter-btn" onClick={() => mover(-1)} title="Mes anterior">‹</button>
+          <div style={{ fontSize: "18px", fontWeight: "700", minWidth: "150px", textAlign: "center" }}>{MESES_FULL[datos.mes - 1]} {datos.anio}</div>
+          <button className="filter-btn" onClick={() => mover(1)} title="Mes siguiente">›</button>
+        </div>
+        <div style={{ fontSize: "13px", color: "var(--muted)" }}>
+          Vencen el día {dia} · <strong style={{ color: "var(--green)" }}>{$$(cobrado)}</strong> cobrado de {$$(esperado)} · {pagaron} de {lista.length} pagaron
+        </div>
+      </div>
+      {esperado > 0 && <div className="bar-track" style={{ marginBottom: "18px" }}><div className="bar-fill fill-verde" style={{ width: `${Math.min(100, cobrado / esperado * 100)}%` }} /></div>}
+
+      {lista.length === 0 ? (
+        <div className="empty-state"><div className="empty-icon">💼</div><div className="empty-title">Todavía no cargaste honorarios</div>
+          <div className="empty-desc">Poné lo que te paga cada cliente por mes en la lista de abajo (o en Editar datos del cliente).</div></div>
+      ) : (
+        <div className="table-wrap" style={{ overflowX: "auto" }}>
+          <table className="data-table">
+            <thead><tr><th>Cliente</th><th>Honorarios</th><th>Estado</th><th></th></tr></thead>
+            <tbody>
+              {lista.map(c => {
+                const est = estadoDe(c);
+                const [txt, bg, color] = ESTADO[est];
+                return (
+                  <React.Fragment key={c.slug}>
+                    <tr>
+                      <td>
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }} onClick={() => setAbierto(abierto === c.slug ? null : c.slug)}>
+                          <div style={{ width: "32px", height: "32px", borderRadius: "50%", background: "linear-gradient(135deg,var(--green),var(--sidebar))", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px", fontWeight: "700", color: "#fff", flexShrink: 0 }}>{initials(c.nombre, c.apellido)}</div>
+                          <div><div style={{ fontWeight: "600" }}>{c.nombre} {c.apellido}</div><div style={{ fontSize: "11px", color: "var(--muted)" }}>{abierto === c.slug ? "▾ Últimos 12 meses" : "▸ Ver historial"}</div></div>
+                        </div>
+                      </td>
+                      <td>{montoCelda(c)}</td>
+                      <td><span className="hon-estado" style={{ background: bg, color }}>{txt}</span>
+                        {c.pago && <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "3px" }}>el {formatArgDate(c.pago.fecha_pago)}{c.pago.monto !== c.honorarios ? ` · ${$$(c.pago.monto)}` : ""}</div>}</td>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        {cobrando?.slug === c.slug ? (
+                          <span style={{ display: "inline-flex", gap: "6px", alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                            <input type="date" className="form-input" style={{ marginBottom: 0, padding: "6px 8px", width: "140px" }} value={cobrando.fecha} onChange={e => setCobrando({ ...cobrando, fecha: e.target.value })} />
+                            <input className="form-input" style={{ marginBottom: 0, padding: "6px 8px", width: "100px" }} value={cobrando.monto} onChange={e => setCobrando({ ...cobrando, monto: e.target.value })} title="Monto cobrado" />
+                            <button className="table-action success" disabled={ocupado === c.slug || !cobrando.fecha} onClick={() => cobrar(c)}>Confirmar</button>
+                            <button className="table-action" onClick={() => setCobrando(null)}>✕</button>
+                          </span>
+                        ) : c.pago ? (
+                          <button className="table-action" disabled={ocupado === c.slug} onClick={() => anular(c)}>Desmarcar</button>
+                        ) : (<>
+                          {c.whatsapp && <button className="table-action" style={{ marginRight: "6px" }} onClick={() => recordar(c)} title="Recordatorio por WhatsApp">💬 Recordar</button>}
+                          <button className="table-action success" onClick={() => setCobrando({ slug: c.slug, fecha: isoHoyAr(), monto: String(c.honorarios || "") })}>✓ Marcar cobrado</button>
+                        </>)}
+                      </td>
+                    </tr>
+                    {abierto === c.slug && (
+                      <tr><td colSpan="4" style={{ background: "var(--bg)" }}>
+                        <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", padding: "4px 0" }}>
+                          {meses12.map(m => {
+                            const pago = c.historial.find(h => h.anio === m.anio && h.mes === m.mes);
+                            return <span key={`${m.anio}-${m.mes}`} title={pago ? `Cobrado el ${formatArgDate(pago.fecha_pago)} · ${$$(pago.monto)}` : "Sin cobrar"}
+                              style={{ fontSize: "11px", padding: "4px 8px", borderRadius: "7px", border: `1px solid ${pago ? "var(--green)" : "var(--border)"}`, color: pago ? "var(--green-dark)" : "var(--muted)", background: pago ? "color-mix(in srgb, var(--green) 8%, transparent)" : "#fff" }}>
+                              {pago ? "✓ " : ""}{MESES[m.mes - 1]} {String(m.anio).slice(2)}</span>;
+                          })}
+                        </div>
+                      </td></tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {sinHonorarios.length > 0 && (
+        <div className="detail-section" style={{ marginTop: "18px" }}>
+          <div className="section-title">Clientes sin honorarios cargados</div>
+          <div style={{ fontSize: "12px", color: "var(--muted)", marginBottom: "10px" }}>Cargá cuánto te paga cada uno por mes para seguir sus cobros acá.</div>
+          {sinHonorarios.map(c => (
+            <div key={c.slug} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", padding: "7px 0", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
+              <span>{c.nombre} {c.apellido}</span>
+              <span style={{ display: "inline-flex", gap: "6px" }}>
+                <input className="form-input" style={{ width: "120px", marginBottom: 0, padding: "6px 8px" }} placeholder="$ por mes" value={montos[c.slug] ?? ""}
+                  onChange={e => setMontos(m => ({ ...m, [c.slug]: e.target.value }))} onKeyDown={e => e.key === "Enter" && guardarMonto(c)} />
+                <button className="table-action success" disabled={ocupado === c.slug || !String(montos[c.slug] ?? "").trim()} onClick={() => guardarMonto(c)}>Guardar</button>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Cuotas del mes: los honorarios del estudio y, aparte, el pago del monotributo de cada cliente.
+function ViewCuotas({ clientes, onActualizar, onCambioCliente }) {
+  const [vista, setVista] = useState("honorarios");
+  return (
+    <div>
+      <div style={{ marginBottom: "14px" }}>
+        <div style={{ fontSize: "13px", color: "var(--muted)" }}>Cobros</div>
+        <div style={{ fontSize: "20px", fontWeight: "700", marginTop: "2px" }}>Cuotas del mes</div>
+      </div>
+      <div className="tabs" style={{ marginBottom: "20px" }}>
+        {[["honorarios", "Honorarios del estudio"], ["monotributo", "Monotributo (ARCA)"]].map(([k, l]) => (
+          <button key={k} className={`tab-btn ${vista === k ? "active" : ""}`} onClick={() => setVista(k)}>{l}</button>
+        ))}
+      </div>
+      {vista === "honorarios" ? <ViewHonorarios onCambioCliente={onCambioCliente} /> : <ViewCuotasMonotributo clientes={clientes} onActualizar={onActualizar} />}
+    </div>
+  );
+}
+
+// Pago de la cuota del monotributo de cada cliente (con clave fiscal se actualiza solo desde ARCA).
+function ViewCuotasMonotributo({ clientes, onActualizar }) {
   const hoy = new Date();
   const activos = clientes.filter(c=>c.activo&&c.cuota);
   const pagados = activos.filter(c=>c.estado_pago==="al_dia").length;
@@ -2862,7 +3162,7 @@ function ViewCuotas({ clientes, onActualizar }) {
                     <tr style={{cursor:"pointer",background:abierto?"var(--light)":"transparent"}} onClick={()=>setExpandido(abierto?null:c.id)}>
                       <td>
                         <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
-                          <div style={{width:"32px",height:"32px",borderRadius:"50%",background:"linear-gradient(135deg,var(--green),#1B2D4F)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",fontWeight:"700",color:"#fff",flexShrink:0}}>{initials(c.nombre,c.apellido)}</div>
+                          <div style={{width:"32px",height:"32px",borderRadius:"50%",background:"linear-gradient(135deg,var(--green),var(--sidebar))",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",fontWeight:"700",color:"#fff",flexShrink:0}}>{initials(c.nombre,c.apellido)}</div>
                           <div><div style={{fontWeight:"600"}}>{c.nombre} {c.apellido}</div><div style={{fontSize:"11px",color:"var(--muted)",fontFamily:"'DM Mono',monospace"}}>{c.cuit}</div></div>
                         </div>
                       </td>
@@ -3205,24 +3505,39 @@ function ViewDashboard({ clientes, planes, factura, topes, onNavigate }) {
 }
 
 // ── Vista configuración ──
-// Logo y color del estudio (marca blanca del panel y del portal de los clientes).
-function MarcaEstudio({ estudio, onMarca }) {
-  const [color,setColor] = useState(esColorHex(estudio?.color_primario) ? estudio.color_primario.toUpperCase() : COLOR_AXENDA);
+// Selector de un color con sugeridos y vuelta al de Axenda.
+function SelectorColor({ label, ayuda, valor, onChange, sugeridos, defecto }) {
+  return (
+    <div className="form-group">
+      <label className="form-label">{label}</label>
+      <div style={{display:"flex",gap:"8px",alignItems:"center",flexWrap:"wrap"}}>
+        <input type="color" value={esColorHex(valor)?valor:defecto} onChange={e=>onChange(e.target.value.toUpperCase())} style={{width:"44px",height:"36px",border:"1px solid var(--border)",borderRadius:"8px",padding:"2px",background:"#fff",cursor:"pointer"}}/>
+        <input className="form-input" style={{width:"110px",fontFamily:"'DM Mono',monospace"}} value={valor} maxLength={7} onChange={e=>onChange(e.target.value.trim().toUpperCase())}/>
+        {valor!==defecto&&<button type="button" className="btn-secondary" style={{padding:"6px 10px",fontSize:"12px"}} onClick={()=>onChange(defecto)}>Volver al de Axenda</button>}
+      </div>
+      <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"10px"}}>
+        {sugeridos.map(c=><button key={c} type="button" title={c} className={`swatch ${valor===c?"sel":""}`} style={{background:c}} onClick={()=>onChange(c)}/>)}
+      </div>
+      {ayuda&&<div style={{fontSize:"11px",color:"var(--muted)",marginTop:"6px"}}>{ayuda}</div>}
+    </div>
+  );
+}
+
+// Logo y colores del estudio (marca blanca del panel y del portal de los clientes). El logo se sube al
+// elegirlo; los colores se guardan con "Guardar cambios" de Datos del estudio.
+function MarcaEstudio({ estudio, colores, setColores, onMarca }) {
   const [subiendo,setSubiendo] = useState(false);
-  const [guardando,setGuardando] = useState(false);
   const [msg,setMsg] = useState(null);
   const fileRef = useRef(null);
-  const guardado = (estudio?.color_primario || COLOR_AXENDA).toUpperCase();
-  // Vista previa en vivo; al salir sin guardar vuelve el color guardado.
-  useEffect(()=>{ aplicarColor(color); },[color]);
-  useEffect(()=>()=>aplicarColor(_estudio?.color_primario),[]);
+  const primario = colores.color_primario, secundario = colores.color_secundario;
+  const setC = (k, v) => setColores(p => ({ ...p, [k]: v }));
 
   async function subir(e) {
     const f = e.target.files[0]; if (!f) return;
-    if (f.size > 1024*1024) { setMsg({ok:false,txt:"El logo supera 1 MB. Probá con una imagen más liviana."}); return; }
     setSubiendo(true); setMsg(null);
     try {
-      const fd = new FormData(); fd.append("file", f);
+      const logo = await achicarLogo(f);
+      const fd = new FormData(); fd.append("file", logo);
       const r = await apiFetch(`${BACKEND_URL}/estudios/me/logo`,{method:"POST",body:fd});
       const d = await r.json().catch(()=>({}));
       if (!r.ok) throw new Error(d.detail || `Error ${r.status}`);
@@ -3243,54 +3558,33 @@ function MarcaEstudio({ estudio, onMarca }) {
     } catch(err) { setMsg({ok:false,txt:"No se pudo quitar: "+err.message}); }
     setSubiendo(false);
   }
-  async function guardarColor() {
-    if (!esColorHex(color)) { setMsg({ok:false,txt:"El color tiene que ser un código como #2BAF82."}); return; }
-    setGuardando(true); setMsg(null);
-    try {
-      const r = await apiFetch(`${BACKEND_URL}/estudios/me`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({color_primario:color})});
-      const d = await r.json().catch(()=>({}));
-      if (!r.ok) throw new Error(d.detail || `Error ${r.status}`);
-      onMarca({ ...estudio, color_primario: color.toUpperCase() });
-      setMsg({ok:true,txt:"✓ Color guardado. Ya se ve en tu panel y en el portal de tus clientes."});
-    } catch(err) { setMsg({ok:false,txt:"No se pudo guardar: "+err.message}); }
-    setGuardando(false);
-  }
 
+  const pri = esColorHex(primario) ? primario : COLOR_AXENDA;
+  const fondo = esColorHex(secundario) ? oscuroLegible(secundario) : SECUNDARIO_AXENDA;
   return (
-    <div className="detail-section" style={{maxWidth:"560px",marginTop:"16px"}}>
+    <div className="detail-section" style={{maxWidth:"620px",marginTop:"16px"}}>
       <div className="section-title">Marca del estudio</div>
-      <div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"14px",lineHeight:"1.5"}}>Tu logo, tu nombre y tu color reemplazan a Axenda Contable en este panel y en el portal de tus clientes.</div>
+      <div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"14px",lineHeight:"1.5"}}>Tu logo, tu nombre y tus colores reemplazan a Axenda Contable en este panel y en el portal de tus clientes.</div>
       <div style={{display:"flex",gap:"20px",flexWrap:"wrap",alignItems:"flex-start"}}>
-        <div className="marca-preview">
+        <div className="marca-preview" style={{background:fondo}}>
           {estudio?.logo_url && <img className="logo-img" src={estudio.logo_url} alt="Logo"/>}
-          <div className="logo-estudio" style={{color:esColorHex(color)?aclarar(color):COLOR_AXENDA}}>{estudio?.nombre || "Tu estudio"}</div>
+          <div className="logo-estudio" style={{color:aclarar(pri)}}>{estudio?.nombre || "Tu estudio"}</div>
           <div className="logo-sub">Vista previa</div>
-          <div style={{marginTop:"12px",height:"6px",borderRadius:"4px",background:"#1F3358",overflow:"hidden"}}><div style={{width:"62%",height:"100%",background:color}}/></div>
-          <div style={{marginTop:"12px",background:color,color:"#fff",borderRadius:"8px",padding:"7px",fontSize:"12px",fontWeight:"600",textAlign:"center"}}>Botón</div>
+          <div style={{marginTop:"12px",height:"6px",borderRadius:"4px",background:"rgba(255,255,255,0.15)",overflow:"hidden"}}><div style={{width:"62%",height:"100%",background:pri}}/></div>
+          <div style={{marginTop:"12px",background:pri,color:"#fff",borderRadius:"8px",padding:"7px",fontSize:"12px",fontWeight:"600",textAlign:"center"}}>Botón</div>
         </div>
-        <div style={{flex:1,minWidth:"220px"}}>
+        <div style={{flex:1,minWidth:"240px"}}>
           <div className="form-group">
-            <label className="form-label">Logo (PNG, JPG o WEBP · hasta 1 MB)</label>
-            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" style={{display:"none"}} onChange={subir}/>
+            <label className="form-label">Logo</label>
+            <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={subir}/>
             <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
               <button className="btn-secondary" style={{padding:"8px 14px"}} onClick={()=>fileRef.current.click()} disabled={subiendo}>{subiendo?"Subiendo...":estudio?.logo_url?"Cambiar logo":"↑ Subir logo"}</button>
               {estudio?.logo_url&&<button className="btn-secondary" style={{padding:"8px 14px",color:"var(--red)"}} onClick={quitar} disabled={subiendo}>Quitar</button>}
             </div>
+            <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"6px"}}>Cualquier imagen (PNG, JPG, WEBP, SVG): se achica sola antes de subirla. Con fondo transparente queda mejor.</div>
           </div>
-          <div className="form-group">
-            <label className="form-label">Color primario</label>
-            <div style={{display:"flex",gap:"8px",alignItems:"center",flexWrap:"wrap"}}>
-              <input type="color" value={esColorHex(color)?color:COLOR_AXENDA} onChange={e=>setColor(e.target.value.toUpperCase())} style={{width:"44px",height:"36px",border:"1px solid var(--border)",borderRadius:"8px",padding:"2px",background:"#fff",cursor:"pointer"}}/>
-              <input className="form-input" style={{width:"110px",fontFamily:"'DM Mono',monospace"}} value={color} maxLength={7} onChange={e=>setColor(e.target.value.trim().toUpperCase())}/>
-            </div>
-            <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"10px"}}>
-              {COLORES_SUGERIDOS.map(c=><button key={c} type="button" title={c} className={`swatch ${color===c?"sel":""}`} style={{background:c}} onClick={()=>setColor(c)}/>)}
-            </div>
-          </div>
-          <div style={{display:"flex",gap:"10px",alignItems:"center",flexWrap:"wrap"}}>
-            <button className="btn-primary" style={{maxWidth:"150px"}} onClick={guardarColor} disabled={guardando||color===guardado}>{guardando?"Guardando...":"Guardar color"}</button>
-            {color!==COLOR_AXENDA&&<button className="btn-secondary" style={{padding:"8px 12px",fontSize:"12px"}} onClick={()=>setColor(COLOR_AXENDA)}>Volver al verde de Axenda</button>}
-          </div>
+          <SelectorColor label="Color principal" ayuda="Botones, barras de progreso, pestañas y etiquetas." valor={primario} onChange={v=>setC("color_primario",v)} sugeridos={COLORES_SUGERIDOS} defecto={COLOR_AXENDA}/>
+          <SelectorColor label="Color de fondo" ayuda="Reemplaza al azul: barra lateral, encabezado y pantalla de ingreso del portal. Si elegís uno claro se oscurece para que el texto blanco se lea." valor={secundario} onChange={v=>setC("color_secundario",v)} sugeridos={FONDOS_SUGERIDOS} defecto={SECUNDARIO_AXENDA}/>
         </div>
       </div>
       {msg&&<div style={{fontSize:"12px",marginTop:"12px",color:msg.ok?"var(--green)":"var(--red)",fontWeight:"600"}}>{msg.txt}</div>}
@@ -3298,28 +3592,52 @@ function MarcaEstudio({ estudio, onMarca }) {
   );
 }
 
-function ViewConfig({ topes, onRefresh, estudio, onMarca }) {
-  const [tab, setTab]           = useState("topes");
+// Cambio de contraseña del contador (la cuenta con la que entra al panel).
+function MiCuenta() {
+  const [p1,setP1] = useState("");
+  const [p2,setP2] = useState("");
+  const [guardando,setGuardando] = useState(false);
+  const [msg,setMsg] = useState(null);
+  async function cambiar() {
+    setMsg(null);
+    if (p1.length < 8) return setMsg({ok:false,txt:"La contraseña tiene que tener al menos 8 caracteres."});
+    if (p1 !== p2) return setMsg({ok:false,txt:"Las dos contraseñas no coinciden."});
+    setGuardando(true);
+    const { error } = await db.auth.updateUser({ password: p1 });
+    setGuardando(false);
+    if (error) return setMsg({ok:false,txt:"No se pudo cambiar: "+error.message});
+    setP1(""); setP2(""); setMsg({ok:true,txt:"✓ Contraseña cambiada. La próxima vez entrá con la nueva."});
+  }
+  return (
+    <div className="detail-section" style={{maxWidth:"440px"}}>
+      <div className="section-title">Mi cuenta</div>
+      <div className="form-group">
+        <label className="form-label">Email de ingreso</label>
+        <input className="form-input" value={_session?.user?.email||""} disabled/>
+      </div>
+      <div className="form-group">
+        <label className="form-label">Contraseña nueva</label>
+        <input className="form-input" type="password" autoComplete="new-password" value={p1} onChange={e=>setP1(e.target.value)}/>
+      </div>
+      <div className="form-group">
+        <label className="form-label">Repetí la contraseña nueva</label>
+        <input className="form-input" type="password" autoComplete="new-password" value={p2} onChange={e=>setP2(e.target.value)}/>
+      </div>
+      <button className="btn-primary" style={{maxWidth:"200px"}} onClick={cambiar} disabled={guardando||!p1}>{guardando?"Guardando...":"Cambiar contraseña"}</button>
+      {msg&&<div style={{fontSize:"12px",marginTop:"10px",color:msg.ok?"var(--green)":"var(--red)",fontWeight:"600"}}>{msg.txt}</div>}
+    </div>
+  );
+}
+
+function ViewConfig({ estudio, onMarca }) {
+  const [tab, setTab]           = useState("estudio");
   const [cfg, setCfg]           = useState(null);
   const [guardandoKey, setGKey] = useState(null);
   const [okKey, setOkKey]       = useState(null);
-  const [importando, setImp]    = useState(null);
-  const [importResults, setIRs] = useState({});
-  const [modalTabla, setModalTabla] = useState(false);
-  const [tipoTabla, setTipoTabla]   = useState("topes_nacionales");
-  const [comps, setComps]           = useState([]);
-  const fileRef = useRef(null);
-
-  const FORMAT_INFO = {
-    topes_nacionales:        "PDF o Excel — cols: Categoría, Tope Anual, Imp. Int. Serv., Imp. Int. Bienes, SIPA, Obra Social",
-    componente_rio_negro:    "PDF o Excel — cols: Categoría, Tipo (servicios/bienes/unico), Monto, Vigente desde",
-    componente_neuquen:      "PDF o Excel — cols: Categoría, Monto, Vigente desde",
-    componente_buenos_aires: "PDF o Excel — cols: Categoría, Tipo (servicios/bienes), Monto, Vigente desde",
-  };
 
   const DEFAULTS = {
     nombre_estudio:"Axenda Contable", whatsapp_estudio:"", email_estudio:"axendacontable@gmail.com",
-    dias_alerta_amarilla:"10", ciclo_activo:"Julio",
+    honorarios_dia_vencimiento:"10",
     ...TPL_DEFAULTS,
   };
 
@@ -3327,16 +3645,21 @@ function ViewConfig({ topes, onRefresh, estudio, onMarca }) {
     apiFetch(`${BACKEND_URL}/configuracion`).then(r=>r.json())
       .then(d=>setCfg({...DEFAULTS,...d}))
       .catch(()=>setCfg(DEFAULTS));
-    cargarComps();
   },[]);
 
-  async function cargarComps() {
-    try {
-      const r = await apiFetch(`${BACKEND_URL}/componentes-provinciales/resumen`);
-      const d = await r.json();
-      setComps(d.componentes || []);
-    } catch {}
-  }
+  // Colores de la marca: vista previa en vivo mientras se eligen; se guardan con "Guardar cambios".
+  const coloresGuardados = () => ({
+    color_primario: (estudio?.color_primario || COLOR_AXENDA).toUpperCase(),
+    color_secundario: (estudio?.color_secundario || SECUNDARIO_AXENDA).toUpperCase(),
+  });
+  const [colores, setColores] = useState(coloresGuardados);
+  const guardados = coloresGuardados();
+  const coloresCambiados = colores.color_primario !== guardados.color_primario || colores.color_secundario !== guardados.color_secundario;
+  useEffect(()=>{
+    if (tab==="estudio") aplicarColores(colores.color_primario, colores.color_secundario);
+    else aplicarMarca(_estudio);
+  },[colores, tab, estudio]);
+  useEffect(()=>()=>aplicarMarca(_estudio),[]);
 
   function setVal(k,v){ setCfg(prev=>({...prev,[k]:v})); }
 
@@ -3370,24 +3693,32 @@ function ViewConfig({ topes, onRefresh, estudio, onMarca }) {
         alert(`Error al guardar (${r.status}): ${d.errors?.join(", ")||d.detail||"Intentá de nuevo"}`);
       } else {
         setOkKey(sKey); setTimeout(()=>setOkKey(null),2500);
-        if (claves.includes("nombre_estudio") && (cfg.nombre_estudio||"").trim() && onMarca) onMarca({ ...estudio, nombre: cfg.nombre_estudio.trim() });
       }
     } catch(e){ alert("Error al guardar: "+e.message); }
     setGKey(null);
   }
 
-  async function importarTabla(tipo, e) {
-    const file=e.target.files[0]; if(!file) return;
-    setImp(tipo);
+  // Datos del estudio y colores con un solo botón.
+  async function guardarEstudio() {
+    if (!esColorHex(colores.color_primario) || !esColorHex(colores.color_secundario)) { alert("Los colores tienen que ser códigos como #2BAF82."); return; }
+    const dia = parseInt(cfg.honorarios_dia_vencimiento, 10);
+    if (!(dia >= 1 && dia <= 28)) { alert("El día de vencimiento de los honorarios tiene que estar entre 1 y 28."); return; }
+    setGKey("estudio");
     try {
-      const fd=new FormData(); fd.append("file",file);
-      const res=await apiFetch(`${BACKEND_URL}/configuracion/importar-tabla/${tipo}`,{method:"POST",body:fd});
-      const d=await res.json();
-      if(d.ok){ setIRs(prev=>({...prev,[tipo]:d})); onRefresh(); cargarComps(); setModalTabla(false); }
-      else alert("Error al importar: "+(d.detail||JSON.stringify(d)));
-    } catch(e){ alert("Error: "+e.message); }
-    setImp(null);
-    if(fileRef.current) fileRef.current.value="";
+      const claves = ["nombre_estudio","whatsapp_estudio","email_estudio","cm05_vencimiento","honorarios_dia_vencimiento"];
+      const payload = {}; claves.forEach(k=>{ payload[k]=cfg[k]??""; });
+      const r = await apiFetch(`${BACKEND_URL}/configuracion`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+      const d = await r.json().catch(()=>({}));
+      if (!r.ok || !d.ok) throw new Error(d.errors?.join(", ")||d.detail||`Error ${r.status}`);
+      if (coloresCambiados) {
+        const r2 = await apiFetch(`${BACKEND_URL}/estudios/me`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(colores)});
+        const d2 = await r2.json().catch(()=>({}));
+        if (!r2.ok) throw new Error(d2.detail || `Error ${r2.status}`);
+      }
+      onMarca({ ...estudio, nombre: (cfg.nombre_estudio||"").trim() || estudio?.nombre, ...colores });
+      setOkKey("estudio"); setTimeout(()=>setOkKey(null),2500);
+    } catch(e) { alert("No se pudo guardar: "+e.message); }
+    setGKey(null);
   }
 
   if (!cfg) return <div style={{padding:"40px",textAlign:"center",color:"var(--muted)"}}>Cargando configuración...</div>;
@@ -3409,118 +3740,10 @@ function ViewConfig({ topes, onRefresh, estudio, onMarca }) {
       </div>
 
       <div className="tabs" style={{marginBottom:"24px"}}>
-        {[["topes","Topes"],["estudio","Datos del estudio"],["whatsapp","Mensajes WhatsApp"],["sistema","Parámetros"],["tareas","Tareas mensuales"]].map(([k,l])=>(
+        {[["estudio","Datos del estudio"],["whatsapp","Mensajes WhatsApp"],["tareas","Tareas mensuales"],["cuenta","Mi cuenta"]].map(([k,l])=>(
           <button key={k} className={`tab-btn ${tab===k?"active":""}`} onClick={()=>setTab(k)}>{l}</button>
         ))}
       </div>
-
-      {/* ── Tab Topes ── */}
-      {tab==="topes"&&(
-        <div>
-          <div style={{marginBottom:"20px",display:"flex",alignItems:"center",gap:"14px"}}>
-            <button className="btn-primary" style={{fontSize:"13px",padding:"9px 18px"}} onClick={()=>setModalTabla(true)}>↑ Cargar / Actualizar tabla</button>
-            {Object.entries(importResults).length>0&&(()=>{
-              const last=Object.entries(importResults).slice(-1)[0];
-              if(!last) return null;
-              const [tipo,res]=last;
-              return <span style={{fontSize:"12px",color:"var(--green)",fontWeight:"600"}}>✓ {res.actualizados||res.importados} {tipo==="topes_nacionales"?"cat. actualizadas":"registros importados"} ({tipo.replace(/_/g," ")})</span>;
-            })()}
-          </div>
-
-          {modalTabla&&(
-            <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setModalTabla(false)}>
-              <div className="modal">
-                <div className="modal-header">
-                  <div className="modal-title">Cargar / Actualizar tabla</div>
-                  <button className="modal-close" onClick={()=>setModalTabla(false)}>✕</button>
-                </div>
-                <div className="modal-body">
-                  <div className="form-group">
-                    <label className="form-label">Tabla a actualizar</label>
-                    <select className="form-input" value={tipoTabla} onChange={e=>setTipoTabla(e.target.value)}>
-                      <option value="topes_nacionales">Topes nacionales ARCA</option>
-                      <option value="componente_rio_negro">Componente provincial — Río Negro</option>
-                      <option value="componente_neuquen">Componente provincial — Neuquén</option>
-                      <option value="componente_buenos_aires">Componente provincial — Buenos Aires</option>
-                    </select>
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Archivo</label>
-                    <div style={{fontSize:"11px",color:"var(--muted)",marginBottom:"10px",fontFamily:"'DM Mono',monospace",background:"#F0F2F7",padding:"7px 10px",borderRadius:"7px",lineHeight:"1.5"}}>
-                      {FORMAT_INFO[tipoTabla]}
-                    </div>
-                    <input ref={fileRef} type="file" accept=".pdf,.xlsx" style={{display:"none"}} onChange={e=>importarTabla(tipoTabla,e)}/>
-                    <button className="btn-primary" style={{fontSize:"13px"}} onClick={()=>fileRef.current.click()} disabled={!!importando}>
-                      {importando?"Procesando...":"↑ Subir archivo"}
-                    </button>
-                    {importResults[tipoTabla]&&(
-                      <div style={{marginTop:"12px",fontSize:"12px",color:"var(--green)",fontWeight:"600"}}>
-                        ✓ {importResults[tipoTabla].actualizados||importResults[tipoTabla].importados} {tipoTabla==="topes_nacionales"?"categorías actualizadas":"registros importados"}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div className="table-wrap">
-            <div style={{padding:"12px 16px",borderBottom:"1px solid var(--border)",fontSize:"11px",fontWeight:"600",color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.09em",background:"#FAFBFD"}}>
-              Topes y componentes vigentes
-            </div>
-            <div style={{overflowX:"auto"}}>
-              {(()=>{
-                const compMap={};
-                comps.forEach(c=>{ compMap[`${c.provincia}|${c.categoria}|${c.tipo}`]=c.monto; });
-                function comp(prov,cat,tipo){
-                  return compMap[`${prov}|${cat}|${tipo}`]||null;
-                }
-                function compRN(cat){ return comp("Rio Negro",cat,"servicios")||comp("Rio Negro",cat,"unico")||comp("Rio Negro",cat,"bienes"); }
-                function compNQ(cat){ return comp("Neuquen",cat,"servicios")||comp("Neuquen",cat,"unico")||comp("Neuquen",cat,"bienes"); }
-                function compBAS(cat){ return comp("Buenos Aires",cat,"servicios")||comp("Buenos Aires",cat,"unico"); }
-                function compBAB(cat){ return comp("Buenos Aires",cat,"bienes"); }
-                return (
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Cat.</th>
-                        <th>Tope anual</th>
-                        <th>Imp. Int. Serv.</th>
-                        <th>Imp. Int. Bienes</th>
-                        <th>SIPA</th>
-                        <th>Obra Social</th>
-                        <th style={{borderLeft:"2px solid var(--border)"}}>Comp. Río Negro</th>
-                        <th>Comp. Neuquén</th>
-                        <th>Comp. BsAs Serv.</th>
-                        <th>Comp. BsAs Bienes</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {topes.map(t=>{
-                        const rn=compRN(t.categoria), nq=compNQ(t.categoria), bas=compBAS(t.categoria), bab=compBAB(t.categoria);
-                        return (
-                          <tr key={t.categoria}>
-                            <td style={{fontWeight:"700",fontFamily:"'DM Mono',monospace",fontSize:"17px",color:"var(--blue)",paddingLeft:"20px"}}>{t.categoria}</td>
-                            <td style={{fontFamily:"'DM Mono',monospace"}}>{$$(t.tope_anual)}</td>
-                            <td style={{fontFamily:"'DM Mono',monospace"}}>{t.imp_integrado_servicios?$$(t.imp_integrado_servicios):"—"}</td>
-                            <td style={{fontFamily:"'DM Mono',monospace"}}>{t.imp_integrado_bienes?$$(t.imp_integrado_bienes):"—"}</td>
-                            <td style={{fontFamily:"'DM Mono',monospace"}}>{t.aportes_sipa?$$(t.aportes_sipa):"—"}</td>
-                            <td style={{fontFamily:"'DM Mono',monospace"}}>{t.obra_social?$$(t.obra_social):"—"}</td>
-                            <td style={{fontFamily:"'DM Mono',monospace",borderLeft:"2px solid var(--border)",color:rn?"var(--text)":"var(--muted)"}}>{rn?$$(rn):"—"}</td>
-                            <td style={{fontFamily:"'DM Mono',monospace",color:nq?"var(--text)":"var(--muted)"}}>{nq?$$(nq):"—"}</td>
-                            <td style={{fontFamily:"'DM Mono',monospace",color:bas?"var(--text)":"var(--muted)"}}>{bas?$$(bas):"—"}</td>
-                            <td style={{fontFamily:"'DM Mono',monospace",color:bab?"var(--text)":"var(--muted)"}}>{bab?$$(bab):"—"}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                );
-              })()}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── Tab Estudio ── */}
       {tab==="estudio"&&(
@@ -3546,8 +3769,22 @@ function ViewConfig({ topes, onRefresh, estudio, onMarca }) {
             <input className="form-input" value={cfg.cm05_vencimiento||""} onChange={e=>setVal("cm05_vencimiento",e.target.value)} placeholder="15/05"/>
             <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"4px"}}>Se muestra en el portal de los clientes en Convenio. Actualizalo según el calendario de la Comisión Arbitral.</div>
           </div>
-          <SaveRow claves={["nombre_estudio","whatsapp_estudio","email_estudio","cm05_vencimiento"]} sKey="estudio"/>
-          <div className="form-group" style={{marginTop:"20px",paddingTop:"16px",borderTop:"1px solid var(--border)"}}>
+          <div className="form-group">
+            <label className="form-label">Los honorarios vencen el día</label>
+            <input className="form-input" type="number" min="1" max="28" style={{maxWidth:"110px"}} value={cfg.honorarios_dia_vencimiento||""} onChange={e=>setVal("honorarios_dia_vencimiento",e.target.value)} placeholder="10"/>
+            <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"4px"}}>De cada mes. Pasado ese día, en Cuotas del mes los honorarios sin cobrar figuran vencidos.</div>
+          </div>
+        </div>
+      )}
+      {tab==="estudio"&&estudio&&<MarcaEstudio estudio={estudio} colores={colores} setColores={setColores} onMarca={onMarca}/>}
+      {tab==="estudio"&&(
+        <div style={{maxWidth:"620px",marginTop:"16px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:"12px",flexWrap:"wrap"}}>
+            <button className="btn-primary" style={{maxWidth:"190px"}} onClick={guardarEstudio} disabled={guardandoKey==="estudio"}>{guardandoKey==="estudio"?"Guardando...":"Guardar cambios"}</button>
+            {okKey==="estudio"&&<span style={{fontSize:"12px",color:"var(--green)",fontWeight:"600"}}>✓ Guardado</span>}
+            {coloresCambiados&&okKey!=="estudio"&&<span style={{fontSize:"12px",color:"var(--yellow)",fontWeight:"600"}}>Los colores nuevos todavía no están guardados</span>}
+          </div>
+          <div className="detail-section" style={{marginTop:"16px"}}>
             <label style={{display:"flex",alignItems:"center",gap:"8px",fontSize:"13px",fontWeight:"600",cursor:"pointer"}}>
               <input type="checkbox" checked={!!factElec} disabled={factElec===null} onChange={e=>guardarFactElec(e.target.checked)}/>
               Facturar desde la app (vos y los clientes que habilites en su pestaña "Facturar")
@@ -3556,7 +3793,6 @@ function ViewConfig({ topes, onRefresh, estudio, onMarca }) {
           </div>
         </div>
       )}
-      {tab==="estudio"&&estudio&&<MarcaEstudio estudio={estudio} onMarca={onMarca}/>}
 
       {/* ── Tab WhatsApp ── */}
       {tab==="whatsapp"&&(
@@ -3565,6 +3801,7 @@ function ViewConfig({ topes, onRefresh, estudio, onMarca }) {
             {k:"tpl_vencimiento_cuota", label:"Vencimiento de cuota"},
             {k:"tpl_alerta_limite",     label:"Alerta de límite de facturación"},
             {k:"tpl_vencimiento_plan",  label:"Vencimiento de plan de pago"},
+            {k:"tpl_honorarios",        label:"Recordatorio de honorarios"},
           ].map(({k,label})=>(
             <div key={k} className="detail-section" style={{marginBottom:"14px"}}>
               <div className="section-title">{label}</div>
@@ -3575,26 +3812,7 @@ function ViewConfig({ topes, onRefresh, estudio, onMarca }) {
         </div>
       )}
 
-      {/* ── Tab Sistema ── */}
-      {tab==="sistema"&&(
-        <div className="detail-section" style={{maxWidth:"440px"}}>
-          <div className="section-title">Parámetros del sistema</div>
-          <div className="form-group">
-            <label className="form-label">Días para alerta amarilla</label>
-            <input className="form-input" type="number" min="1" value={cfg.dias_alerta_amarilla||""} onChange={e=>setVal("dias_alerta_amarilla",e.target.value)} placeholder="10" style={{maxWidth:"120px"}}/>
-            <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"4px"}}>Días antes del vencimiento para mostrar la alerta amarilla en el portal.</div>
-          </div>
-          <div className="form-group">
-            <label className="form-label">Ciclo activo de recategorización</label>
-            <select className="form-input" value={cfg.ciclo_activo||"Julio"} onChange={e=>setVal("ciclo_activo",e.target.value)} style={{maxWidth:"160px"}}>
-              <option>Enero</option>
-              <option>Julio</option>
-            </select>
-            <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"4px"}}>Próximo corte de recategorización.</div>
-          </div>
-          <SaveRow claves={["dias_alerta_amarilla","ciclo_activo"]} sKey="sistema"/>
-        </div>
-      )}
+      {tab==="cuenta"&&<MiCuenta/>}
 
       {/* ── Tab Tareas ── */}
       {tab==="tareas"&&(()=>{
@@ -3743,9 +3961,9 @@ function LoginScreen({ onLogin }) {
 
 // ── Onboarding wizard ──
 function OnboardingWizard({ onCompletado }) {
-  const [form,setForm]=useState({nombre:"",provincia_principal:"Rio Negro",whatsapp:"",email_contacto:"",color_primario:COLOR_AXENDA});
+  const [form,setForm]=useState({nombre:"",provincia_principal:"Rio Negro",whatsapp:"",email_contacto:"",color_primario:COLOR_AXENDA,color_secundario:SECUNDARIO_AXENDA});
   const [logo,setLogo]=useState(null);
-  useEffect(()=>{ aplicarColor(form.color_primario); },[form.color_primario]);
+  useEffect(()=>{ aplicarColores(form.color_primario, form.color_secundario); },[form.color_primario, form.color_secundario]);
   const [guardando,setGuardando]=useState(false);
   const [error,setError]=useState(null);
   function set(k,v){setForm(p=>({...p,[k]:v}));}
@@ -3764,7 +3982,7 @@ function OnboardingWizard({ onCompletado }) {
       const d=await r.json();
       if (!d.ok) { setError("Error al guardar: "+(d.error||"intentá de nuevo.")); setGuardando(false); return; }
       if (logo) {
-        const fd=new FormData(); fd.append("file",logo);
+        const fd=new FormData(); fd.append("file",await achicarLogo(logo).catch(()=>logo));
         const rl=await apiFetch(`${BACKEND_URL}/estudios/me/logo`,{method:"POST",body:fd}).catch(()=>null);
         if (!rl||!rl.ok) alert("El estudio quedó configurado, pero el logo no se pudo subir. Probá de nuevo desde Configuración → Datos del estudio.");
       }
@@ -3800,18 +4018,18 @@ function OnboardingWizard({ onCompletado }) {
         <div className="form-row">
           <div className="form-group">
             <label className="form-label">Logo del estudio (opcional)</label>
-            <input className="form-input" type="file" accept="image/png,image/jpeg,image/webp" style={{padding:"8px"}}
-              onChange={e=>{const f=e.target.files[0]||null; if(f&&f.size>1024*1024){alert("El logo supera 1 MB.");e.target.value="";return;} setLogo(f);}}/>
+            <input className="form-input" type="file" accept="image/*" style={{padding:"8px"}}
+              onChange={e=>setLogo(e.target.files[0]||null)}/>
           </div>
           <div className="form-group">
-            <label className="form-label">Color primario</label>
+            <label className="form-label">Colores (principal y fondo)</label>
             <div style={{display:"flex",gap:"8px",alignItems:"center"}}>
-              <input type="color" value={form.color_primario} onChange={e=>set("color_primario",e.target.value.toUpperCase())} style={{width:"44px",height:"40px",border:"1px solid var(--border)",borderRadius:"8px",padding:"2px",background:"#fff",cursor:"pointer"}}/>
-              <span style={{fontFamily:"'DM Mono',monospace",fontSize:"13px",color:"var(--muted)"}}>{form.color_primario}</span>
+              <input type="color" title="Color principal" value={form.color_primario} onChange={e=>set("color_primario",e.target.value.toUpperCase())} style={{width:"44px",height:"40px",border:"1px solid var(--border)",borderRadius:"8px",padding:"2px",background:"#fff",cursor:"pointer"}}/>
+              <input type="color" title="Color de fondo (reemplaza al azul)" value={form.color_secundario} onChange={e=>set("color_secundario",e.target.value.toUpperCase())} style={{width:"44px",height:"40px",border:"1px solid var(--border)",borderRadius:"8px",padding:"2px",background:"#fff",cursor:"pointer"}}/>
             </div>
           </div>
         </div>
-        <div style={{fontSize:"11px",color:"#6B7A96",marginBottom:"14px"}}>El logo y el color reemplazan a Axenda en tu panel y en el portal de tus clientes. Podés cambiarlos después en Configuración.</div>
+        <div style={{fontSize:"11px",color:"#6B7A96",marginBottom:"14px"}}>El logo y los colores reemplazan a Axenda en tu panel y en el portal de tus clientes. El primero es el de los botones y el segundo reemplaza al azul. Podés cambiarlos después en Configuración.</div>
         {error&&<div style={{color:"#E04545",fontSize:"13px",marginBottom:"12px"}}>{error}</div>}
         <button className="btn-primary" style={{width:"100%",marginTop:"8px"}} onClick={guardar} disabled={guardando||!form.nombre.trim()}>
           {guardando?"Guardando...":"Comenzar →"}
@@ -4032,8 +4250,8 @@ function App() {
         </nav>
         <div className="sidebar-footer">
           <div className="footer-text" style={{marginBottom:"8px"}}>{session?.user?.email}</div>
-          <button onClick={logout} style={{width:"100%",padding:"8px",background:"#243C65",border:"none",borderRadius:"7px",color:"#8CA0BE",fontSize:"12px",fontWeight:"500",cursor:"pointer",fontFamily:"inherit",transition:"0.15s"}}
-            onMouseOver={e=>e.target.style.color="#E04545"} onMouseOut={e=>e.target.style.color="#8CA0BE"}>
+          <button onClick={logout} style={{width:"100%",padding:"8px",background:"color-mix(in srgb, var(--sidebar) 80%, white)",border:"none",borderRadius:"7px",color:"rgba(255,255,255,0.66)",fontSize:"12px",fontWeight:"500",cursor:"pointer",fontFamily:"inherit",transition:"0.15s"}}
+            onMouseOver={e=>e.target.style.color="#E04545"} onMouseOut={e=>e.target.style.color="rgba(255,255,255,0.66)"}>
             Cerrar sesión
           </button>
           <div className="footer-text" style={{marginTop:"10px"}}>Desarrollado por <a href="https://axenda-contable.netlify.app" target="_blank" rel="noopener">Axenda Contable</a></div>
@@ -4064,7 +4282,7 @@ function App() {
               <div>
                 <div style={{fontWeight:"600",color:"#E04545",marginBottom:"4px"}}>Error al cargar datos</div>
                 <div style={{fontSize:"13px",color:"#6B7A96",marginBottom:"12px"}}>{datosError}</div>
-                <button onClick={cargarDatos} style={{fontSize:"12px",background:"#1B2D4F",color:"#fff",border:"none",borderRadius:"8px",padding:"7px 16px",cursor:"pointer",fontFamily:"inherit",fontWeight:"500"}}>
+                <button onClick={cargarDatos} style={{fontSize:"12px",background:"var(--blue)",color:"#fff",border:"none",borderRadius:"8px",padding:"7px 16px",cursor:"pointer",fontFamily:"inherit",fontWeight:"500"}}>
                   Reintentar
                 </button>
               </div>
@@ -4096,13 +4314,13 @@ function App() {
           ) : seccion==="dashboard" ? (
             <ViewDashboard clientes={clientes} planes={planes} factura={factura} topes={topes} onNavigate={irSeccion}/>
           ) : seccion==="cuotas" ? (
-            <ViewCuotas clientes={clientes} onActualizar={actualizarEstadoPago}/>
+            <ViewCuotas clientes={clientes} onActualizar={actualizarEstadoPago} onCambioCliente={(slug,datos)=>setClientes(prev=>prev.map(x=>x.slug===slug?{...x,...datos}:x))}/>
           ) : seccion==="planes" ? (
             <ViewPlanes clientes={clientes}/>
           ) : seccion==="topes" ? (
             <ViewTopes topes={topes}/>
           ) : seccion==="config" ? (
-            <ViewConfig topes={topes} onRefresh={cargarDatos} estudio={estudio} onMarca={cambiarMarca}/>
+            <ViewConfig estudio={estudio} onMarca={cambiarMarca}/>
           ) : (
             <div>
               <div className="search-bar">

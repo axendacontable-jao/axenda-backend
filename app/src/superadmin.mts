@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto"
 import { HttpError, db, esFechaIso, exigirSuperadmin, hoyArgentina, isoDate, q } from "./core.mts"
 
 // Superadmin: ve y administra todos los estudios. Nunca usa getEstudioId ni el RLS del estudio:
@@ -240,6 +241,42 @@ const superEliminarEstudio: Handler = async ({ req, p }) => {
   return { ok: true, clientes: clientes.length, archivos, cuenta_borrada: cuentaBorrada }
 }
 
+// Contraseña temporal para el dueño del estudio: se muestra una sola vez al superadmin, nunca se guarda
+// ni se loguea. También confirma el email (si el mail de confirmación nunca le llegó, ya puede entrar).
+function contrasenaTemporal() {
+  const letras = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789"
+  return "Axenda-" + [...randomBytes(10)].map((b) => letras[b % letras.length]).join("")
+}
+
+const superRestablecerPassword: Handler = async ({ req, p }) => {
+  const yo = await exigirSuperadmin(req)
+  const e = await estudioPorId(p.id)
+  if (!e.owner_id) throw new HttpError(409, "El estudio no tiene una cuenta asociada")
+  if (e.owner_id === yo.id || (await superadminIds()).has(e.owner_id)) {
+    throw new HttpError(409, "Tu propia contraseña se cambia desde Configuración → Mi cuenta")
+  }
+  const password = contrasenaTemporal()
+  const { error } = await db().auth.admin.updateUserById(e.owner_id, { password, email_confirm: true })
+  if (error) throw new HttpError(500, `No se pudo cambiar la contraseña: ${error.message}`)
+  console.log(`[superadmin] contraseña temporal generada para el estudio ${e.id}`)
+  return { ok: true, password }
+}
+
+// Topes nacionales y componentes provinciales vigentes (tablas compartidas por todos los estudios).
+const superTablas: Handler = async ({ req }) => {
+  await exigirSuperadmin(req)
+  const [topes, comps] = await Promise.all([
+    q(db().from("topes_categoria").select("*").order("categoria")),
+    q(db().from("componentes_provinciales").select("*").order("vigente_desde", { ascending: false })),
+  ])
+  const vistos = new Map<string, any>()
+  for (const c of comps ?? []) {
+    const k = `${c.provincia}|${c.categoria}|${c.tipo}`
+    if (!vistos.has(k)) vistos.set(k, c)
+  }
+  return { topes: topes ?? [], componentes: [...vistos.values()] }
+}
+
 // ── Cuotas mensuales de los estudios ─────────────────────────────────────────
 
 function periodo(data: Record<string, any>) {
@@ -325,6 +362,8 @@ export const rutasSuperadmin: [string, string, Handler][] = [
   ["POST", "/superadmin/cuotas/generar", superGenerarCuotas],
   ["PATCH", "/superadmin/cuotas/:id", superActualizarCuota],
   ["DELETE", "/superadmin/cuotas/:id", superBorrarCuota],
+  ["GET", "/superadmin/tablas", superTablas],
+  ["POST", "/superadmin/estudios/:id/password", superRestablecerPassword],
   ["GET", "/superadmin/estudios/:id", superEstudio],
   ["PATCH", "/superadmin/estudios/:id", superActualizarEstudio],
   ["DELETE", "/superadmin/estudios/:id", superEliminarEstudio],

@@ -23,11 +23,11 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 }
 #loading-screen.hidden { opacity:0; pointer-events:none; }
 .loading-logo { font-size:28px; font-weight:700; color:var(--green-claro); letter-spacing:.06em; margin-bottom:6px; }
-.loading-sub  { font-size:11px; color:#5D8AB0; letter-spacing:.14em; text-transform:uppercase; margin-bottom:36px; }
-.loading-bar-track { width:200px; height:3px; background:#243C65; border-radius:3px; overflow:hidden; }
+.loading-sub  { font-size:11px; color:rgba(255,255,255,.5); letter-spacing:.14em; text-transform:uppercase; margin-bottom:36px; }
+.loading-bar-track { width:200px; height:3px; background:rgba(255,255,255,.15); border-radius:3px; overflow:hidden; }
 .loading-bar-fill  { height:100%; background:var(--green); border-radius:3px; animation:ldp 1.6s ease-out forwards; }
 @keyframes ldp { from{width:0} to{width:100%} }
-.loading-msg { font-size:12px; color:#5D8AB0; margin-top:12px; }
+.loading-msg { font-size:12px; color:rgba(255,255,255,.5); margin-top:12px; }
 /* Marca blanca: logo del estudio sobre fondo blanco para que se vea en el azul. */
 .marca-logo { display:none; max-width:200px; max-height:64px; object-fit:contain; background:#fff; border-radius:10px; padding:6px 10px; margin:0 auto 14px; }
 .topbar-marca { display:flex; align-items:center; gap:12px; min-width:0; }
@@ -38,6 +38,9 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 .portal-footer a:hover { color:var(--green); }
 .login-credito { text-align:center; margin-top:14px; font-size:11px; color:rgba(255,255,255,.3); }
 .login-credito a { color:rgba(255,255,255,.45); }
+.chip-sug { font-size:12px; padding:5px 11px; border:1px solid var(--border); border-radius:16px; background:#fff; cursor:pointer; font-family:inherit; color:var(--text); max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.chip-sug:hover { border-color:var(--green); color:var(--green); }
+.sug-fila { display:flex; gap:6px; flex-wrap:wrap; margin:-4px 0 12px; }
 
 /* ── LOGIN ── */
 #login-screen {
@@ -728,6 +731,17 @@ function oscurecer(hex, f = 0.8) {
   const n = parseInt(hex.slice(1), 16);
   return "#" + [n >> 16, (n >> 8) & 255, n & 255].map(v => Math.round(v * f).toString(16).padStart(2, "0")).join("");
 }
+// Color de fondo del estudio (reemplaza al azul marino). Lleva texto blanco: si es claro, se oscurece.
+function oscuroLegible(hex) {
+  const lin = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+  const n = parseInt(hex.slice(1), 16);
+  let rgb = [n >> 16, (n >> 8) & 255, n & 255];
+  for (let i = 0; i < 14; i++) {
+    if (0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2]) <= 0.16) break;
+    rgb = rgb.map(v => Math.round(v * 0.85));
+  }
+  return "#" + rgb.map(v => v.toString(16).padStart(2, "0")).join("");
+}
 // Versión del color que se lee sobre el azul marino: se mezcla con blanco hasta tener contraste.
 function aclarar(hex) {
   const lin = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
@@ -750,6 +764,9 @@ function aplicarMarca(m) {
   document.documentElement.style.setProperty("--green", VERDE);
   document.documentElement.style.setProperty("--green-dark", oscurecer(VERDE));
   document.documentElement.style.setProperty("--green-claro", aclarar(VERDE));
+  const fondo = /^#[0-9a-f]{6}$/i.test(MARCA.color_secundario || "") ? oscuroLegible(MARCA.color_secundario) : "#1B2D4F";
+  document.documentElement.style.setProperty("--sidebar-bg", fondo);
+  document.documentElement.style.setProperty("--blue", fondo);
   const nombre = nombreEstudio();
   document.title = `${nombre} – Portal del Cliente`;
   document.querySelectorAll("[data-marca-nombre]").forEach(el => { el.textContent = nombre; });
@@ -1326,6 +1343,26 @@ function leerFormFactura() {
   });
 }
 
+// Toca una sugerencia: completa el receptor (y la última descripción si todavía no escribió una).
+function usarReceptorFactura(i) {
+  const r = FE?.sugerencias?.receptores?.[i];
+  if (!r) return;
+  leerFormFactura();
+  Object.assign(FE_FORM, {
+    doc_tipo: String(r.doc_tipo), doc_nro: r.doc_nro, receptor_nombre: r.nombre || "",
+    condicion_iva: r.condicion_iva ? String(r.condicion_iva) : FE_FORM.condicion_iva,
+    descripcion: FE_FORM.descripcion || r.ultima_descripcion || "", error: "",
+  });
+  renderFormFactura();
+}
+function usarDescripcionFactura(i) {
+  const d = FE?.sugerencias?.descripciones?.[i];
+  if (!d) return;
+  leerFormFactura();
+  FE_FORM.descripcion = d;
+  renderFormFactura();
+}
+
 function renderFormFactura() {
   const f = FE_FORM;
   const el = document.getElementById("factura-modal-inner");
@@ -1344,12 +1381,16 @@ function renderFormFactura() {
           ${opt({ 99: "Consumidor final", 80: "CUIT", 96: "DNI" }, f.doc_tipo)}</select></div>
         ${f.doc_tipo !== "99" ? `<div><div class="fe-label">${f.doc_tipo === "80" ? "CUIT" : "DNI"}</div><input id="fe-doc_nro" inputmode="numeric" value="${escHtml(f.doc_nro)}"></div>` : ""}
       </div>
+      ${(FE.sugerencias?.receptores || []).length ? `<div class="fe-label">Le facturaste antes a</div><div class="sug-fila">${FE.sugerencias.receptores.map((r, i) =>
+        `<button type="button" class="chip-sug" title="${escHtml(`${FE.tipos_doc[r.doc_tipo] || ""} ${r.doc_nro}`)}" onclick="usarReceptorFactura(${i})">${escHtml(r.nombre)}</button>`).join("")}</div>` : ""}
       ${f.doc_tipo === "80" ? `<button class="btn-accion" style="margin:-4px 0 12px" onclick="buscarReceptorFactura()">Buscar nombre en ARCA</button>` : ""}
       ${f.doc_tipo !== "99" ? `<div class="fe-grid">
         <div><div class="fe-label">Nombre o razón social</div><input id="fe-receptor_nombre" value="${escHtml(f.receptor_nombre)}"></div>
         <div><div class="fe-label">Condición frente al IVA</div><select id="fe-condicion_iva">${opt(FE.condiciones_iva, f.condicion_iva)}</select></div>
       </div>` : ""}
       <div class="fe-label">Descripción</div><input id="fe-descripcion" value="${escHtml(f.descripcion)}" placeholder="Honorarios profesionales de octubre">
+      ${(FE.sugerencias?.descripciones || []).length ? `<div class="sug-fila">${FE.sugerencias.descripciones.map((d, i) =>
+        `<button type="button" class="chip-sug" title="${escHtml(d)}" onclick="usarDescripcionFactura(${i})">${escHtml(d)}</button>`).join("")}</div>` : ""}
       <div class="fe-label">Monto total</div><input id="fe-importe" inputmode="decimal" value="${escHtml(f.importe)}" placeholder="150.000,00">
       <div class="modal-btns"><button class="btn-sec" onclick="cerrarFactura()">Cancelar</button><button class="btn-pri" onclick="revisarFactura()">Revisar</button></div>`;
   } else if (f.paso === "confirmar" || f.paso === "enviando") {
@@ -1705,11 +1746,19 @@ function renderBoveda(docs) {
   const lista = [...(docs || []), ...planesPdf].sort((a, b) =>
     tipoDoc(a.tipo)[2] - tipoDoc(b.tipo)[2] || fechaDe(b).localeCompare(fechaDe(a)));
 
-  let html = `<div class="doc-item">
+  let html = `<a href="#" class="doc-item" onclick="verConstanciaOficial(event)">
     <div class="doc-icon">🏛️</div>
     <div class="doc-info">
       <div class="doc-name">Constancia de inscripción</div>
-      <div class="doc-date"><span class="doc-badge tb-constancia">Constancia</span>Al día de hoy, desde ARCA · <a href="#" onclick="verConstanciaOficial(event)" style="color:var(--muted)">ver la oficial</a></div>
+      <div class="doc-date"><span class="doc-badge tb-constancia">Constancia</span>La oficial, en la página de ARCA (tu CUIT queda copiado)</div>
+    </div>
+    <div class="doc-action">Abrir ↗</div>
+  </a>
+  <div class="doc-item">
+    <div class="doc-icon">📄</div>
+    <div class="doc-info">
+      <div class="doc-name">Detalle de inscripción</div>
+      <div class="doc-date"><span class="doc-badge tb-constancia">Detalle</span>Tus datos en ARCA al día de hoy</div>
     </div>
     <button class="doc-dl-btn" id="btn-constancia" onclick="descargarConstancia()">⬇ PDF</button>
   </div>`;
@@ -1743,12 +1792,12 @@ async function descargarConstancia() {
     if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || `Error ${r.status}`); }
     const url = URL.createObjectURL(await r.blob());
     const a = document.createElement("a");
-    a.href = url; a.download = `constancia-inscripcion-${(CLIENTE.cuit || SESSION.cuit || "").replace(/\D/g, "")}.pdf`;
+    a.href = url; a.download = `detalle-inscripcion-${(CLIENTE.cuit || SESSION.cuit || "").replace(/\D/g, "")}.pdf`;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 10000);
     msg.textContent = "";
   } catch (e) {
-    msg.textContent = "No se pudo bajar la constancia: " + e.message;
+    msg.textContent = "No se pudo bajar el detalle de inscripción: " + e.message;
   }
   btn.disabled = false; btn.textContent = "⬇ PDF";
 }

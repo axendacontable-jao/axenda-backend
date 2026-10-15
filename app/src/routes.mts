@@ -1,6 +1,6 @@
 import {
-  ESTADOS_HABILITADOS, HttpError, ahoraIsoZ, clientePorSlug, db, esFechaIso, getEstudioId, hoy, hoyIso, isoDate,
-  logActividad, pyStr, q, sumarMeses, fechaValida,
+  ESTADOS_HABILITADOS, HttpError, ahoraIsoZ, clientePorSlug, db, esFechaIso, exigirSuperadmin, getEstudioId, hoy, hoyArgentina,
+  hoyIso, isoDate, logActividad, pyStr, q, sumarMeses, fechaValida,
 } from "./core.mts"
 import { rutasSuperadmin } from "./superadmin.mts"
 import { buscarEnConstancia, buscarEnPadron, certPem, constanciaCompleta, cuitContador, keyPem, serviciosCacheados } from "./arca.mts"
@@ -163,13 +163,16 @@ const estudiosMe: Handler = async ({ req }) => {
 const COLOR_POR_DEFECTO = "#2BAF82"
 const esColor = (v: unknown): v is string => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v)
 
+const SECUNDARIO_POR_DEFECTO = "#1B2D4F"
+
 const actualizarEstudio: Handler = async ({ req }) => {
   const estudioId = await getEstudioId(req)
-  const update = elegir(await body(req), ["nombre", "onboarding_completo", "facturacion_electronica_habilitada", "color_primario"])
-  if ("color_primario" in update) {
-    if (update.color_primario === null || update.color_primario === "") update.color_primario = COLOR_POR_DEFECTO
-    if (!esColor(update.color_primario)) throw new HttpError(422, "El color tiene que ser un código como #2BAF82")
-    update.color_primario = update.color_primario.toUpperCase()
+  const update = elegir(await body(req), ["nombre", "onboarding_completo", "facturacion_electronica_habilitada", "color_primario", "color_secundario"])
+  for (const [campo, defecto] of [["color_primario", COLOR_POR_DEFECTO], ["color_secundario", SECUNDARIO_POR_DEFECTO]]) {
+    if (!(campo in update)) continue
+    if (update[campo] === null || update[campo] === "") update[campo] = defecto
+    if (!esColor(update[campo])) throw new HttpError(422, "El color tiene que ser un código como #2BAF82")
+    update[campo] = update[campo].toUpperCase()
   }
   if ("nombre" in update) {
     update.nombre = String(update.nombre ?? "").trim().slice(0, 80)
@@ -198,7 +201,7 @@ const subirLogo: Handler = async ({ req }) => {
   const porExtension: Record<string, string> = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp" }
   const tipo = TIPOS_LOGO[adjunto.type] ? adjunto.type : porExtension[adjunto.name.split(".").pop()?.toLowerCase() ?? ""] ?? ""
   if (!TIPOS_LOGO[tipo]) throw new HttpError(415, "El logo tiene que ser PNG, JPG o WEBP")
-  if (adjunto.size > 1024 * 1024) throw new HttpError(413, "El logo supera 1 MB")
+  if (adjunto.size > 2 * 1024 * 1024) throw new HttpError(413, "El logo supera 2 MB")
   const ruta = `${estudioId}/logo-${Date.now()}.${TIPOS_LOGO[tipo]}`
   const storage = db().storage.from(BUCKET_LOGOS)
   const { error } = await storage.upload(ruta, await bytes(adjunto), { contentType: tipo })
@@ -220,11 +223,12 @@ const quitarLogo: Handler = async ({ req }) => {
 const marcaDe = (e: any) => ({
   estudio_id: e.id, nombre: e.nombre ?? "", logo_url: e.logo_url ?? null,
   color_primario: esColor(e.color_primario) ? e.color_primario : COLOR_POR_DEFECTO,
+  color_secundario: esColor(e.color_secundario) ? e.color_secundario : SECUNDARIO_POR_DEFECTO,
 })
 
 const marcaEstudio: Handler = async ({ p }) => {
   if (!/^[0-9a-f-]{36}$/i.test(p.id)) throw new HttpError(404, "Estudio no encontrado")
-  const e = await q(db().from("estudios").select("id,nombre,logo_url,color_primario").eq("id", p.id).maybeSingle())
+  const e = await q(db().from("estudios").select("id,nombre,logo_url,color_primario,color_secundario").eq("id", p.id).maybeSingle())
   if (!e) throw new HttpError(404, "Estudio no encontrado")
   // El WhatsApp del estudio, para "¿Olvidaste tu contraseña?" antes de iniciar sesión.
   const wa = await q(db().from("configuracion").select("valor").eq("estudio_id", e.id).eq("clave", "whatsapp_estudio").maybeSingle()).catch(() => null)
@@ -248,7 +252,8 @@ const completarOnboarding: Handler = async ({ req }) => {
       }
     }
     try {
-      const marca = esColor(data.color_primario) ? { color_primario: data.color_primario.toUpperCase() } : {}
+      const marca: Record<string, string> = {}
+      for (const campo of ["color_primario", "color_secundario"]) if (esColor(data[campo])) marca[campo] = data[campo].toUpperCase()
       await q(db().from("estudios").update({ nombre, onboarding_completo: true, ...marca }).eq("id", estudioId))
     } catch {
       await q(db().from("estudios").update({ nombre }).eq("id", estudioId))
@@ -369,6 +374,7 @@ const crearCliente: Handler = async ({ req }) => {
     iibb_modalidad: get(data, "iibb_modalidad", "monotributo_unificado"),
     tipo_actividad: get(data, "tipo_actividad", "servicios"),
     en_relacion_dependencia: !!get(data, "en_relacion_dependencia", false),
+    honorarios: montoHonorarios(data.honorarios),
     estudio_id: estudioId,
   }
   const { data: filas, error } = await db().from("clientes").insert(cliente).select()
@@ -413,7 +419,8 @@ const actualizarCuota: Handler = async ({ req, p }) => {
 
 const actualizarDatosCliente: Handler = async ({ req, p }) => {
   const estudioId = await getEstudioId(req)
-  const update = elegir(await body(req), ["provincia", "iibb_modalidad", "en_relacion_dependencia", "tipo_actividad", "cuota"])
+  const update = elegir(await body(req), ["provincia", "iibb_modalidad", "en_relacion_dependencia", "tipo_actividad", "cuota", "honorarios"])
+  if ("honorarios" in update) update.honorarios = montoHonorarios(update.honorarios)
   if (!Object.keys(update).length) throw new HttpError(400, "Sin campos válidos")
   await clientePorSlug(p.slug, estudioId)
   await q(db().from("clientes").update(update).eq("slug", p.slug).eq("estudio_id", estudioId))
@@ -734,7 +741,7 @@ const datosPortal: Handler = async ({ req, p }) => {
   }
 
   const estudio = cliente.estudio_id
-    ? await q(d.from("estudios").select("id,nombre,logo_url,color_primario,estado").eq("id", cliente.estudio_id).maybeSingle()).catch(() => null)
+    ? await q(d.from("estudios").select("id,nombre,logo_url,color_primario,color_secundario,estado").eq("id", cliente.estudio_id).maybeSingle()).catch(() => null)
     : null
 
   let cfg: Record<string, string> = {}
@@ -900,7 +907,7 @@ const portalLogin: Handler = async ({ req }) => {
   if (!cliente) return { ok: false, error: "Credenciales incorrectas" }
   if (password !== (cliente.portal_password || cuit)) return { ok: false, error: "Credenciales incorrectas" }
   const estudio = cliente.estudio_id
-    ? await q(db().from("estudios").select("id,nombre,logo_url,color_primario,estado").eq("id", cliente.estudio_id).maybeSingle()).catch(() => null)
+    ? await q(db().from("estudios").select("id,nombre,logo_url,color_primario,color_secundario,estado").eq("id", cliente.estudio_id).maybeSingle()).catch(() => null)
     : null
   // Con el estudio suspendido el portal de sus clientes queda en pausa.
   const suspendido = !!estudio && !ESTADOS_HABILITADOS.includes(estudio.estado)
@@ -1132,8 +1139,9 @@ const pagarCuotaIndividual: Handler = async ({ req, p }) => {
 
 // ── Topes y tablas de configuración ──────────────────────────────────────────
 
+// Topes y componentes provinciales son tablas compartidas por todos los estudios: solo el superadmin las cambia.
 const actualizarTope: Handler = async ({ req, p }) => {
-  await getEstudioId(req)
+  await exigirSuperadmin(req)
   const update = elegir(await body(req), ["tope_anual", "cuota_servicios", "cuota_bienes", "vigente_desde"])
   if (!Object.keys(update).length) throw new HttpError(400, "Sin campos válidos")
   await q(db().from("topes_categoria").update(update).eq("categoria", p.categoria.toUpperCase()))
@@ -1161,7 +1169,7 @@ function primeraPorCategoria<T extends { categoria: string }>(filas: T[]) {
 }
 
 const importarTopes: Handler = async ({ req }) => {
-  await getEstudioId(req)
+  await exigirSuperadmin(req)
   const file = await archivo(req)
   const nombre = (file.name || "").toLowerCase()
   const buf = await bytes(file)
@@ -1256,7 +1264,7 @@ function tipoActividad(v: string) {
 }
 
 const importarTabla: Handler = async ({ req, p }) => {
-  await getEstudioId(req)
+  await exigirSuperadmin(req)
   const tipo = p.tipo
   if (tipo !== "topes_nacionales" && !(tipo in PROVINCIAS)) throw new HttpError(400, `Tipo inválido: ${tipo}`)
   const file = await archivo(req)
@@ -1380,6 +1388,82 @@ const importarTabla: Handler = async ({ req, p }) => {
     )
   }
   return { ok: true, tipo, provincia, importados: resultados.length, detalle: resultados }
+}
+
+// ── Honorarios del estudio (lo que cada cliente le paga al contador por mes) ──
+
+const DIA_HONORARIOS = 10
+
+function montoHonorarios(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null
+  const n = Math.round(Number(v) * 100) / 100
+  if (!(n >= 0 && Number.isFinite(n))) throw new HttpError(422, "Honorarios inválidos")
+  return n
+}
+
+async function diaHonorarios(estudioId: string) {
+  const filas = await q(db().from("configuracion").select("valor").eq("estudio_id", estudioId).eq("clave", "honorarios_dia_vencimiento").limit(1))
+  const dia = parseInt(filas?.[0]?.valor ?? "", 10)
+  return dia >= 1 && dia <= 28 ? dia : DIA_HONORARIOS
+}
+
+function periodoHonorarios(anio: number, mes: number) {
+  if (!(anio >= 2020 && anio <= 2100) || !(mes >= 1 && mes <= 12)) throw new HttpError(422, "Período inválido")
+}
+
+// Clientes activos con sus honorarios, el pago del mes pedido y los últimos 12 meses.
+const listarHonorarios: Handler = async ({ req, query }) => {
+  const estudioId = await getEstudioId(req)
+  const t = hoyArgentina()
+  const anio = query.get("anio") ? entero(query.get("anio")!, "anio") : t.y
+  const mes = query.get("mes") ? entero(query.get("mes")!, "mes") : t.m
+  periodoHonorarios(anio, mes)
+  const desde = anio * 12 + mes - 11
+  const [clientes, pagos, dia] = await Promise.all([
+    q(db().from("clientes").select("id,slug,nombre,apellido,whatsapp,categoria,honorarios")
+      .eq("estudio_id", estudioId).eq("activo", true).order("apellido")),
+    q(db().from("honorarios_pagos").select("cliente_id,anio,mes,monto,fecha_pago")
+      .eq("estudio_id", estudioId).gte("anio", Math.floor((desde - 1) / 12)).lte("anio", anio)),
+    diaHonorarios(estudioId),
+  ])
+  const enRango = (p: any) => p.anio * 12 + p.mes >= desde && p.anio * 12 + p.mes <= anio * 12 + mes
+  const fila = (p: any) => ({ anio: p.anio, mes: p.mes, monto: Number(p.monto), fecha_pago: p.fecha_pago })
+  return {
+    anio, mes, dia_vencimiento: dia,
+    clientes: (clientes ?? []).map((c: any) => {
+      const suyos = (pagos ?? []).filter((p: any) => p.cliente_id === c.id && enRango(p))
+      const delMes = suyos.find((p: any) => p.anio === anio && p.mes === mes)
+      return {
+        ...c, honorarios: c.honorarios === null ? null : Number(c.honorarios),
+        pago: delMes ? fila(delMes) : null, historial: suyos.map(fila),
+      }
+    }),
+  }
+}
+
+// Marca el mes como cobrado (con fecha y monto; por defecto hoy y los honorarios del cliente).
+const cobrarHonorarios: Handler = async ({ req, p }) => {
+  const estudioId = await getEstudioId(req)
+  const anio = entero(p.anio, "anio")
+  const mes = entero(p.mes, "mes")
+  periodoHonorarios(anio, mes)
+  const cliente = await clientePorSlug(p.slug, estudioId, "id,nombre,apellido,honorarios")
+  const data = await body(req)
+  const t = hoyArgentina()
+  const fecha = data.fecha_pago ?? isoDate(t.y, t.m, t.d)
+  if (!esFechaIso(fecha)) throw new HttpError(422, "Fecha de pago inválida")
+  const monto = montoHonorarios(data.monto ?? cliente.honorarios ?? 0) ?? 0
+  await actualizarOInsertar("honorarios_pagos", { monto, fecha_pago: fecha }, { cliente_id: cliente.id, estudio_id: estudioId, anio, mes })
+  await logActividad(cliente.id, `Honorarios de ${mes}/${anio} cobrados (${pesos(monto)})`, estudioId)
+  return { ok: true }
+}
+
+const anularCobroHonorarios: Handler = async ({ req, p }) => {
+  const estudioId = await getEstudioId(req)
+  const cliente = await clientePorSlug(p.slug, estudioId)
+  await q(db().from("honorarios_pagos").delete().eq("cliente_id", cliente.id)
+    .eq("anio", entero(p.anio, "anio")).eq("mes", entero(p.mes, "mes")))
+  return { ok: true }
 }
 
 // ── Configuración ────────────────────────────────────────────────────────────
@@ -1768,6 +1852,10 @@ export const rutas: [string, string, Handler][] = [
   ["DELETE", "/alertas/:id", eliminarAlerta],
 
   ["POST", "/documentos/:slug", crearDocumento],
+
+  ["GET", "/honorarios", listarHonorarios],
+  ["PUT", "/honorarios/:slug/:anio/:mes", cobrarHonorarios],
+  ["DELETE", "/honorarios/:slug/:anio/:mes", anularCobroHonorarios],
 
   ...rutasSuperadmin,
 ]

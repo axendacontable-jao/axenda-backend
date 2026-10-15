@@ -24,7 +24,7 @@
         <ul>
           <li><a href="#registro">Registro</a></li>
           <li><a href="#configurar-estudio">Configurar el estudio</a></li>
-          <li><a href="#marca">Logo y color</a></li>
+          <li><a href="#marca">Logo y colores</a></li>
         </ul>
       </li>
       <li><a href="#clientes">Clientes</a>
@@ -43,9 +43,9 @@
       <li><a href="#recategorizacion">Recategorización</a></li>
       <li><a href="#configuracion">Configuración</a>
         <ul>
-          <li><a href="#topes">Tablas de topes</a></li>
+          <li><a href="#datos-estudio">Datos del estudio</a></li>
           <li><a href="#whatsapp">Plantillas de WhatsApp</a></li>
-          <li><a href="#parametros">Parámetros y tareas</a></li>
+          <li><a href="#cuenta">Tareas y Mi cuenta</a></li>
         </ul>
       </li>
     </ol>
@@ -74,15 +74,15 @@
       </ul>
       <p>Todo esto se puede cambiar después en <span class="boton">Configuración → Datos del estudio</span>.</p>
 
-      <h3 id="marca">Logo y color de tu estudio</h3>
-      <p>Tu logo, tu nombre y tu color reemplazan a Axenda Contable en tu panel y en el portal de tus clientes (botones, barras de progreso y etiquetas).</p>
+      <h3 id="marca">Logo y colores de tu estudio</h3>
+      <p>Tu logo, tu nombre y tus colores reemplazan a Axenda Contable en tu panel y en el portal de tus clientes.</p>
       <ol>
         <li>Andá a <span class="boton">Configuración → Datos del estudio</span> y bajá hasta <strong>Marca del estudio</strong>.</li>
-        <li>Tocá <span class="boton">↑ Subir logo</span> y elegí una imagen PNG, JPG o WEBP de hasta 1 MB. Se ve sobre un recuadro blanco, así que un logo con fondo transparente queda mejor.</li>
-        <li>Elegí el color con el selector, escribí el código (por ejemplo <code>#1E88E5</code>) o tocá uno de los sugeridos. La vista previa cambia en el momento.</li>
-        <li>Tocá <span class="boton">Guardar color</span>. Si no te convence, <span class="boton">Volver al verde de Axenda</span> lo deja como estaba.</li>
+        <li>Tocá <span class="boton">↑ Subir logo</span> y elegí cualquier imagen (PNG, JPG, WEBP o SVG). La app la achica sola antes de subirla, así que no importa el tamaño. Se ve sobre un recuadro blanco: un logo con fondo transparente queda mejor.</li>
+        <li>Elegí el <strong>color principal</strong> (botones, barras de progreso, pestañas y etiquetas) y el <strong>color de fondo</strong>, que reemplaza al azul de la barra lateral, del encabezado y de la pantalla de ingreso del portal. Podés usar el selector, escribir el código (por ejemplo <code>#1E88E5</code>) o tocar uno de los sugeridos. La vista previa cambia en el momento.</li>
+        <li>Tocá <span class="boton">Guardar cambios</span> al final de la página: guarda los datos del estudio y los colores juntos. Mientras no guardes, la app te avisa que los colores nuevos todavía no están guardados.</li>
       </ol>
-      <div class="nota">Elegí un color oscuro o intenso: se usa también para textos sobre fondo blanco, y un color muy claro se lee mal.</div>
+      <div class="nota">El color de fondo lleva texto blanco encima: si elegís uno claro, la app lo oscurece lo justo para que se lea. Para el color principal conviene uno intenso.</div>
       <a class="arriba" href="#inicio">↑ Volver al índice</a>
     </section>
 
@@ -94,7 +94,7 @@
       <ol>
         <li>Tocá <span class="boton">+ Nuevo cliente</span>.</li>
         <li>Escribí el <strong>CUIT</strong>: la app busca en ARCA el nombre, el apellido y la categoría. Revisalos.</li>
-        <li>Completá la <strong>cuota mensual</strong>, la <strong>provincia</strong>, el <strong>tipo de actividad</strong> (servicios o venta de bienes), el <strong>WhatsApp</strong> y la <strong>modalidad de Ingresos Brutos</strong> (monotributo unificado, régimen simplificado, convenio multilateral, etc.).</li>
+        <li>Completá la <strong>cuota del monotributo</strong> (se calcula sola con la categoría y la provincia), tus <strong>honorarios mensuales</strong>, la <strong>provincia</strong>, el <strong>tipo de actividad</strong> (servicios o venta de bienes), el <strong>WhatsApp</strong> y la <strong>modalidad de Ingresos Brutos</strong> (monotributo unificado, régimen simplificado, convenio multilateral, etc.).</li>
         <li>Si trabaja en relación de dependencia, marcá la casilla: la cuota se calcula sin jubilación ni obra social.</li>
         <li>Tocá <span class="boton">Guardar cliente</span>.</li>
       </ol>
@@ -126,23 +126,24 @@
 
       <h3 id="facturar">Facturar desde la app</h3>
       <p>Con la clave fiscal cargada y <span class="boton">Configuración → Datos del estudio → Facturar desde la app</span> activado, en la pestaña <strong>Facturar</strong> del cliente cargás el receptor (CUIT, DNI o consumidor final), la descripción, la fecha y el monto. El robot emite la Factura C en Comprobantes en línea, guarda el PDF oficial en los documentos del cliente y suma el importe a su facturación.</p>
+      <p>Después de la primera factura, el formulario sugiere a quién le facturó antes y las descripciones que ya usó: un toque y se completan solos.</p>
       <p>Antes de confirmar, el robot compara el resumen de ARCA con lo pedido; si algo no coincide, no emite nada y te muestra qué pasó.</p>
       <a class="arriba" href="#inicio">↑ Volver al índice</a>
     </section>
 
     <section id="cuotas">
       <h2>3. Cuotas del mes</h2>
-      <p class="bajada">En <span class="boton">💳 Cuotas del mes</span> ves quién pagó la cuota del monotributo de este mes.</p>
+      <p class="bajada">En <span class="boton">💳 Cuotas del mes</span> controlás los <strong>honorarios</strong> que te paga cada cliente. En una segunda pestaña está el pago de la cuota del monotributo.</p>
+      <h3>Honorarios del estudio</h3>
       <ul>
-        <li>Cada cliente aparece <strong>al día</strong>, <strong>pendiente</strong> o <strong>vencido</strong>. La cuota vence el día 20.</li>
-        <li><strong>Marcar como pagada:</strong> tocá el estado del cliente y cambialo a pagado. Esto es para los clientes sin clave fiscal; los que tienen clave se actualizan solos con lo que dice ARCA.</li>
-        <li>El cliente también puede avisar desde su portal con el botón <span class="boton">✓ Ya pagué</span>.</li>
-        <li>Al empezar un mes nuevo podés reiniciar todos a <strong>pendiente</strong> con el botón de reinicio de la pantalla.</li>
+        <li>Cargá cuánto te paga cada cliente por mes: en el alta, en <span class="boton">✏ Editar datos</span> o directo en la lista de <strong>Clientes sin honorarios cargados</strong>. Con el ✎ lo cambiás cuando quieras.</li>
+        <li>Cada cliente figura <strong>cobrado</strong>, <strong>pendiente</strong> o <strong>vencido</strong>. Vencen el día que elijas en <span class="boton">Configuración → Datos del estudio</span> (por defecto, el 10).</li>
+        <li><strong>Marcar cobrado:</strong> tocá <span class="boton">✓ Marcar cobrado</span>, revisá la fecha y el monto (si te pagó otro importe, cambialo) y confirmá. Si te equivocaste, <span class="boton">Desmarcar</span>.</li>
+        <li><strong>Recordar:</strong> con <span class="boton">💬 Recordar</span> se abre un WhatsApp al cliente con el texto de la <a href="#whatsapp">plantilla de honorarios</a>.</li>
+        <li>Con las flechas ‹ › cambiás de mes. Arriba ves cuánto cobraste del total del mes, y tocando un cliente, sus últimos 12 meses.</li>
       </ul>
-      <h3>Historial de cuotas</h3>
-      <p>Dentro de cada cliente está el historial mes por mes: qué cuotas se pagaron, cuáles se pagaron tarde (con intereses) y cuáles se deben. Con clave fiscal sale de la cuenta corriente de ARCA y de ART Río Negro.</p>
-      <h3>Recordatorios</h3>
-      <p>Desde el Dashboard podés mandar por WhatsApp los avisos de vencimiento a los clientes que todavía no pagaron. El texto sale de las <a href="#whatsapp">plantillas de WhatsApp</a>.</p>
+      <h3>Monotributo (ARCA)</h3>
+      <p>La pestaña <strong>Monotributo (ARCA)</strong> muestra si cada cliente pagó la cuota del monotributo (vence el día 20). Los clientes con clave fiscal se actualizan solos con lo que dice ARCA; los demás se marcan a mano o avisan desde su portal con <span class="boton">✓ Ya pagué</span>. Dentro de cada cliente está el historial mes por mes, con lo que se pagó tarde y lo que se debe.</p>
       <a class="arriba" href="#inicio">↑ Volver al índice</a>
     </section>
 
@@ -173,7 +174,8 @@
       </ol>
       <ul>
         <li>Las <strong>facturas que emite el robot</strong> se guardan solas, con su PDF oficial.</li>
-        <li>La <strong>constancia de inscripción</strong> se descarga en PDF con <span class="boton">⬇ Constancia (PDF)</span>, con los datos actuales de ARCA.</li>
+        <li><span class="boton">Constancia oficial ↗</span> abre la página de ARCA con el CUIT del cliente ya copiado: lo pegás y bajás la constancia oficial.</li>
+        <li><span class="boton">⬇ Detalle de inscripción</span> baja un PDF con los datos actuales del cliente en ARCA (categoría, actividades, domicilio). No reemplaza a la constancia oficial.</li>
         <li>El cliente puede subir sus comprobantes desde el portal (PDF o imagen, hasta 4 MB). Esos aparecen con la etiqueta <strong>Lo subió el cliente</strong>.</li>
       </ul>
       <a class="arriba" href="#inicio">↑ Volver al índice</a>
@@ -205,33 +207,36 @@
 
     <section id="configuracion">
       <h2>7. Configuración</h2>
-      <p class="bajada">En <span class="boton">⚙️ Configuración</span> están las tablas, los mensajes y los datos del estudio.</p>
+      <p class="bajada">En <span class="boton">⚙️ Configuración</span> están los datos del estudio, los mensajes y tu cuenta.</p>
 
-      <h3 id="topes">Tablas de topes y componentes</h3>
-      <ol>
-        <li>Pestaña <strong>Topes</strong> → <span class="boton">↑ Cargar / Actualizar tabla</span>.</li>
-        <li>Elegí qué tabla actualizar: <strong>topes nacionales de ARCA</strong> o el <strong>componente provincial</strong> de Río Negro, Neuquén o Buenos Aires.</li>
-        <li>Subí el PDF o el Excel oficial. La app muestra las columnas que espera para cada tabla.</li>
-      </ol>
-      <p>Actualizalas cada vez que ARCA o la provincia publiquen valores nuevos (en general, en febrero y en agosto). Los topes se usan para el semáforo y el componente provincial para la deuda estimada.</p>
+      <h3 id="datos-estudio">Datos del estudio</h3>
+      <ul>
+        <li><strong>Nombre, WhatsApp y email</strong>: los que ven tus clientes en su portal.</li>
+        <li><strong>Vencimiento del CM05</strong> para los clientes en Convenio Multilateral.</li>
+        <li><strong>Día de vencimiento de los honorarios</strong> (ver <a href="#cuotas">Cuotas del mes</a>).</li>
+        <li><strong>Marca del estudio</strong>: logo y colores (ver <a href="#marca">Logo y colores</a>).</li>
+        <li><strong>Facturar desde la app</strong>: habilita la pestaña Facturar de tus clientes.</li>
+      </ul>
+      <p>Todo se guarda junto con <span class="boton">Guardar cambios</span>.</p>
+      <div class="nota">Las tablas de topes de ARCA y de componentes provinciales son las mismas para todos los estudios y las mantiene Axenda. Las ves en <span class="boton">📊 Topes de categoría</span>.</div>
 
       <h3 id="whatsapp">Plantillas de WhatsApp</h3>
-      <p>Pestaña <strong>Mensajes WhatsApp</strong>. Hay tres plantillas: vencimiento de cuota, alerta de límite de facturación y vencimiento de plan de pago. Tocá las variables para insertarlas en el texto; al enviar se reemplazan por los datos de cada cliente:</p>
+      <p>Pestaña <strong>Mensajes WhatsApp</strong>. Hay cuatro plantillas: vencimiento de cuota del monotributo, alerta de límite de facturación, vencimiento de plan de pago y recordatorio de honorarios. Tocá las variables para insertarlas en el texto; al enviar se reemplazan por los datos de cada cliente:</p>
       <table>
         <tr><th>Variable</th><th>Se reemplaza por</th></tr>
         <tr><td><code>{nombre}</code></td><td>Nombre del cliente</td></tr>
-        <tr><td><code>{monto}</code></td><td>Monto de la cuota</td></tr>
-        <tr><td><code>{mes}</code></td><td>Mes actual</td></tr>
+        <tr><td><code>{monto}</code></td><td>Monto de la cuota o de los honorarios</td></tr>
+        <tr><td><code>{mes}</code></td><td>Mes</td></tr>
         <tr><td><code>{porcentaje}</code> · <code>{margen}</code> · <code>{fecha_corte}</code></td><td>Cuánto del tope usó, cuánto le queda y la fecha del próximo corte</td></tr>
-        <tr><td><code>{numero_cuota}</code> · <code>{nombre_plan}</code> · <code>{fecha_venc}</code></td><td>Datos de la cuota del plan de pago</td></tr>
+        <tr><td><code>{numero_cuota}</code> · <code>{nombre_plan}</code> · <code>{fecha_venc}</code></td><td>Datos de la cuota del plan de pago, o el vencimiento de los honorarios</td></tr>
+        <tr><td><code>{estudio}</code></td><td>Nombre de tu estudio</td></tr>
         <tr><td><code>{link_portal}</code></td><td>Link al portal del cliente</td></tr>
       </table>
 
-      <h3 id="parametros">Parámetros y tareas mensuales</h3>
+      <h3 id="cuenta">Tareas mensuales y Mi cuenta</h3>
       <ul>
-        <li><strong>Parámetros:</strong> cuántos días antes del vencimiento se pone en amarillo la alerta del portal y cuál es el próximo ciclo de recategorización.</li>
         <li><strong>Tareas mensuales:</strong> tu lista de pendientes de cada mes. Aparecen en el Dashboard, se reinician al empezar el mes y, si les ponés día, se ven en el calendario.</li>
-        <li><strong>Datos del estudio:</strong> nombre, WhatsApp, email, vencimiento del CM05, facturación desde la app y <a href="#marca">marca del estudio</a>.</li>
+        <li><strong>Mi cuenta:</strong> cambiá la contraseña con la que entrás al panel. Si te la olvidaste, escribinos y te generamos una temporal.</li>
       </ul>
       <a class="arriba" href="#inicio">↑ Volver al índice</a>
     </section>
