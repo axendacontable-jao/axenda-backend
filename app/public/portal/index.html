@@ -1256,7 +1256,8 @@ function renderFormFactura() {
       <h4>${enCurso ? `${etq}…` : c.estado === "emitida" ? `${escHtml(c.nombre)} emitida` : etq}</h4>
       <p>${enCurso ? "El robot está generando tu factura en ARCA. Tarda 1 a 2 minutos: podés cerrar esta ventana, queda en “Últimas facturas”."
         : c.estado === "emitida" ? `${c.cae ? `CAE ${escHtml(c.cae)}${c.cae_vto ? ` · vence ${fmtFecha(c.cae_vto)}` : ""}<br>` : ""}Quedó guardada en tu bóveda.`
-        : `${escHtml(c.error || "")}<br>Tu contadora ya lo ve en su panel.`}</p>
+        : c.estado === "error" ? "No se generó ninguna factura en ARCA. Tu contadora ya lo ve en su panel y lo resuelve."
+        : "Hay que revisarla en ARCA antes de volver a emitirla. Tu contadora ya lo ve en su panel."}</p>
       ${c.url_pdf ? `<a class="btn-pri" style="display:block;padding:13px;text-decoration:none;margin-bottom:10px" href="${escHtml(c.url_pdf)}" target="_blank" rel="noreferrer">Ver PDF</a>` : ""}
       <button class="btn-sec" style="width:100%;padding:13px" onclick="cerrarFactura()">Cerrar</button></div>`;
   }

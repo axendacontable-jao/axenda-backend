@@ -624,7 +624,7 @@ export async function procesarFactura(facturaId: string) {
       // Si ARCA ya la generó, no se marca como error: hay que revisarla antes de volver a pedirla.
       estado: generada ? "revisar" : "error",
       error: limpiar(generada ? `La factura se generó en ARCA pero no se pudo terminar de guardar: ${fallo.message}` : fallo.message).slice(0, 1500),
-      pantalla: pantalla?.texto ? limpiar(pantalla.texto) : null,
+      pantalla: limpiar([fallo.detalle, pantalla?.texto].filter(Boolean).join(" || ")) || null,
     }).catch(() => {})
     if (pantalla?.captura) await getStore("arca-capturas").set(`factura-${facturaId}`, pantalla.captura).catch(() => {})
   } finally {

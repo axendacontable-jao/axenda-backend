@@ -17,9 +17,11 @@ export type TipoComprobantes = "emitidos" | "recibidos"
 
 export class FalloArca extends Error {
   estado: EstadoSync
-  constructor(estado: EstadoSync, mensaje: string) {
+  detalle: string | null
+  constructor(estado: EstadoSync, mensaje: string, detalle: string | null = null) {
     super(mensaje)
     this.estado = estado
+    this.detalle = detalle
   }
 }
 
@@ -831,6 +833,26 @@ async function escribir(p: Page, selector: string, valor: string, que: string) {
   }).catch(() => {})
 }
 
+// Campos visibles del formulario (id=valor) para diagnosticar un rechazo de ARCA.
+const camposDe = (p: Page) => p.locator("input:visible, select:visible, textarea:visible").evaluateAll((els) =>
+  els.map((e) => {
+    const el = e as HTMLInputElement
+    if (el.type === "password" || el.type === "button" || el.type === "submit") return ""
+    return `${el.id || el.name || el.tagName.toLowerCase()}=${String(el.value ?? "").slice(0, 40)}`
+  }).filter(Boolean).join(" | ")).catch(() => "")
+
+// Tipea como una persona (ARCA calcula subtotales con los eventos del teclado) y sale del campo.
+async function tipear(p: Page, selector: string, valor: string) {
+  const campo = p.locator(selector).first()
+  await campo.click({ timeout: 5000 }).catch(() => {})
+  await campo.fill("").catch(() => {})
+  await campo.pressSequentially(valor, { delay: 60 })
+  await campo.press("Tab").catch(() => {})
+  await campo.evaluate((el) => {
+    for (const ev of ["keyup", "change", "blur"]) el.dispatchEvent(new Event(ev, { bubbles: true }))
+  }).catch(() => {})
+}
+
 export async function emitirFacturaRcel(page: Page, pedido: PedidoFactura, alConfirmar: () => Promise<void>): Promise<ResultadoRcel> {
   const rcel = await abrirServicio(page, /^\s*Comprobantes en l[ií]nea\s*$/i, "Comprobantes en línea")
   const dialogos: string[] = []
@@ -849,7 +871,10 @@ export async function emitirFacturaRcel(page: Page, pedido: PedidoFactura, alCon
     await boton.click()
     await espera()
     await new Promise((r) => setTimeout(r, 800))
-    if (dialogos.length > antes) throw new FalloArca("error", `Comprobantes en línea no aceptó los datos (${paso}): ${dialogos.slice(antes).join(" / ")}`)
+    if (dialogos.length > antes) {
+      throw new FalloArca("error", `Comprobantes en línea no aceptó los datos (${paso}): ${dialogos.slice(antes).join(" / ")}`,
+        `Campos del paso "${paso}": ${await camposDe(rcel)}`)
+    }
   }
   await espera()
 
@@ -930,13 +955,29 @@ export async function emitirFacturaRcel(page: Page, pedido: PedidoFactura, alCon
     const unidades = ops.find((o) => /unidad/i.test(o.texto)) ?? ops.find((o) => o.valor === "7")
     if (unidades) await medida.selectOption(unidades.valor).catch(() => {})
   }
-  // El precio se prueba con punto decimal y, si el subtotal no da, con coma.
-  for (const formato of [pedido.importe.toFixed(2), pedido.importe.toFixed(2).replace(".", ",")]) {
-    await escribir(rcel, "#detalle_precio1", formato, "precio")
-    await rcel.locator("#detalle_precio1").press("Tab").catch(() => {})
-    await new Promise((r) => setTimeout(r, 600))
-    const subtotal = parseMonto(await rcel.locator("#detalle_subtotal1").inputValue().catch(() => "")) ?? -1
-    if (Math.abs(subtotal - pedido.importe) < 0.01) break
+  // ARCA pide los importes con punto decimal ("15.00") y calcula bonificación y subtotal al tipear.
+  const precio = pedido.importe.toFixed(2)
+  await tipear(rcel, "#detalle_cantidad1", "1")
+  await tipear(rcel, "#detalle_precio1", precio)
+  await new Promise((r) => setTimeout(r, 700))
+  // Campos del renglón 1 por nombre: % de bonificación, importe bonificado y subtotal.
+  const fila = await rcel.locator("input[id^='detalle_'][id$='1']").evaluateAll((els) => els.map((e) => ({ id: e.id, valor: (e as HTMLInputElement).value })))
+  const idDe = (re: RegExp) => fila.find((c) => re.test(c.id))?.id ?? null
+  const idPorcentaje = idDe(/porcentaje|bonif.*%|_bon\d|porc/i)
+  const idImporteBonif = idDe(/importe.*bonif|bonif.*importe|imp.*bon/i)
+  const idSubtotal = idDe(/subtotal/i)
+  const valorDe = async (id: string | null) => (id ? await rcel.locator(`#${id}`).inputValue().catch(() => "") : "")
+  if (idPorcentaje && !(await valorDe(idPorcentaje)).trim()) await tipear(rcel, `#${idPorcentaje}`, "0")
+  // Si ARCA igual no calculó, se completan con los valores que corresponden (sin bonificación).
+  const subtotal = Number(await valorDe(idSubtotal))
+  if (idSubtotal && !(Math.abs(subtotal - pedido.importe) < 0.01)) {
+    for (const [id, valor] of [[idImporteBonif, "0.00"], [idSubtotal, precio]] as const) {
+      if (!id) continue
+      await rcel.locator(`#${id}`).evaluate((el, v) => {
+        (el as HTMLInputElement).value = v
+        el.dispatchEvent(new Event("change", { bubbles: true }))
+      }, valor).catch(() => {})
+    }
   }
   await continuar("detalle")
 
