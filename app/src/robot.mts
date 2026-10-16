@@ -841,11 +841,21 @@ export function fechaEnResumen(texto: string): string | null {
   return `${m[1].padStart(2, "0")}/${m[2].padStart(2, "0")}/${anio}`
 }
 
-// Marca la condición de venta "Contado": la casilla cuyo texto (etiqueta o texto pegado) dice Contado.
+// Casillas del formulario (texto, si se ven y si están marcadas), para diagnosticar la condición de venta.
+const casillasDe = (p: Page) => p.locator("input[type='checkbox']").evaluateAll((els) => els.map((e) => {
+  const el = e as HTMLInputElement
+  const etiqueta = (el.id ? document.querySelector(`label[for='${el.id}']`)?.textContent : "") || el.nextSibling?.textContent || ""
+  const visible = !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length)
+  return `${el.id || el.name || "?"}${visible ? "" : " (oculta)"} "${etiqueta.trim().slice(0, 24)}" ${el.checked ? "✓" : "✗"}`
+}).join(" | ")).catch(() => "")
+
+// Marca la condición de venta "Contado": la casilla visible cuyo texto (etiqueta o texto pegado) dice Contado.
+// Si ya está marcada no la toca (se puede llamar de nuevo para comprobar que siga marcada).
 async function marcarContado(p: Page) {
   const casillas = p.locator("input[type='checkbox']")
   for (let i = 0, n = await casillas.count(); i < n; i++) {
     const c = casillas.nth(i)
+    if (!(await c.isVisible().catch(() => false))) continue
     const texto = await c.evaluate((el) => {
       const etiqueta = el.id ? document.querySelector(`label[for='${el.id}']`)?.textContent ?? "" : ""
       const pegado = el.nextSibling?.textContent ?? ""
@@ -853,10 +863,12 @@ async function marcarContado(p: Page) {
       return `${etiqueta} ${pegado} ${padre}`.replace(/\s+/g, " ")
     }).catch(() => "")
     if (!/contado/i.test(texto)) continue
-    if (!(await c.isChecked().catch(() => false))) await c.check({ force: true }).catch(() => c.click({ force: true }).catch(() => {}))
+    if (!(await c.isChecked().catch(() => false))) await c.check().catch(() => c.click({ force: true }).catch(() => {}))
+    await new Promise((r) => setTimeout(r, 300))
     if (await c.isChecked().catch(() => false)) return
   }
-  throw new FalloArca("error", "No pude marcar la condición de venta \"Contado\" en Comprobantes en línea", `Campos: ${await camposDe(p)}`)
+  throw new FalloArca("error", "No pude marcar la condición de venta \"Contado\" en Comprobantes en línea",
+    `Casillas: ${await casillasDe(p)} — Campos: ${await camposDe(p)}`)
 }
 
 // Campos visibles del formulario (id=valor) para diagnosticar un rechazo de ARCA.
@@ -976,13 +988,20 @@ export async function emitirFacturaRcel(
     await elegirEnLista(rcel, "#idtipodocreceptor", (o) => o.valor === String(pedido.docTipo), "el tipo de documento del receptor")
     await escribir(rcel, "#nrodocreceptor", String(pedido.docNro), "documento del receptor")
     await rcel.locator("#nrodocreceptor").press("Tab").catch(() => {})
-    // Con CUIT, ARCA completa la razón social sola.
+    // Con CUIT, ARCA completa la razón social y el domicilio solo; mientras lo hace puede rearmar el
+    // formulario y desmarcar la condición de venta: se espera a que termine antes de marcarla.
     for (let i = 0; i < 16; i++) {
       if (await rcel.locator("#razonsocialreceptor").inputValue().catch(() => "x")) break
       await new Promise((r) => setTimeout(r, 500))
     }
+    await espera()
+    await new Promise((r) => setTimeout(r, 1500))
   }
   await marcarContado(rcel)
+  // Justo antes de seguir, se comprueba que siga marcada (y se vuelve a marcar si ARCA la limpió).
+  await new Promise((r) => setTimeout(r, 800))
+  await marcarContado(rcel)
+  const casillasReceptor = await casillasDe(rcel)
   await continuar("receptor")
 
   // 6. Detalle: un renglón con la descripción y el monto.
@@ -1037,7 +1056,7 @@ export async function emitirFacturaRcel(
   ].filter(Boolean)
   if (faltan.length) {
     throw new FalloArca("error", `El resumen de ARCA no coincide con lo pedido (${faltan.join(", ")}): no se confirmó la factura`,
-      `Resumen de ARCA: ${resumenArca}`)
+      `Casillas al dejar el receptor: ${casillasReceptor} — Resumen de ARCA: ${resumenArca}`)
   }
   const confirmar = await primeroVisible([rcel.locator("#btngenerar"), rcel.locator("input[value^='Confirmar Datos']")], 10_000)
   if (!confirmar) throw new FalloArca("error", `No encontré "Confirmar Datos..." en el resumen. Botones: ${await describirClickeables(rcel)}`)
