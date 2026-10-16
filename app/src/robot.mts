@@ -846,12 +846,16 @@ const casillasDe = (p: Page) => p.locator("input[type='checkbox']").evaluateAll(
   const el = e as HTMLInputElement
   const etiqueta = (el.id ? document.querySelector(`label[for='${el.id}']`)?.textContent : "") || el.nextSibling?.textContent || ""
   const visible = !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length)
-  return `${el.id || el.name || "?"}${visible ? "" : " (oculta)"} "${etiqueta.trim().slice(0, 24)}" ${el.checked ? "✓" : "✗"}`
-}).join(" | ")).catch(() => "")
+  const extra = `${el.name ? ` name=${el.name}` : ""}${el.form ? "" : " (fuera del form)"}${el.getAttribute("onclick") ? ` onclick=${el.getAttribute("onclick")!.slice(0, 40)}` : ""}`
+  return `${el.id || el.name || "?"}${visible ? "" : " (oculta)"} "${etiqueta.trim().slice(0, 24)}" ${el.checked ? "✓" : "✗"}${extra}`
+}).join(" | ") + " || ocultos: " + [...document.querySelectorAll("input[type='hidden']")]
+  .filter((h) => /pago|venta/i.test(`${(h as HTMLInputElement).name} ${h.id}`))
+  .map((h) => `${(h as HTMLInputElement).name || h.id}=${(h as HTMLInputElement).value.slice(0, 20)}`).join(", ")).catch(() => "")
 
 // Marca la condición de venta "Contado": la casilla visible cuyo texto (etiqueta o texto pegado) dice Contado.
-// Si ya está marcada no la toca (se puede llamar de nuevo para comprobar que siga marcada).
-async function marcarContado(p: Page) {
+// ARCA puede traerla tildada de una factura anterior sin registrarla (el resumen dice "null"): con
+// `reclic` se la destilda y se la vuelve a tildar con clics reales. Sin `reclic` solo comprueba que siga.
+async function marcarContado(p: Page, reclic = false) {
   const casillas = p.locator("input[type='checkbox']")
   for (let i = 0, n = await casillas.count(); i < n; i++) {
     const c = casillas.nth(i)
@@ -863,8 +867,13 @@ async function marcarContado(p: Page) {
       return `${etiqueta} ${pegado} ${padre}`.replace(/\s+/g, " ")
     }).catch(() => "")
     if (!/contado/i.test(texto)) continue
-    if (!(await c.isChecked().catch(() => false))) await c.check().catch(() => c.click({ force: true }).catch(() => {}))
-    await new Promise((r) => setTimeout(r, 300))
+    const clic = () => c.click().catch(() => c.click({ force: true }).catch(() => {}))
+    if (reclic && (await c.isChecked().catch(() => false))) {
+      await clic()
+      await new Promise((r) => setTimeout(r, 400))
+    }
+    if (!(await c.isChecked().catch(() => false))) await clic()
+    await new Promise((r) => setTimeout(r, 400))
     if (await c.isChecked().catch(() => false)) return
   }
   throw new FalloArca("error", "No pude marcar la condición de venta \"Contado\" en Comprobantes en línea",
@@ -997,7 +1006,7 @@ export async function emitirFacturaRcel(
     await espera()
     await new Promise((r) => setTimeout(r, 1500))
   }
-  await marcarContado(rcel)
+  await marcarContado(rcel, true)
   // Justo antes de seguir, se comprueba que siga marcada (y se vuelve a marcar si ARCA la limpió).
   await new Promise((r) => setTimeout(r, 800))
   await marcarContado(rcel)
