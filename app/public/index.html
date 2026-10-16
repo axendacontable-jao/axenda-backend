@@ -1228,6 +1228,17 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onEliminado, onImpor
   const [modalBienvenida, setModalBienvenida] = useState(false);
   const [eliminando, setEliminando] = useState(null);   // apellido escrito para confirmar
   const [borrandoCliente, setBorrandoCliente] = useState(false);
+  // Primer aviso: qué se borra y, si emitió facturas desde la app, cuántas (en ARCA siguen existiendo).
+  async function pedirEliminarCliente() {
+    let emitidas = 0;
+    try {
+      const r = await apiFetch(`${BACKEND_URL}/clientes/${cliente.slug}/facturacion-electronica`);
+      const d = await r.json();
+      emitidas = (d.comprobantes || []).filter(c => c.estado === "emitida").length;
+    } catch {}
+    const aviso = emitidas ? `\n\n⚠ Tiene ${emitidas} factura${emitidas === 1 ? "" : "s"} emitida${emitidas === 1 ? "" : "s"} desde la app: se borra${emitidas === 1 ? "" : "n"} de la app y de su bóveda (en ARCA siguen existiendo).` : "";
+    if (confirm(`¿Eliminar a ${cliente.nombre} ${cliente.apellido}?\n\nSe borran todos sus datos: facturación, gastos, planes de pago, documentos, facturas emitidas, clave fiscal y cobros. No se puede deshacer.${aviso}\n\nSi solo querés dejar de seguirlo, usá "Desactivar" en la lista de clientes.`)) setEliminando("");
+  }
   async function eliminarCliente() {
     setBorrandoCliente(true);
     try {
@@ -1471,7 +1482,7 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onEliminado, onImpor
           <a className="action-chip" href={portalUrl()} target="_blank" rel="noopener">↗ Ver portal</a>
           <button className="action-chip" onClick={()=>setModalBienvenida(true)}>📨 Enviar acceso</button>
           <button className="action-chip" onClick={()=>setModalEditar(true)}>✏ Editar datos</button>
-          <button className="action-chip" style={{color:"var(--red)",borderColor:"#E0454540"}} onClick={()=>{ if(confirm(`¿Eliminar a ${cliente.nombre} ${cliente.apellido}?\n\nSe borran todos sus datos: facturación, gastos, planes de pago, documentos, facturas emitidas, clave fiscal y cobros. No se puede deshacer.\n\nSi solo querés dejar de seguirlo, usá "Desactivar" en la lista de clientes.`)) setEliminando(""); }}>🗑 Eliminar cliente</button>
+          <button className="action-chip" style={{color:"var(--red)",borderColor:"#E0454540"}} onClick={pedirEliminarCliente}>🗑 Eliminar cliente</button>
         </div>
       </div>
 
