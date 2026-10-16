@@ -1,4 +1,5 @@
 import type { Browser, Frame, Locator, Page } from "playwright-core"
+import { readFileSync, readdirSync, rmSync, statfsSync } from "node:fs"
 import {
   type AnticipoArt, type MesCcma, type PlanArca, leerCuentaCorrienteArt, leerPlanesFacilidades, movimientosCcma, parseMonto,
   saldosPorPeriodo,
@@ -25,7 +26,36 @@ export class FalloArca extends Error {
   }
 }
 
+// Espacio libre en /tmp (ahí van Chromium, sus perfiles y las descargas), para diagnosticar.
+export function tmpLibre(): string {
+  try {
+    const f = statfsSync("/tmp")
+    return `${Math.round((f.bavail * f.bsize) / 1048576)} MB libres en /tmp`
+  } catch {
+    return "/tmp sin datos"
+  }
+}
+
+// El servidor del robot se reutiliza entre ejecuciones: si una anterior terminó cortada, pueden quedar
+// navegadores abiertos y perfiles o descargas en /tmp que lo dejan sin memoria ni disco
+// (ERR_INSUFFICIENT_RESOURCES). Antes de abrir el navegador se limpia lo que haya quedado.
+function limpiarRestos() {
+  if (!process.env.AWS_EXECUTION_ENV && !process.env.AWS_LAMBDA_FUNCTION_NAME) return
+  try {
+    for (const pid of readdirSync("/proc").filter((d) => /^\d+$/.test(d) && Number(d) !== process.pid)) {
+      const cmd = (() => { try { return readFileSync(`/proc/${pid}/cmdline`, "utf8") } catch { return "" } })()
+      if (/chrom/i.test(cmd)) { try { process.kill(Number(pid), "SIGKILL") } catch {} }
+    }
+  } catch {}
+  try {
+    for (const d of readdirSync("/tmp")) {
+      if (/^(playwright|\.org\.chromium|puppeteer_dev|core\.)/.test(d)) rmSync(`/tmp/${d}`, { recursive: true, force: true })
+    }
+  } catch {}
+}
+
 export async function abrirNavegador(): Promise<Browser> {
+  limpiarRestos()
   // chromium-min 131 elige las librerías por la versión de Node de Lambda: con 18.x usa las de
   // Amazon Linux 2 y solo reconoce "20.x" para las de AL2023. Node 22+ también corre sobre AL2023,
   // así que se lo presenta como 20.x (si no, Chromium no arranca). Debe hacerse antes del import.
@@ -83,7 +113,12 @@ export async function ingresar(page: Page, cuit: string, clave: string) {
   try {
     await page.goto(LOGIN_URL, { timeout: T, waitUntil: "domcontentloaded" })
   } catch (e: any) {
-    throw new FalloArca("arca_caido", `No abre el login de ARCA: ${e?.message ?? e}`)
+    const msg = String(e?.message ?? e)
+    // No es ARCA: el navegador del robot no tiene recursos (se reintenta con otro navegador).
+    if (/ERR_INSUFFICIENT_RESOURCES|ERR_NO_BUFFER_SPACE|ERR_OUT_OF_MEMORY|crashed/i.test(msg)) {
+      throw new FalloArca("arca_caido", `El navegador del robot se quedó sin recursos en el servidor, no fue ARCA (${tmpLibre()}): ${msg.split("\n")[0]}`)
+    }
+    throw new FalloArca("arca_caido", `No abre el login de ARCA: ${msg}`)
   }
   await detectarBloqueos(page)
   await page.locator("#F1\\:username").fill(cuit, { timeout: T })
