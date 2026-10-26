@@ -72,18 +72,18 @@ const soloDigitos = (s: unknown) => String(s ?? "").replace(/\D/g, "")
 const CATS = "ABCDEFGHIJK"
 const esCat = (s: string) => s.length === 1 && CATS.includes(s)
 
-// Componente ART Río Negro por categoría (vigente desde 01/02/2026)
+// Componente ART Río Negro por categoría (vigente desde 01/08/2026)
 const ART_RIO_NEGRO: Record<string, number> = {
-  A: 17773.24, B: 26330.15, C: 35038.48,
-  D: 52992.43, E: 70657.51, F: 88097.78,
-  G: 105032.36, H: 170242.95, I: 197256.01,
-  J: 231453.81, K: 261120.28,
+  A: 20759.14, B: 30753.61, C: 40924.95,
+  D: 61895.16, E: 82527.97, F: 102898.20,
+  G: 122677.80, H: 198843.76, I: 230395.02,
+  J: 270338.05, K: 304988.49,
 }
 
 const pesos = (n: number) => "$" + String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ".")
 
 // Componente de ART Río Negro de la categoría según la tabla de Configuración (componentes
-// provinciales vigentes); si no está cargada, el valor fijo de febrero de 2026.
+// provinciales vigentes); si no está cargada, el valor fijo de agosto de 2026.
 async function artPorMes(categoria: unknown): Promise<number> {
   const cat = String(categoria ?? "").toUpperCase()
   try {
