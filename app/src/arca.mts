@@ -191,7 +191,7 @@ export async function buscarEnConstancia(cuit: string) {
 
 export type ConstanciaArca = {
   cuit: string; nombre: string; apellido: string; razonSocial: string; tipoPersona: string; estado: string
-  categoria: string; categoriaDescripcion: string; actividad: string; domicilio: string
+  categoria: string; categoriaDescripcion: string; actividad: string; domicilio: string; localidad: string; provincia: string
   impuestos: string[]; actividades: string[]; errores: string[]
 }
 
@@ -231,6 +231,8 @@ export async function constanciaCompleta(cuit: string): Promise<ConstanciaArca> 
     actividad: texto("descripcionActividad", bloque("actividadMonotributista", mono)),
     domicilio: [texto("direccion", dom), texto("localidad", dom), texto("descripcionProvincia", dom), texto("codPostal", dom) && `CP ${texto("codPostal", dom)}`]
       .filter(Boolean).join(", "),
+    localidad: texto("localidad", dom),
+    provincia: texto("descripcionProvincia", dom),
     impuestos: unicos([...bloques("impuesto", mono), ...bloques("impuesto", general)].map((b) => texto("descripcionImpuesto", b))),
     actividades: unicos(bloques("actividad", general).map((b) => texto("descripcionActividad", b))),
     errores,

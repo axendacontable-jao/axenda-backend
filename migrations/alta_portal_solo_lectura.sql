@@ -45,3 +45,7 @@ create index if not exists portal_intentos_estudio on public.portal_intentos (ti
 alter table public.portal_intentos enable row level security;
 
 revoke all on public.portal_accesos, public.altas_portal, public.portal_intentos from anon, authenticated;
+
+-- 2026-11-25 (2): comentario para el contador y pedido de contratar la facturación desde el portal.
+alter table public.altas_portal add column if not exists comentario text;
+alter table public.altas_portal add column if not exists facturacion_solicitada_at timestamptz;

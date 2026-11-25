@@ -10,7 +10,9 @@ import {
   fePortalEstado, fePortalReceptor, feReceptorAdmin, feReintentar, feBorrar,
 } from "./facturacion-electronica.mts"
 import { cifrarClave, exigirSesionPortal, firmarTokenPortal, hashPassword, verificarPassword } from "./secretos.mts"
-import { altaPortal, estadoClavePortal, infoAltaPortal, portalBorrarClave, portalGuardarClave, verificarAltaPortal } from "./alta-portal.mts"
+import {
+  altaPortal, estadoClavePortal, infoAltaPortal, portalBorrarClave, portalContratarFacturacion, portalGuardarClave, verificarAltaPortal,
+} from "./alta-portal.mts"
 import { TAREAS, despacharSincronizacion, finPeriodoProximaRecategorizacion } from "./sincronizacion.mts"
 import { getStore } from "@netlify/blobs"
 import { randomUUID } from "node:crypto"
@@ -774,7 +776,8 @@ const datosPortal: Handler = async ({ req, p }) => {
   }
 
   const estudio = cliente.estudio_id
-    ? await q(d.from("estudios").select("id,nombre,logo_url,color_primario,color_secundario,estado").eq("id", cliente.estudio_id).maybeSingle()).catch(() => null)
+    ? await q(d.from("estudios").select("id,nombre,logo_url,color_primario,color_secundario,estado,facturacion_electronica_habilitada")
+      .eq("id", cliente.estudio_id).maybeSingle()).catch(() => null)
     : null
 
   let cfg: Record<string, string> = {}
@@ -808,6 +811,8 @@ const datosPortal: Handler = async ({ req, p }) => {
 
   // "Emitir factura" en el portal: estudio habilitado y cliente con la facturación configurada.
   const facturacionElectronica = await facturacionDisponible(cliente).catch(() => false)
+  // Cuentas de solo lectura de un estudio que factura: el botón muestra "Contratar facturación".
+  const facturacionContratable = !facturacionElectronica && !!cliente.solo_lectura && !!estudio?.facturacion_electronica_habilitada
 
   const jurisdicciones = cliente.iibb_modalidad === "convenio_multilateral"
     ? (await q(d.from("cliente_jurisdicciones").select("jurisdiccion,nro_inscripcion,alicuota,coeficiente,es_sede")
@@ -856,7 +861,7 @@ const datosPortal: Handler = async ({ req, p }) => {
     deudas, deuda_total: deudaTotal, deuda_desc: deudaDesc, deuda_automatica: arcaAuto,
     deuda_art: deudaDe("ART"), deuda_arca: deudaDe("ARCA"),
     situacion_arca: situacionDe(cliente),
-    facturacion_electronica: facturacionElectronica,
+    facturacion_electronica: facturacionElectronica, facturacion_contratable: facturacionContratable,
     estado_cuota: estadoCuota,
     ultima_recat: ultimaRecat, recat_pendiente: recatPendiente,
     gastos: gastos12, total_gastos: totalGastos,
@@ -1877,6 +1882,7 @@ export const rutas: [string, string, Handler][] = [
   ["POST", "/portal/alta/verificar", verificarAltaPortal],
   ["GET", "/portal/alta/:estudio", infoAltaPortal],
   ["PUT", "/portal/:slug/clave-fiscal", portalGuardarClave],
+  ["POST", "/portal/:slug/contratar-facturacion", portalContratarFacturacion],
   ["DELETE", "/portal/:slug/clave-fiscal", portalBorrarClave],
   ["PATCH", "/portal/cambiar-password", portalCambiarPassword],
   ["PATCH", "/portal/:slug/marcar-pago", portalMarcarPago],

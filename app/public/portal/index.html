@@ -91,6 +91,23 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
 .alta-consent { display:flex; gap:10px; align-items:flex-start; background:var(--bg); border:1.5px solid var(--border); border-radius:11px; padding:12px; font-size:12px; line-height:1.5; color:var(--text); margin-bottom:12px; cursor:pointer; }
 .alta-consent input { margin-top:3px; width:16px; height:16px; flex-shrink:0; accent-color:var(--green); }
 .alta-trampa { position:absolute; left:-5000px; width:1px; height:1px; overflow:hidden; }
+.alta-check { display:flex; gap:10px; align-items:center; font-size:13px; color:var(--text); margin:-4px 0 16px; cursor:pointer; }
+.alta-check input { width:16px; height:16px; accent-color:var(--green); flex-shrink:0; }
+.login-field textarea { width:100%; padding:12px 16px; border:1.5px solid var(--border); border-radius:11px; font-family:inherit; font-size:15px; background:var(--bg); color:var(--text); resize:vertical; min-height:72px; outline:none; }
+.login-field textarea:focus { border-color:var(--blue); background:#fff; }
+/* Cartel "¿Sos vos?" con los datos de ARCA (por encima de la pantalla de inscripción) */
+#alta-confirmar { z-index:9995; }
+.alta-ficha { background:var(--bg); border-radius:12px; padding:2px 14px; margin-bottom:12px; }
+.alta-ficha-fila { display:flex; justify-content:space-between; gap:14px; padding:9px 0; border-bottom:1px solid var(--border); font-size:13px; }
+.alta-ficha-fila:last-child { border-bottom:none; }
+.alta-ficha-fila span:first-child { color:var(--muted); flex-shrink:0; }
+.alta-ficha-fila span:last-child { font-weight:600; text-align:right; }
+.alta-aviso { background:#E8A02014; color:#8A5A00; border-radius:10px; padding:10px 12px; font-size:12.5px; margin-bottom:12px; line-height:1.45; }
+.modal .pwd-rel input { display:block; }
+/* Cartel "Contratar facturación" */
+.contratar-txt { font-size:13.5px; line-height:1.55; color:var(--text); margin:-6px 0 10px; }
+.contratar-lista { list-style:none; margin:0 0 14px; padding:0; }
+.contratar-lista li { font-size:13.5px; padding:4px 0; }
 .link-sec { background:none; border:none; color:var(--muted); font-family:inherit; font-size:13px; cursor:pointer; text-decoration:underline; margin-top:14px; width:100%; }
 
 /* Tarjeta "Tu clave fiscal" (clientes que se inscribieron solos) */
@@ -462,22 +479,33 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
         <label for="alta-email">Email (opcional)</label>
         <input type="email" id="alta-email" placeholder="nombre@correo.com" autocomplete="email">
       </div>
+      <label class="alta-check"><input type="checkbox" id="alta-reldep"> Además trabajo en relación de dependencia</label>
       <div class="login-field">
         <label for="alta-pwd">Contraseña para este portal</label>
-        <input type="password" id="alta-pwd" placeholder="Mínimo 8 caracteres" autocomplete="new-password">
+        <div class="pwd-rel">
+          <input type="password" id="alta-pwd" placeholder="Mínimo 8 caracteres" autocomplete="new-password">
+          <button type="button" class="eye-btn" data-ojo="alta-pwd"></button>
+        </div>
       </div>
       <div class="login-field">
         <label for="alta-pwd2">Repetí la contraseña</label>
-        <input type="password" id="alta-pwd2" autocomplete="new-password">
+        <div class="pwd-rel">
+          <input type="password" id="alta-pwd2" autocomplete="new-password">
+          <button type="button" class="eye-btn" data-ojo="alta-pwd2"></button>
+        </div>
       </div>
       <div class="login-field">
         <label for="alta-clave">Clave fiscal de ARCA</label>
         <div class="pwd-rel">
           <input type="password" id="alta-clave" autocomplete="off" placeholder="La que usás para entrar a ARCA">
-          <button type="button" class="eye-btn" onclick="verClaveAlta('alta-clave')" title="Mostrar u ocultar">👁</button>
+          <button type="button" class="eye-btn" data-ojo="alta-clave"></button>
         </div>
       </div>
       <div class="alta-ayuda">Es distinta de la contraseña del portal. Se guarda cifrada y solo se usa para consultar.</div>
+      <div class="login-field">
+        <label for="alta-comentario">¿En qué te podemos ayudar? (opcional)</label>
+        <textarea id="alta-comentario" maxlength="500" rows="3" placeholder="Por ejemplo: quiero recategorizarme, tengo deuda, necesito facturar…"></textarea>
+      </div>
       <label class="alta-consent"><input type="checkbox" id="alta-acepto"><span id="alta-consent-txt">Cargando…</span></label>
       <div class="alta-trampa" aria-hidden="true"><label>Web <input type="text" id="alta-web" tabindex="-1" autocomplete="off"></label></div>
       <button class="login-btn" id="alta-btn" onclick="enviarAlta()">Inscribirme</button>
@@ -485,6 +513,20 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
     </div>
   </div>
   <p class="login-foot">¿Ya tenés cuenta? <a href="#" onclick="cerrarAlta();return false">Ingresá acá</a></p>
+</div>
+
+<!-- Cartel de confirmación del CUIT (datos de ARCA) -->
+<div class="modal-overlay" id="alta-confirmar">
+  <div class="modal">
+    <h3>¿Sos vos?</h3>
+    <div class="alta-ficha" id="alta-ficha"></div>
+    <div class="alta-aviso" id="alta-ficha-aviso" style="display:none"></div>
+    <div class="nota-chica" style="margin-bottom:14px">Son los datos que informa ARCA para ese CUIT.</div>
+    <div class="modal-btns">
+      <button class="btn-sec" onclick="rechazarCuitAlta()">No, corregir</button>
+      <button class="btn-pri" onclick="confirmarCuitAlta()">Sí, soy yo</button>
+    </div>
+  </div>
 </div>
 
 <!-- INACTIVO -->
@@ -617,7 +659,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
           <div class="proj-warning" id="proj-warning"></div>
           <div id="factura-wrap" style="display:none;margin-top:12px">
             <button class="btn-accion" onclick="abrirFactura()">🧾 Emitir factura</button>
-            <div class="nota-chica">La genera el robot en ARCA con tu clave fiscal (1 a 2 minutos) y queda guardada en tu bóveda.</div>
+            <div class="nota-chica" id="factura-nota">La genera el robot en ARCA con tu clave fiscal (1 a 2 minutos) y queda guardada en tu bóveda.</div>
             <div id="facturas-recientes" style="margin-top:10px"></div>
           </div>
         </div>
@@ -775,6 +817,33 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
   <div class="modal fe" id="factura-modal-inner"></div>
 </div>
 
+<!-- Modal contratar facturación (cuentas de solo lectura) -->
+<div class="modal-overlay" id="contratar-modal">
+  <div class="modal">
+    <div id="contratar-info">
+      <h3>🧾 Facturá desde tu portal</h3>
+      <p class="contratar-txt">Con el servicio de facturación de <span data-marca-nombre>Axenda Contable</span> emitís tus Facturas C desde acá: cargás a quién le facturás, qué y cuánto, y el robot la genera en ARCA en 1 o 2 minutos.</p>
+      <ul class="contratar-lista">
+        <li>✓ La factura queda en PDF en tu bóveda</li>
+        <li>✓ Tu facturación y el semáforo del tope se actualizan solos</li>
+        <li>✓ Antes de confirmar, el robot controla que todo coincida con lo que pediste</li>
+      </ul>
+      <div class="nota-chica" style="margin-bottom:14px">Hoy tu cuenta es de solo lectura: usamos tu clave fiscal únicamente para consultar. Cuando lo contrates, tu contador lo activa.</div>
+      <div class="modal-btns">
+        <button class="btn-sec" onclick="cerrarContratar()">Ahora no</button>
+        <button class="btn-pri" id="contratar-btn" onclick="contratarFacturacion()">Quiero contratarlo</button>
+      </div>
+    </div>
+    <div id="contratar-ok" class="modal-ok" style="display:none">
+      <div class="ok-ico">✅</div>
+      <h4 id="contratar-ok-titulo">¡Listo, le avisamos!</h4>
+      <p id="contratar-ok-txt"><span data-marca-nombre>Axenda Contable</span> te va a contactar para activarlo. Si querés, escribile ahora.</p>
+      <a class="btn-pri" id="contratar-wa" href="#" target="_blank" rel="noreferrer" style="display:block;text-decoration:none;text-align:center;padding:13px">💬 Escribir por WhatsApp</a>
+      <button class="btn-sec" style="width:100%;margin-top:8px;padding:12px" onclick="cerrarContratar()">Cerrar</button>
+    </div>
+  </div>
+</div>
+
 <!-- Modal clave fiscal (clientes inscriptos) -->
 <div class="modal-overlay" id="clave-modal">
   <div class="modal">
@@ -782,7 +851,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
     <div class="err-box" id="clave-err" style="display:none"></div>
     <div class="pwd-rel">
       <input type="password" id="clave-nueva" placeholder="Tu clave fiscal" autocomplete="off">
-      <button type="button" class="eye-btn" style="top:23px" onclick="verClaveAlta('clave-nueva')" title="Mostrar u ocultar">👁</button>
+      <button type="button" class="eye-btn" data-ojo="clave-nueva"></button>
     </div>
     <label class="alta-consent"><input type="checkbox" id="clave-acepto"><span id="clave-consent-txt">Cargando…</span></label>
     <div class="modal-btns">
@@ -798,9 +867,9 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
     <div id="pwd-form-wrap">
       <h3>Cambiar contraseña</h3>
       <div class="err-box" id="pwd-err" style="display:none"></div>
-      <input type="password" id="pwd-actual" placeholder="Contraseña actual" autocomplete="current-password">
-      <input type="password" id="pwd-nueva"  placeholder="Nueva contraseña" autocomplete="new-password">
-      <input type="password" id="pwd-conf"   placeholder="Confirmar nueva contraseña" autocomplete="new-password">
+      <div class="pwd-rel"><input type="password" id="pwd-actual" placeholder="Contraseña actual" autocomplete="current-password"><button type="button" class="eye-btn" data-ojo="pwd-actual"></button></div>
+      <div class="pwd-rel"><input type="password" id="pwd-nueva"  placeholder="Nueva contraseña" autocomplete="new-password"><button type="button" class="eye-btn" data-ojo="pwd-nueva"></button></div>
+      <div class="pwd-rel"><input type="password" id="pwd-conf"   placeholder="Confirmar nueva contraseña" autocomplete="new-password"><button type="button" class="eye-btn" data-ojo="pwd-conf"></button></div>
       <div class="modal-btns">
         <button class="btn-sec" onclick="closePwdModal()">Cancelar</button>
         <button class="btn-pri" id="pwd-submit-btn" onclick="cambiarPassword()">Cambiar</button>
@@ -1225,7 +1294,12 @@ function renderPortal() {
   // Situación fiscal en ARCA, clave fiscal (inscriptos) y facturación electrónica
   renderSituacion();
   renderClaveFiscal();
-  document.getElementById("factura-wrap").style.display = DATOS.facturacion_electronica ? "block" : "none";
+  // Cuentas de solo lectura: el botón está, pero ofrece contratar el servicio de facturación.
+  const contratar = !DATOS.facturacion_electronica && !!DATOS.facturacion_contratable;
+  document.getElementById("factura-wrap").style.display = DATOS.facturacion_electronica || contratar ? "block" : "none";
+  document.getElementById("factura-nota").textContent = contratar
+    ? `Servicio de facturación de ${nombreEstudio()}: tocá el botón para contratarlo.`
+    : "La genera el robot en ARCA con tu clave fiscal (1 a 2 minutos) y queda guardada en tu bóveda.";
   if (DATOS.facturacion_electronica) cargarFacturacion();
 
   // Novedades
@@ -1426,6 +1500,7 @@ function renderFacturasRecientes() {
 }
 
 async function abrirFactura() {
+  if (!DATOS.facturacion_electronica && DATOS.facturacion_contratable) { abrirContratar(); return; }
   if (!FE) await cargarFacturacion();
   if (!FE || !FE.disponible) { alert("La facturación desde el portal no está habilitada. Consultá a tu contadora."); return; }
   FE_FORM = {
@@ -2005,9 +2080,7 @@ document.addEventListener("click", e => {
 function openPwdModal() {
   document.getElementById("profile-dropdown").classList.remove("open");
   document.getElementById("pwd-err").style.display = "none";
-  document.getElementById("pwd-actual").value = "";
-  document.getElementById("pwd-nueva").value  = "";
-  document.getElementById("pwd-conf").value   = "";
+  ocultarClaves(["pwd-actual", "pwd-nueva", "pwd-conf"]);
   document.getElementById("pwd-form-wrap").style.display = "block";
   document.getElementById("pwd-ok-wrap").style.display   = "none";
   document.getElementById("pwd-modal").classList.add("open");
@@ -2062,9 +2135,31 @@ function errAlta(msg) {
   el.textContent = msg || ""; el.style.display = msg ? "block" : "none";
   if (msg) el.scrollIntoView({ block: "center", behavior: "smooth" });
 }
-function verClaveAlta(id) {
-  const inp = document.getElementById(id);
-  inp.type = inp.type === "password" ? "text" : "password";
+// Ojito para ver u ocultar lo que se escribe en un campo de contraseña (botones con data-ojo="<id del campo>").
+const OJO_VER = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+const OJO_OCULTO = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+function ponerOjo(btn, visible) {
+  btn.innerHTML = visible ? OJO_VER : OJO_OCULTO;
+  btn.title = visible ? "Ocultar" : "Mostrar";
+  btn.setAttribute("aria-label", btn.title);
+}
+document.querySelectorAll("[data-ojo]").forEach(btn => {
+  ponerOjo(btn, false);
+  btn.addEventListener("click", () => {
+    const inp = document.getElementById(btn.dataset.ojo);
+    const visible = inp.type === "password";
+    inp.type = visible ? "text" : "password";
+    ponerOjo(btn, visible);
+  });
+});
+// Al cerrar o limpiar un formulario, los campos vuelven a quedar ocultos.
+function ocultarClaves(ids) {
+  ids.forEach(id => {
+    const inp = document.getElementById(id);
+    inp.value = ""; inp.type = "password";
+    const btn = document.querySelector(`[data-ojo="${id}"]`);
+    if (btn) ponerOjo(btn, false);
+  });
 }
 // Si el estudio recibe inscripciones y el texto de la autorización (lo arma el backend).
 async function infoAlta(estudioId) {
@@ -2092,9 +2187,50 @@ async function abrirAlta() {
 }
 function cerrarAlta() {
   ALTA = null;
-  ["alta-pwd", "alta-pwd2", "alta-clave"].forEach(id => { document.getElementById(id).value = ""; });
+  ocultarClaves(["alta-pwd", "alta-pwd2", "alta-clave"]);
   showScreen("login-screen");
 }
+// "¿Sos vos?": nombre, categoría, actividad y localidad que informa ARCA, antes de seguir.
+const primeraMayuscula = (t) => { t = String(t || "").trim().toLowerCase(); return t ? t.charAt(0).toUpperCase() + t.slice(1) : ""; };
+const cadaPalabra = (t) => String(t || "").trim().toLowerCase().replace(/(^|[\s(])\S/g, c => c.toUpperCase());
+function mostrarConfirmacionAlta(d) {
+  const nombre = [d.apellido, d.nombre].filter(Boolean).join(" ");
+  const tipoCat = primeraMayuscula(String(d.categoria_descripcion || "").replace(/^[A-K]\s+/, ""));
+  const monotributo = d.categoria ? `Categoría ${d.categoria}${tipoCat ? ` · ${tipoCat}` : ""}` : (d.monotributo ? "Inscripto" : "No figura");
+  const filas = [
+    ["Nombre", nombre], ["CUIT", fmtCuit(d.cuit)], ["Monotributo", monotributo],
+    ["Actividad", primeraMayuscula(d.actividad)],
+    ["Domicilio fiscal", [cadaPalabra(d.localidad), cadaPalabra(d.provincia)].filter(Boolean).join(", ")],
+    ["Estado en ARCA", primeraMayuscula(d.estado)],
+  ].filter(([, v]) => v);
+  document.getElementById("alta-ficha").innerHTML = filas
+    .map(([k, v]) => `<div class="alta-ficha-fila"><span>${escHtml(k)}</span><span>${escHtml(v)}</span></div>`).join("");
+  const avisos = [];
+  if (!d.monotributo) avisos.push("ARCA no te muestra inscripto en el Monotributo. Podés seguir igual: tu contador lo revisa.");
+  if (d.estado && String(d.estado).toUpperCase() !== "ACTIVO") avisos.push(`Tu CUIT figura como "${primeraMayuscula(d.estado)}" en ARCA.`);
+  const aviso = document.getElementById("alta-ficha-aviso");
+  aviso.textContent = avisos.join(" ");
+  aviso.style.display = avisos.length ? "block" : "none";
+  document.getElementById("alta-quien").innerHTML =
+    `<strong>${escHtml(nombre)}</strong>CUIT ${escHtml(fmtCuit(d.cuit))}${d.categoria ? ` · Monotributo cat. ${escHtml(d.categoria)}` : ""}`;
+  document.getElementById("alta-confirmar").classList.add("open");
+}
+function confirmarCuitAlta() {
+  document.getElementById("alta-confirmar").classList.remove("open");
+  document.getElementById("alta-paso1").style.display = "none";
+  document.getElementById("alta-paso2").style.display = "block";
+  document.getElementById("alta-wa").focus();
+}
+function rechazarCuitAlta() {
+  document.getElementById("alta-confirmar").classList.remove("open");
+  if (ALTA) ALTA.cuit = null;
+  const inp = document.getElementById("alta-cuit");
+  inp.focus(); inp.select();
+}
+document.getElementById("alta-confirmar").addEventListener("click", e => {
+  if (e.target === document.getElementById("alta-confirmar")) rechazarCuitAlta();
+});
+
 function volverPaso1Alta() {
   document.getElementById("alta-paso1").style.display = "block";
   document.getElementById("alta-paso2").style.display = "none";
@@ -2114,12 +2250,7 @@ async function verificarAlta() {
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d.detail || `Error ${r.status}`);
     ALTA.cuit = cuit;
-    const nombre = [d.apellido, d.nombre].filter(Boolean).join(" ");
-    document.getElementById("alta-quien").innerHTML =
-      `<strong>${escHtml(nombre)}</strong>CUIT ${escHtml(fmtCuit(cuit))}${d.categoria ? ` · Monotributo cat. ${escHtml(d.categoria)}` : ""}`;
-    document.getElementById("alta-paso1").style.display = "none";
-    document.getElementById("alta-paso2").style.display = "block";
-    document.getElementById("alta-wa").focus();
+    mostrarConfirmacionAlta(d);
   } catch (e) {
     errAlta(e.message);
   }
@@ -2133,6 +2264,7 @@ async function enviarAlta() {
   if (pwd.length < 8) { errAlta("La contraseña del portal tiene que tener al menos 8 caracteres"); return; }
   if (pwd !== v("alta-pwd2")) { errAlta("Las contraseñas del portal no coinciden"); return; }
   if (!clave) { errAlta("Escribí tu clave fiscal de ARCA"); return; }
+  if (clave === pwd) { errAlta("Usá una contraseña del portal distinta de tu clave fiscal"); return; }
   if (!document.getElementById("alta-acepto").checked) { errAlta("Para inscribirte tenés que marcar la autorización"); return; }
   const btn = document.getElementById("alta-btn");
   btn.disabled = true; btn.textContent = "Creando tu cuenta…";
@@ -2142,11 +2274,12 @@ async function enviarAlta() {
       body: JSON.stringify({
         estudio_id: ALTA.estudio_id, cuit: ALTA.cuit, whatsapp: v("alta-wa"), email: v("alta-email"),
         password: pwd, clave_fiscal: clave, acepto: true, web: v("alta-web"),
+        relacion_dependencia: document.getElementById("alta-reldep").checked, comentario: v("alta-comentario"),
       }),
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok || !d.ok) throw new Error(d.detail || `Error ${r.status}`);
-    ["alta-pwd", "alta-pwd2", "alta-clave"].forEach(id => { document.getElementById(id).value = ""; });
+    ocultarClaves(["alta-pwd", "alta-pwd2", "alta-clave"]);
     SESSION = { slug: d.slug, nombre: d.nombre, apellido: d.apellido, cuit: ALTA.cuit, activo: d.activo, token: d.token };
     saveSession(SESSION);
     ALTA = null;
@@ -2162,6 +2295,37 @@ async function enviarAlta() {
 }
 document.getElementById("alta-cuit").addEventListener("input", function() { this.value = fmtCuit(this.value); });
 document.getElementById("alta-cuit").addEventListener("keydown", e => { if (e.key === "Enter") verificarAlta(); });
+
+// ── CONTRATAR FACTURACIÓN (cuentas de solo lectura) ───────────────────────────
+function abrirContratar() {
+  document.getElementById("contratar-info").style.display = "block";
+  document.getElementById("contratar-ok").style.display = "none";
+  document.getElementById("contratar-modal").classList.add("open");
+}
+function cerrarContratar() {
+  document.getElementById("contratar-modal").classList.remove("open");
+}
+async function contratarFacturacion() {
+  const btn = document.getElementById("contratar-btn");
+  btn.disabled = true; btn.textContent = "Avisando…";
+  let avisado = true;
+  try {
+    const r = await fetch(`${API}/portal/${SESSION.slug}/contratar-facturacion`, { method: "POST", headers: authHeaders() });
+    if (r.status === 401) { sesionVencida(); return; }
+    if (!r.ok) avisado = false;
+  } catch { avisado = false; }
+  btn.disabled = false; btn.textContent = "Quiero contratarlo";
+  document.getElementById("contratar-ok-titulo").textContent = avisado ? "¡Listo, le avisamos!" : "Escribinos para activarlo";
+  document.getElementById("contratar-ok-txt").textContent = avisado
+    ? `${nombreEstudio()} te va a contactar para activarlo. Si querés, escribile ahora.`
+    : `No pudimos avisarle a ${nombreEstudio()} desde acá. Escribile por WhatsApp y lo activan.`;
+  document.getElementById("contratar-wa").href = waUrl("Hola! Quiero contratar el servicio de facturación desde el portal.");
+  document.getElementById("contratar-info").style.display = "none";
+  document.getElementById("contratar-ok").style.display = "block";
+}
+document.getElementById("contratar-modal").addEventListener("click", e => {
+  if (e.target === document.getElementById("contratar-modal")) cerrarContratar();
+});
 
 // ── TU CLAVE FISCAL (clientes inscriptos desde el portal) ─────────────────────
 let CLAVE_POLL = null;
@@ -2210,7 +2374,7 @@ async function abrirClaveModal() {
     || "Autorizo a guardar mi clave fiscal cifrada y a usarla solo para consultar mi información en ARCA.";
 }
 function cerrarClaveModal() {
-  document.getElementById("clave-nueva").value = "";
+  ocultarClaves(["clave-nueva"]);
   document.getElementById("clave-modal").classList.remove("open");
 }
 async function guardarClave() {

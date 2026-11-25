@@ -125,7 +125,10 @@ export async function infoAltaPortal({ p }: Ctx) {
 
 // ── Padrón de ARCA ───────────────────────────────────────────────────────────
 
-type Padron = { nombre: string; apellido: string; categoria: string; estado: string; provincia: string | null; bienes: boolean }
+type Padron = {
+  nombre: string; apellido: string; categoria: string; categoriaDescripcion: string; actividad: string
+  localidad: string; provinciaArca: string; estado: string; provincia: string | null; bienes: boolean; monotributo: boolean
+}
 
 async function datosPadron(cuit: string): Promise<Padron> {
   try {
@@ -133,8 +136,10 @@ async function datosPadron(cuit: string): Promise<Padron> {
     const apellido = c.apellido || c.razonSocial
     if (c.nombre || apellido) {
       return {
-        nombre: c.nombre, apellido, categoria: c.categoria, estado: c.estado, provincia: provinciaDe(c.domicilio),
+        nombre: c.nombre, apellido, categoria: c.categoria, categoriaDescripcion: c.categoriaDescripcion, actividad: c.actividad,
+        localidad: c.localidad, provinciaArca: c.provincia, estado: c.estado, provincia: provinciaDe(c.provincia || c.domicilio),
         bienes: /VENTA|COSAS MUEBLES/i.test(`${c.categoriaDescripcion} ${c.actividad}`),
+        monotributo: !!c.categoria || c.impuestos.some((i) => /MONOTRIBUTO/i.test(i)),
       }
     }
   } catch {
@@ -142,13 +147,17 @@ async function datosPadron(cuit: string): Promise<Padron> {
   }
   try {
     const a = await buscarEnPadron(cuit)
-    return { nombre: a.nombre, apellido: a.apellido, categoria: "", estado: a.estado, provincia: null, bienes: false }
+    return {
+      nombre: a.nombre, apellido: a.apellido, categoria: "", categoriaDescripcion: "", actividad: "", localidad: "", provinciaArca: "",
+      estado: a.estado, provincia: null, bienes: false, monotributo: false,
+    }
   } catch {
     throw new HttpError(404, "ARCA no encontró ese CUIT (o no responde en este momento). Revisalo y probá de nuevo.")
   }
 }
 
-// Paso 1 del formulario: el contribuyente escribe su CUIT y ve a nombre de quién queda la inscripción.
+// Paso 1 del formulario: el contribuyente escribe su CUIT y confirma en un cartel que es él (nombre,
+// categoría, actividad y localidad según ARCA: lo mismo que muestra la constancia pública, sin la calle).
 export async function verificarAltaPortal({ req }: Ctx) {
   const ip = huellaIp(req)
   const d = await cuerpo(req)
@@ -164,20 +173,24 @@ export async function verificarAltaPortal({ req }: Ctx) {
   const padron = await datosPadron(cuit)
   return {
     ok: true, cuit, nombre: padron.nombre, apellido: padron.apellido,
-    categoria: /^[A-K]$/.test(padron.categoria) ? padron.categoria : null, estado: padron.estado || null,
+    categoria: /^[A-K]$/.test(padron.categoria) ? padron.categoria : null,
+    categoria_descripcion: padron.categoriaDescripcion || null, actividad: padron.actividad || null,
+    localidad: padron.localidad || null, provincia: padron.provinciaArca || null,
+    estado: padron.estado || null, monotributo: padron.monotributo,
   }
 }
 
 // Cuota del monotributo como la sugiere el panel al dar de alta: nacional (impuesto + SIPA + obra
-// social) más el componente provincial vigente. Si falta algún dato, queda vacía para el contador.
-async function cuotaSugerida(categoria: string, provincia: string, bienes: boolean): Promise<number | null> {
+// social, que no pagan quienes están en relación de dependencia) más el componente provincial vigente.
+// Si falta algún dato, queda vacía para el contador.
+async function cuotaSugerida(categoria: string, provincia: string, bienes: boolean, relDep: boolean): Promise<number | null> {
   try {
     const topes = await q(db().from("topes_categoria").select("*").eq("categoria", categoria)
       .order("vigente_desde", { ascending: false }).limit(1))
     const tope = topes?.[0]
     if (!tope) return null
     const imp = bienes ? (tope.imp_integrado_bienes || tope.cuota_bienes) : (tope.imp_integrado_servicios || tope.cuota_servicios)
-    const nacional = Number(imp || 0) + Number(tope.aportes_sipa || 0) + Number(tope.obra_social || 0)
+    const nacional = Number(imp || 0) + (relDep ? 0 : Number(tope.aportes_sipa || 0) + Number(tope.obra_social || 0))
     if (!nacional) return null
     const buscar = (tipo: string) => q(db().from("componentes_provinciales").select("monto")
       .eq("provincia", provincia).eq("categoria", categoria).eq("tipo", tipo).lte("vigente_desde", hoyIso())
@@ -220,6 +233,9 @@ export async function altaPortal({ req }: Ctx) {
   if (!clave || clave.length > 64) throw new HttpError(400, "Escribí tu clave fiscal de ARCA.")
   if (clave === password) throw new HttpError(400, "Usá una contraseña del portal distinta de tu clave fiscal.")
   if (d.acepto !== true) throw new HttpError(400, "Para inscribirte tenés que autorizar el uso de tu clave fiscal.")
+  const relDep = d.relacion_dependencia === true
+  // Lo que el contribuyente le quiere contar al contador (opcional).
+  const comentario = String(d.comentario ?? "").replace(/\s+/g, " ").trim().slice(0, 500)
 
   const existe = await q(db().from("clientes").select("id").eq("cuit", cuit).maybeSingle())
   if (existe) throw new HttpError(409, "Ese CUIT ya tiene una cuenta en el portal. Ingresá con tu contraseña o consultá a tu contador.")
@@ -233,9 +249,9 @@ export async function altaPortal({ req }: Ctx) {
   const { data: creado, error } = await db().from("clientes").insert({
     slug, nombre: padron.nombre || "", apellido: padron.apellido || "", cuit, whatsapp, email,
     categoria, categoria_arca: categoria, estado_arca: padron.estado || null, ultima_verificacion_arca: ahora,
-    cuota: categoria ? await cuotaSugerida(categoria, provincia, padron.bienes) : null,
+    cuota: categoria ? await cuotaSugerida(categoria, provincia, padron.bienes, relDep) : null,
     activo: true, provincia, iibb_modalidad: "monotributo_unificado", tipo_actividad: padron.bienes ? "bienes" : "servicios",
-    en_relacion_dependencia: false, estudio_id: estudio.id, solo_lectura: true, autoregistro_at: ahora,
+    en_relacion_dependencia: relDep, estudio_id: estudio.id, solo_lectura: true, autoregistro_at: ahora,
   }).select("id,slug,nombre,apellido").single()
   if (error?.code === "23505") {
     throw new HttpError(409, "Ese CUIT ya tiene una cuenta en el portal. Ingresá con tu contraseña o consultá a tu contador.")
@@ -249,7 +265,7 @@ export async function altaPortal({ req }: Ctx) {
       cliente_id: creado.id, estudio_id: estudio.id, clave_cifrada: cifrarClave(clave, creado.id), actualizada_at: ahora,
     }))
     await q(db().from("altas_portal").insert({
-      cliente_id: creado.id, estudio_id: estudio.id, ip_hash: ip,
+      cliente_id: creado.id, estudio_id: estudio.id, ip_hash: ip, comentario: comentario || null,
       consentimiento: { version: VERSION_CONSENTIMIENTO, texto: textoConsentimiento(estudio.nombre), aceptado_at: ahora },
     }))
   } catch (e: any) {
@@ -263,8 +279,10 @@ export async function altaPortal({ req }: Ctx) {
   await db().from("alertas").insert({
     cliente_id: creado.id, estudio_id: estudio.id, tipo: "arca", icono: "🆕", leida: false,
     titulo: `Nuevo cliente desde el portal: ${nombre}`,
-    descripcion: `Se inscribió solo (CUIT ${cuit}) y cargó su clave fiscal. Queda en solo lectura: el robot trae sus datos de ARCA ` +
-      `pero no emite facturas. Revisá provincia, actividad, cuota y honorarios.`,
+    descripcion: `Se inscribió solo (CUIT ${cuit}, cel. ${whatsapp}${email ? `, ${email}` : ""}) y cargó su clave fiscal. ` +
+      `Queda en solo lectura: el robot trae sus datos de ARCA pero no emite facturas. Revisá provincia, actividad, cuota y honorarios.` +
+      (padron.monotributo ? "" : " Ojo: ARCA no lo muestra inscripto en el Monotributo.") +
+      (comentario ? ` Te escribió: "${comentario}"` : ""),
   }).then(() => {}, () => {})
 
   // El robot trae sus datos de ARCA ahora mismo (solo consultas). Si no arranca, lo hace el cron.
@@ -335,6 +353,27 @@ export async function portalGuardarClave({ req, p }: Ctx) {
     console.error(`[alta-portal] no se pudo iniciar la sincronización de ${c.id}: ${e?.message ?? e}`)
   }
   return { ok: true, clave: await estadoClavePortal(c.id) }
+}
+
+// Botón "Emitir factura" de una cuenta de solo lectura: el cliente pide contratar la facturación.
+// Le llega una alerta al contador (una por día como mucho) con los pasos para activarla.
+export async function portalContratarFacturacion({ req, p }: Ctx) {
+  await exigirSesionPortal(req, p.slug)
+  const c = await q(db().from("clientes").select("id,nombre,apellido,estudio_id,solo_lectura").eq("slug", p.slug).single())
+  const nombre = [c.apellido, c.nombre].filter(Boolean).join(" ")
+  const titulo = `${nombre} quiere contratar la facturación desde el portal`
+  const desde = new Date(Date.now() - DIA).toISOString()
+  const ya = await q(db().from("alertas").select("id").eq("cliente_id", c.id).eq("titulo", titulo).gte("created_at", desde).limit(1))
+  if (!ya?.length) {
+    await q(db().from("alertas").insert({
+      cliente_id: c.id, estudio_id: c.estudio_id, tipo: "factura", icono: "🧾", leida: false, titulo,
+      descripcion: c.solo_lectura
+        ? "Para activarla: en su ficha, ✏ Editar datos → destildá \"Solo lectura\"; después, en la pestaña Facturar, tildá \"El cliente puede emitir facturas desde su portal\"."
+        : "Para activarla: en su ficha, pestaña Facturar, tildá \"El cliente puede emitir facturas desde su portal\".",
+    }))
+    await db().from("altas_portal").update({ facturacion_solicitada_at: ahoraIsoZ() }).eq("cliente_id", c.id).then(() => {}, () => {})
+  }
+  return { ok: true }
 }
 
 export async function portalBorrarClave({ req, p }: Ctx) {
