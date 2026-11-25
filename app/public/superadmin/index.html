@@ -89,6 +89,17 @@ tr.fila:hover td { background:#F7F9FC; }
 .login-card label { display:block; font-size:11px; font-weight:600; color:var(--muted); letter-spacing:0.08em; margin:14px 0 6px; }
 .login-card .input { width:100%; padding:11px 13px; }
 .vacio { text-align:center; padding:28px; color:var(--muted); font-size:13px; }
+td.cambio { background:#E8A02016; }
+td.cambio .nuevo { font-weight:700; }
+.antes { display:block; font-size:11px; color:var(--muted); text-decoration:line-through; }
+.input-monto { width:130px; text-align:right; font-family:'DM Mono',monospace; padding:6px 9px; }
+.input-monto.cambiado { border-color:var(--yellow); background:#E8A02010; }
+.input-monto.invalido { border-color:var(--red); background:#E0454508; }
+.ayuda { font-size:12px; color:var(--muted); line-height:1.6; }
+.ayuda a { color:var(--green); }
+.tabla-compacta { font-size:12px; }
+.tabla-compacta td, .tabla-compacta th { padding:8px 7px; }
+details.otras summary { cursor:pointer; font-size:13px; font-weight:600; color:var(--muted); }
 .pie { font-size:11px; color:var(--muted); text-align:center; margin-top:24px; }
 @media (max-width: 760px) {
   .sidebar { position:static; width:100%; flex-direction:row; align-items:center; }
@@ -444,15 +455,175 @@ const TIPOS_TABLA = {
   componente_neuquen: ["Componente provincial — Neuquén", "PDF o Excel — columnas: Categoría, Monto, Vigente desde"],
   componente_buenos_aires: ["Componente provincial — Buenos Aires", "PDF o Excel — columnas: Categoría, Tipo (servicios/bienes), Monto, Vigente desde"],
 };
+const CATS = "ABCDEFGHIJK".split("");
+const TIPO_TXT = { unico:"Monto", servicios:"Servicios", bienes:"Bienes" };
+// Columnas de topes_categoria. La cuota unificada es el total nacional + el componente de Río Negro.
+const CAMPOS_TOPES = [
+  ["tope_anual","Tope anual"], ["imp_integrado_servicios","Imp. serv."], ["imp_integrado_bienes","Imp. bienes"],
+  ["aportes_sipa","SIPA"], ["obra_social","Obra social"], ["cuota_servicios","Cuota unif. serv."], ["cuota_bienes","Cuota unif. bienes"],
+];
+const $$c = n => n===null||n===undefined||n==="" ? "—" : "$" + Number(n).toLocaleString("es-AR",{ minimumFractionDigits:2, maximumFractionDigits:2 });
+// "2026-08-01" → "01/08/2026" (sin pasar por Date: a medianoche UTC sería el día anterior en Argentina).
+const fechaDia = s => s ? String(s).slice(0,10).split("-").reverse().join("/") : "—";
+// "20.759,14", "20759,14" o "20759.14" → 20759.14
+function leerMonto(s) {
+  let t = String(s ?? "").replace(/[$\s]/g, "");
+  if (!t) return null;
+  if (t.includes(",")) t = t.replace(/\./g, "").replace(",", ".");
+  else if (/^\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, "");
+  const n = Number(t);
+  return /^\d+(\.\d{1,2})?$/.test(t) && n > 0 ? n : null;
+}
+const montoInput = n => n===null||n===undefined||n==="" ? "" : Number(n).toFixed(2).replace(".", ",");
+
+function PreviaArca({ previa, ocupado, onConfirmar, onDescartar }) {
+  const errores = previa.errores || [];
+  return (
+    <div style={{marginTop:"6px"}}>
+      <div className="ayuda" style={{marginBottom:"10px"}}>
+        Leído de <a href={previa.fuente} target="_blank" rel="noopener">la página de categorías de ARCA</a>
+        {previa.vigente_desde && <> · <strong style={{color:"var(--text)"}}>Valores de aplicación desde el {fechaDia(previa.vigente_desde)}</strong></>}
+        . Lo marcado en amarillo cambia (abajo, tachado, el valor actual).
+      </div>
+      {errores.length>0 && (
+        <div className="aviso aviso-error">
+          <strong>No se puede guardar:</strong>
+          <ul style={{margin:"6px 0 0 18px"}}>{errores.map((e,i)=><li key={i}>{e}</li>)}</ul>
+        </div>
+      )}
+      {!errores.length && !previa.hay_cambios && <div className="aviso aviso-ok">La base ya tiene estos valores: no hay nada para actualizar.</div>}
+      {previa.filas.length>0 && (
+        <div className="tabla-wrap"><table className="tabla-compacta">
+          <thead><tr><th>Cat.</th>{CAMPOS_TOPES.map(([k,l])=><th key={k} style={{textAlign:"right"}}>{l}</th>)}<th>Vigente desde</th></tr></thead>
+          <tbody>{previa.filas.map(f=>(
+            <tr key={f.categoria}>
+              <td style={{fontWeight:"700"}}>{f.categoria}</td>
+              {CAMPOS_TOPES.map(([k])=>{
+                const cambia = f.cambios.includes(k);
+                return <td key={k} className={`mono ${cambia?"cambio":""}`} style={{textAlign:"right",whiteSpace:"nowrap"}}>
+                  <span className="nuevo">{$$c(f.nuevo[k])}</span>
+                  {cambia && f.actual && <span className="antes">{$$c(f.actual[k])}</span>}
+                </td>;
+              })}
+              <td className={`mono ${f.cambios.includes("vigente_desde")?"cambio":""}`} style={{whiteSpace:"nowrap"}}>
+                <span className="nuevo">{fechaDia(f.nuevo.vigente_desde)}</span>
+                {f.cambios.includes("vigente_desde") && f.actual && <span className="antes">{fechaDia(f.actual.vigente_desde)}</span>}
+              </td>
+            </tr>
+          ))}</tbody>
+        </table></div>
+      )}
+      <div className="ayuda" style={{marginTop:"8px"}}>
+        Cuota unificada = total nacional (impuesto + SIPA + obra social, verificado contra el total que publica ARCA) + componente de Río Negro
+        {previa.rio_negro_desde ? ` vigente desde el ${fechaDia(previa.rio_negro_desde)}` : ""}. Si Río Negro también cambió, cargalo primero en su grilla de abajo.
+      </div>
+      <div style={{display:"flex",gap:"8px",justifyContent:"flex-end",flexWrap:"wrap",marginTop:"12px"}}>
+        <button className="btn" disabled={ocupado} onClick={onDescartar}>Descartar</button>
+        <button className="btn btn-pri" disabled={ocupado||errores.length>0||!previa.firma||!previa.hay_cambios} onClick={onConfirmar}>{ocupado?"Guardando...":"Confirmar y guardar"}</button>
+      </div>
+    </div>
+  );
+}
+
+function GrillaComponente({ prov, componentes, onGuardado }) {
+  const propias = componentes.filter(c=>c.provincia===prov.provincia);
+  const original = {};
+  for (const c of propias) original[`${String(c.categoria).toUpperCase()}|${c.tipo}`] = Number(c.monto);
+  const desdeOriginal = propias.map(c=>String(c.vigente_desde||"").slice(0,10)).sort().pop() || "";
+  const inicial = () => Object.fromEntries(CATS.flatMap(cat=>prov.tipos.map(t=>[`${cat}|${t}`, montoInput(original[`${cat}|${t}`])])));
+  const [valores,setValores] = useState(inicial);
+  const [desde,setDesde] = useState(desdeOriginal);
+  const [ocupado,setOcupado] = useState(false);
+  const [aviso,setAviso] = useState(null);
+
+  const leidos = Object.fromEntries(Object.entries(valores).map(([k,v])=>[k, leerMonto(v)]));
+  const invalidos = Object.keys(leidos).filter(k=>leidos[k]===null);
+  const cambiados = Object.keys(leidos).filter(k=>leidos[k]!==null && Math.round(leidos[k]*100)!==Math.round((original[k]??0)*100));
+  const hayCambios = cambiados.length>0 || desde!==desdeOriginal;
+  const futura = desde && desde > hoyIso();
+
+  async function guardar() {
+    if (!confirm(`¿Guardar el componente de ${prov.nombre} vigente desde el ${fechaDia(desde)}?${prov.provincia==="Rio Negro"?"\n\nTambién se recalcula la cuota unificada de los topes (total nacional + este componente).":""}`)) return;
+    setOcupado(true); setAviso(null);
+    try {
+      const filas = Object.entries(leidos).map(([k,monto])=>{ const [categoria,tipo]=k.split("|"); return { categoria, tipo, monto }; });
+      const r = await api("/superadmin/componentes", { method:"PUT", body:JSON.stringify({ provincia:prov.provincia, vigente_desde:desde, filas }) });
+      onGuardado(`✓ Componente de ${prov.nombre} guardado (${r.guardados} montos)${r.cuotas_recalculadas?` · cuota unificada recalculada en ${r.cuotas_recalculadas} categoría${r.cuotas_recalculadas===1?"":"s"}`:""}.`);
+    } catch(e) { setAviso({ ok:false, txt:e.message }); setOcupado(false); }
+  }
+  function descartar() { setValores(inicial()); setDesde(desdeOriginal); setAviso(null); }
+
+  return (
+    <div className="card">
+      <div className="card-title">
+        <span>Componente provincial — {prov.nombre}</span>
+        <span className="muted" style={{fontSize:"12px",fontWeight:"500"}}>Vigente desde el {fechaDia(desdeOriginal)}</span>
+      </div>
+      {prov.fuente && (
+        <div className="ayuda" style={{marginBottom:"12px"}}>
+          Los montos salen de la publicación de la Agencia de Recaudación de {prov.nombre}: <a href={prov.fuente} target="_blank" rel="noopener">abrir la publicación ↗</a>. El PDF está dibujado (no se puede leer como texto), así que se cargan a mano.
+        </div>
+      )}
+      {aviso && <div className={`aviso ${aviso.ok?"aviso-ok":"aviso-error"}`}>{aviso.txt}</div>}
+      <div className="tabla-wrap"><table style={{width:"auto"}}>
+        <thead><tr><th>Cat.</th>{prov.tipos.map(t=><th key={t} style={{textAlign:"right"}}>{TIPO_TXT[t]||t}</th>)}</tr></thead>
+        <tbody>{CATS.map(cat=>(
+          <tr key={cat}>
+            <td style={{fontWeight:"700"}}>{cat}</td>
+            {prov.tipos.map(t=>{
+              const k = `${cat}|${t}`;
+              return <td key={t} style={{padding:"5px 10px"}}>
+                <input className={`input input-monto ${invalidos.includes(k)?"invalido":cambiados.includes(k)?"cambiado":""}`} inputMode="decimal"
+                  value={valores[k]} placeholder="0,00" aria-label={`${prov.nombre} categoría ${cat} ${TIPO_TXT[t]||t}`}
+                  onChange={e=>setValores({...valores,[k]:e.target.value})}/>
+                {cambiados.includes(k) && original[k]!==undefined && <span className="antes" style={{textAlign:"right"}}>{$$c(original[k])}</span>}
+              </td>;
+            })}
+          </tr>
+        ))}</tbody>
+      </table></div>
+      <div style={{display:"flex",gap:"10px",alignItems:"flex-end",flexWrap:"wrap",marginTop:"14px"}}>
+        <div><div className="dato-label" style={{marginBottom:"5px"}}>Vigente desde</div><input className="input" type="date" value={desde} onChange={e=>setDesde(e.target.value)}/></div>
+        <button className="btn" disabled={ocupado||!hayCambios} onClick={descartar}>Descartar</button>
+        <button className="btn btn-pri" disabled={ocupado||!hayCambios||invalidos.length>0||!desde} onClick={guardar}>{ocupado?"Guardando...":"Guardar"}</button>
+      </div>
+      {invalidos.length>0 && <div className="ayuda" style={{color:"var(--red)",marginTop:"8px"}}>Completá todos los montos (mayores a cero, con hasta 2 decimales).</div>}
+      {futura && <div className="aviso" style={{background:"#E8A02012",border:"1px solid #E8A02040",color:"#8A5A00",marginTop:"10px",marginBottom:0}}>
+        Con fecha futura la app no usa estos montos hasta el {fechaDia(desde)}, y como reemplazan a los actuales, hasta ese día {prov.nombre} queda sin componente. Conviene guardarlos el mismo día en que entran en vigencia.
+      </div>}
+    </div>
+  );
+}
+
 function Tablas() {
   const [datos,setDatos] = useState(null);
+  const [version,setVersion] = useState(0);
   const [tipo,setTipo] = useState("topes_nacionales");
   const [subiendo,setSubiendo] = useState(false);
   const [aviso,setAviso] = useState(null);
+  const [previa,setPrevia] = useState(null);
+  const [ocupado,setOcupado] = useState(false);
   async function cargar() {
-    try { setDatos(await api("/superadmin/tablas")); } catch(e) { setAviso({ ok:false, txt:e.message }); }
+    try { setDatos(await api("/superadmin/tablas")); setVersion(v=>v+1); } catch(e) { setAviso({ ok:false, txt:e.message }); }
   }
   useEffect(()=>{ cargar(); },[]);
+  async function traerArca() {
+    setOcupado(true); setAviso(null); setPrevia(null);
+    try { setPrevia(await api("/superadmin/tablas/arca")); }
+    catch(e) { setAviso({ ok:false, txt:"No se pudo traer de ARCA: "+e.message }); }
+    setOcupado(false);
+  }
+  async function confirmarArca() {
+    if (!confirm(`¿Guardar los montos de ARCA vigentes desde el ${fechaDia(previa.vigente_desde)}?\n\nSe actualizan los topes de todos los estudios.`)) return;
+    setOcupado(true); setAviso(null);
+    try {
+      const r = await api("/superadmin/tablas/arca", { method:"POST", body:JSON.stringify({ firma:previa.firma }) });
+      setPrevia(null);
+      setAviso({ ok:true, txt:`✓ ${r.actualizadas} categoría${r.actualizadas===1?"":"s"} actualizada${r.actualizadas===1?"":"s"} con los valores de ARCA desde el ${fechaDia(r.vigente_desde)}.` });
+      await cargar();
+    } catch(e) { setAviso({ ok:false, txt:e.message }); }
+    setOcupado(false);
+  }
   async function subir(ev) {
     const f = ev.target.files[0]; if (!f) return;
     setSubiendo(true); setAviso(null);
@@ -466,47 +637,47 @@ function Tablas() {
     } catch(e) { setAviso({ ok:false, txt:"No se pudo importar: "+e.message }); }
     setSubiendo(false); ev.target.value = "";
   }
-  const provincias = datos ? [...new Set(datos.componentes.map(c=>c.provincia))] : [];
+  const desdeTopes = datos ? datos.topes.map(t=>String(t.vigente_desde||"").slice(0,10)).sort().pop() : null;
   return (
     <div>
-      <div className="card">
-        <div className="card-title"><span>Cargar o actualizar una tabla</span></div>
-        <p className="muted" style={{fontSize:"13px",marginBottom:"12px"}}>Estas tablas son las mismas para todos los estudios: los topes se usan en el semáforo y los componentes provinciales en la cuota y la deuda estimada. Actualizalas cuando ARCA o la provincia publiquen valores nuevos.</p>
-        {aviso && <div className={`aviso ${aviso.ok?"aviso-ok":"aviso-error"}`}>{aviso.txt}</div>}
-        <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>
-          <select className="input" value={tipo} onChange={e=>setTipo(e.target.value)}>
-            {Object.entries(TIPOS_TABLA).map(([k,[l]])=><option key={k} value={k}>{l}</option>)}
-          </select>
-          <label className="btn btn-pri" style={{cursor:"pointer"}}>{subiendo?"Procesando...":"↑ Subir archivo"}
-            <input type="file" accept=".pdf,.xlsx" style={{display:"none"}} disabled={subiendo} onChange={subir}/>
-          </label>
-        </div>
-        <div className="muted mono" style={{fontSize:"11px",marginTop:"8px"}}>{TIPOS_TABLA[tipo][1]}</div>
-      </div>
+      <p className="muted" style={{fontSize:"13px",marginBottom:"14px"}}>Estas tablas son las mismas para todos los estudios: los topes se usan en el semáforo y para sugerir la cuota, y los componentes provinciales en la cuota y la deuda estimada. Se actualizan en febrero y agosto, cuando ARCA y las provincias publican valores nuevos.</p>
+      {aviso && <div className={`aviso ${aviso.ok?"aviso-ok":"aviso-error"}`}>{aviso.txt}</div>}
       {!datos ? <div className="vacio">Cargando tablas...</div> : (<>
         <div className="card">
-          <div className="card-title"><span>Topes nacionales</span></div>
-          {datos.topes.length===0 ? <div className="vacio">Sin topes cargados.</div> : (
-            <div className="tabla-wrap"><table>
-              <thead><tr><th>Cat.</th><th style={{textAlign:"right"}}>Tope anual</th><th style={{textAlign:"right"}}>Imp. serv.</th><th style={{textAlign:"right"}}>Imp. bienes</th><th style={{textAlign:"right"}}>SIPA</th><th style={{textAlign:"right"}}>Obra social</th></tr></thead>
+          <div className="card-title">
+            <span>Topes y montos nacionales {desdeTopes && <span className="muted" style={{fontSize:"12px",fontWeight:"500",marginLeft:"6px"}}>vigentes desde el {fechaDia(desdeTopes)}</span>}</span>
+            {!previa && <button className="btn btn-pri btn-chico" disabled={ocupado} onClick={traerArca}>{ocupado?"Leyendo ARCA...":"⇣ Traer de ARCA"}</button>}
+          </div>
+          {previa ? <PreviaArca previa={previa} ocupado={ocupado} onConfirmar={confirmarArca} onDescartar={()=>setPrevia(null)}/>
+            : datos.topes.length===0 ? <div className="vacio">Sin topes cargados.</div> : (<>
+            <div className="tabla-wrap"><table className="tabla-compacta">
+              <thead><tr><th>Cat.</th>{CAMPOS_TOPES.map(([k,l])=><th key={k} style={{textAlign:"right"}}>{l}</th>)}</tr></thead>
               <tbody>{datos.topes.map(t=>(
                 <tr key={t.categoria}><td style={{fontWeight:"700"}}>{t.categoria}</td>
-                  {[t.tope_anual,t.imp_integrado_servicios??t.cuota_servicios,t.imp_integrado_bienes??t.cuota_bienes,t.aportes_sipa,t.obra_social].map((v,i)=><td key={i} className="mono" style={{textAlign:"right"}}>{$$(v)}</td>)}
+                  {CAMPOS_TOPES.map(([k])=><td key={k} className="mono" style={{textAlign:"right",whiteSpace:"nowrap"}}>{$$c(t[k])}</td>)}
                 </tr>))}</tbody>
             </table></div>
-          )}
+            <div className="ayuda" style={{marginTop:"8px"}}>"Traer de ARCA" lee la tabla pública de categorías y te muestra las diferencias antes de guardar. La cuota unificada es el total nacional + el componente de Río Negro.</div>
+          </>)}
         </div>
-        {provincias.map(prov=>(
-          <div className="card" key={prov}>
-            <div className="card-title"><span>Componente provincial — {prov}</span></div>
-            <div className="tabla-wrap"><table>
-              <thead><tr><th>Cat.</th><th>Tipo</th><th style={{textAlign:"right"}}>Monto</th><th>Vigente desde</th></tr></thead>
-              <tbody>{datos.componentes.filter(c=>c.provincia===prov).sort((a,b)=>a.categoria.localeCompare(b.categoria)||String(a.tipo).localeCompare(String(b.tipo))).map(c=>(
-                <tr key={`${c.categoria}-${c.tipo}`}><td style={{fontWeight:"700"}}>{c.categoria}</td><td>{c.tipo}</td><td className="mono" style={{textAlign:"right"}}>{$$(c.monto)}</td><td className="mono">{fecha(c.vigente_desde)}</td></tr>
-              ))}</tbody>
-            </table></div>
-          </div>
+        {(datos.provincias||[]).map(prov=>(
+          <GrillaComponente key={`${prov.provincia}-${version}`} prov={prov} componentes={datos.componentes} onGuardado={msg=>{ setAviso({ ok:true, txt:msg }); cargar(); window.scrollTo(0,0); }}/>
         ))}
+        <div className="card">
+          <details className="otras">
+            <summary>Otra forma de cargar: subir un archivo PDF o Excel</summary>
+            <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center",marginTop:"12px"}}>
+              <select className="input" value={tipo} onChange={e=>setTipo(e.target.value)}>
+                {Object.entries(TIPOS_TABLA).map(([k,[l]])=><option key={k} value={k}>{l}</option>)}
+              </select>
+              <label className="btn" style={{cursor:"pointer"}}>{subiendo?"Procesando...":"↑ Subir archivo"}
+                <input type="file" accept=".pdf,.xlsx" style={{display:"none"}} disabled={subiendo} onChange={subir}/>
+              </label>
+            </div>
+            <div className="muted mono" style={{fontSize:"11px",marginTop:"8px"}}>{TIPOS_TABLA[tipo][1]}</div>
+            <div className="ayuda" style={{marginTop:"6px"}}>El archivo de topes no actualiza la cuota unificada ni la fecha de vigencia: para los montos nacionales usá "Traer de ARCA".</div>
+          </details>
+        </div>
       </>)}
     </div>
   );

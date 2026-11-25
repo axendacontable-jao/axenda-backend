@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto"
 import { HttpError, db, esFechaIso, exigirSuperadmin, hoyArgentina, isoDate, q } from "./core.mts"
+import { CATEGORIAS, URL_CATEGORIAS_ARCA, compararConTopes, firmaPrevia, leerMontosArca, redondear } from "./montos-arca.mts"
 
 // Superadmin: ve y administra todos los estudios. Nunca usa getEstudioId ni el RLS del estudio:
 // todas las consultas van con la service role del backend, después de exigirSuperadmin.
@@ -274,7 +275,158 @@ const superTablas: Handler = async ({ req }) => {
     const k = `${c.provincia}|${c.categoria}|${c.tipo}`
     if (!vistos.has(k)) vistos.set(k, c)
   }
-  return { topes: topes ?? [], componentes: [...vistos.values()] }
+  return { topes: topes ?? [], componentes: [...vistos.values()], provincias: PROVINCIAS_COMPONENTE }
+}
+
+// ── Montos nacionales desde la página pública de ARCA ────────────────────────
+
+async function bajarPaginaArca(): Promise<string> {
+  let r: Response
+  try {
+    r = await fetch(URL_CATEGORIAS_ARCA, {
+      headers: { "User-Agent": "Mozilla/5.0 (Axenda Contable)", Accept: "text/html" },
+      signal: AbortSignal.timeout(20_000),
+    })
+  } catch (e: any) {
+    throw new HttpError(502, `No se pudo abrir la página de ARCA: ${e?.name === "TimeoutError" ? "no respondió en 20 segundos" : e?.message ?? e}`)
+  }
+  if (!r.ok) throw new HttpError(502, `La página de ARCA respondió ${r.status}`)
+  const charset = /charset=([\w-]+)/i.exec(r.headers.get("content-type") ?? "")?.[1] ?? "utf-8"
+  const buf = await r.arrayBuffer()
+  try {
+    return new TextDecoder(charset).decode(buf)
+  } catch {
+    return new TextDecoder("utf-8").decode(buf)
+  }
+}
+
+// Componente de Río Negro (tipo único) de cada categoría: con él se arma la cuota unificada.
+async function componenteRioNegro(): Promise<{ montos: Record<string, number>; vigente_desde: string | null }> {
+  const filas = (await q(db().from("componentes_provinciales").select("categoria,tipo,monto,vigente_desde")
+    .in("provincia", ["Rio Negro", "Río Negro"]).order("vigente_desde", { ascending: false }))) ?? []
+  const montos: Record<string, number> = {}
+  let desde: string | null = null
+  for (const f of filas) {
+    if (f.tipo !== "unico" && f.tipo !== "servicios") continue
+    const cat = String(f.categoria).toUpperCase()
+    if (cat in montos || !(Number(f.monto) > 0)) continue
+    montos[cat] = Number(f.monto)
+    desde ??= f.vigente_desde
+  }
+  return { montos, vigente_desde: desde }
+}
+
+async function previaArca() {
+  const leido = leerMontosArca(await bajarPaginaArca())
+  const [topes, rioNegro] = await Promise.all([
+    q(db().from("topes_categoria").select("*").order("categoria")),
+    componenteRioNegro(),
+  ])
+  const comparacion = leido.vigente_desde && leido.filas.length
+    ? compararConTopes({ vigente_desde: leido.vigente_desde, filas: leido.filas }, topes ?? [], rioNegro.montos)
+    : { filas: [], errores: [] }
+  const errores = [...leido.errores, ...comparacion.errores]
+  return {
+    fuente: URL_CATEGORIAS_ARCA,
+    vigente_desde: leido.vigente_desde,
+    rio_negro_desde: rioNegro.vigente_desde,
+    filas: comparacion.filas,
+    hay_cambios: comparacion.filas.some((f) => f.cambios.length > 0),
+    errores,
+    firma: errores.length ? null : firmaPrevia(leido.vigente_desde, comparacion.filas),
+  }
+}
+
+// Vista previa: no guarda nada.
+const superArcaPrevia: Handler = async ({ req }) => {
+  await exigirSuperadmin(req)
+  return await previaArca()
+}
+
+// "Confirmar": vuelve a leer ARCA y solo guarda si da lo mismo que la vista previa que vio el superadmin.
+const superArcaConfirmar: Handler = async ({ req }) => {
+  const yo = await exigirSuperadmin(req)
+  const { firma } = await datos(req)
+  const previa = await previaArca()
+  if (previa.errores.length) throw new HttpError(422, `No se guardó nada: ${previa.errores.join(" · ")}`)
+  if (!firma || firma !== previa.firma) {
+    throw new HttpError(409, "Los montos de ARCA o el componente de Río Negro cambiaron desde la vista previa: volvé a traerlos y revisalos")
+  }
+  let actualizadas = 0
+  for (const f of previa.filas.filter((f) => f.cambios.length)) {
+    const { total_servicios: _s, total_bienes: _b, componente_rio_negro: _c, ...valores } = f.nuevo
+    const filas = await q(db().from("topes_categoria").update(valores).eq("categoria", f.categoria).select("id"))
+    if (!filas?.length) await q(db().from("topes_categoria").insert({ categoria: f.categoria, ...valores }))
+    actualizadas++
+  }
+  console.log(`[superadmin] topes desde ARCA (vigentes desde ${previa.vigente_desde}): ${actualizadas} categorías actualizadas por ${yo.email}`)
+  return { ok: true, actualizadas, vigente_desde: previa.vigente_desde }
+}
+
+// ── Componentes provinciales (carga manual) ──────────────────────────────────
+
+// Río Negro publica un PDF dibujado con vectores (no se puede leer como texto): se carga a mano.
+const PROVINCIAS_COMPONENTE = [
+  { provincia: "Rio Negro", nombre: "Río Negro", tipos: ["unico"], fuente: "https://agencia.rionegro.gov.ar/?contID=61180" },
+  { provincia: "Neuquen", nombre: "Neuquén", tipos: ["unico"], fuente: null },
+  { provincia: "Buenos Aires", nombre: "Buenos Aires", tipos: ["servicios", "bienes"], fuente: null },
+]
+
+// Cuota unificada (topes_categoria.cuota_servicios/bienes) = total nacional + componente de Río Negro.
+async function recalcularCuotaUnificada(rioNegro: Record<string, number>) {
+  const topes = (await q(db().from("topes_categoria").select("*"))) ?? []
+  let n = 0
+  for (const t of topes) {
+    const comp = rioNegro[t.categoria]
+    const partes = [t.imp_integrado_servicios, t.imp_integrado_bienes, t.aportes_sipa, t.obra_social]
+    if (!comp || partes.some((v) => v === null || v === undefined)) continue
+    const base = Number(t.aportes_sipa) + Number(t.obra_social)
+    const update = {
+      cuota_servicios: redondear(Number(t.imp_integrado_servicios) + base + comp),
+      cuota_bienes: redondear(Number(t.imp_integrado_bienes) + base + comp),
+    }
+    if (Number(t.cuota_servicios) === update.cuota_servicios && Number(t.cuota_bienes) === update.cuota_bienes) continue
+    await q(db().from("topes_categoria").update(update).eq("id", t.id))
+    n++
+  }
+  return n
+}
+
+const superGuardarComponentes: Handler = async ({ req }) => {
+  const yo = await exigirSuperadmin(req)
+  const data = await datos(req)
+  const prov = PROVINCIAS_COMPONENTE.find((p) => p.provincia === data.provincia)
+  if (!prov) throw new HttpError(422, "Provincia inválida")
+  if (!esFechaIso(data.vigente_desde)) throw new HttpError(422, "Fecha de vigencia inválida")
+  if (!Array.isArray(data.filas)) throw new HttpError(422, "Faltan los montos")
+  const montos = new Map<string, number>()
+  for (const f of data.filas) {
+    const cat = String(f?.categoria ?? "").toUpperCase()
+    const tipo = String(f?.tipo ?? "")
+    const monto = Number(f?.monto)
+    if (!CATEGORIAS.includes(cat) || !prov.tipos.includes(tipo)) throw new HttpError(422, `Fila inválida: ${cat} ${tipo}`)
+    if (!(monto > 0 && Number.isFinite(monto))) throw new HttpError(422, `Monto inválido en la categoría ${cat} (${tipo})`)
+    montos.set(`${cat}|${tipo}`, redondear(monto))
+  }
+  const faltan = CATEGORIAS.flatMap((c) => prov.tipos.map((t) => `${c}|${t}`)).filter((k) => !montos.has(k))
+  if (faltan.length) throw new HttpError(422, `Completá todas las categorías (faltan: ${faltan.map((k) => k.replace("|", " ")).join(", ")})`)
+
+  // UPDATE de las filas que existen e INSERT de las que faltan (UNIQUE provincia + categoría + tipo).
+  const existentes = (await q(db().from("componentes_provinciales").select("id,categoria,tipo").eq("provincia", prov.provincia))) ?? []
+  const ids = new Map(existentes.map((e: any) => [`${String(e.categoria).toUpperCase()}|${e.tipo}`, e.id]))
+  const nuevas: Record<string, unknown>[] = []
+  for (const [k, monto] of montos) {
+    const id = ids.get(k)
+    if (id) await q(db().from("componentes_provinciales").update({ monto, vigente_desde: data.vigente_desde }).eq("id", id))
+    else {
+      const [categoria, tipo] = k.split("|")
+      nuevas.push({ provincia: prov.provincia, categoria, tipo, monto, vigente_desde: data.vigente_desde })
+    }
+  }
+  if (nuevas.length) await q(db().from("componentes_provinciales").insert(nuevas))
+  const cuotasRecalculadas = prov.provincia === "Rio Negro" ? await recalcularCuotaUnificada((await componenteRioNegro()).montos) : 0
+  console.log(`[superadmin] componente ${prov.provincia} (desde ${data.vigente_desde}) guardado por ${yo.email}`)
+  return { ok: true, guardados: montos.size, cuotas_recalculadas: cuotasRecalculadas }
 }
 
 // ── Cuotas mensuales de los estudios ─────────────────────────────────────────
@@ -363,6 +515,9 @@ export const rutasSuperadmin: [string, string, Handler][] = [
   ["PATCH", "/superadmin/cuotas/:id", superActualizarCuota],
   ["DELETE", "/superadmin/cuotas/:id", superBorrarCuota],
   ["GET", "/superadmin/tablas", superTablas],
+  ["GET", "/superadmin/tablas/arca", superArcaPrevia],
+  ["POST", "/superadmin/tablas/arca", superArcaConfirmar],
+  ["PUT", "/superadmin/componentes", superGuardarComponentes],
   ["POST", "/superadmin/estudios/:id/password", superRestablecerPassword],
   ["GET", "/superadmin/estudios/:id", superEstudio],
   ["PATCH", "/superadmin/estudios/:id", superActualizarEstudio],
