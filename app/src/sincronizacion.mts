@@ -4,7 +4,8 @@ import { getStore } from "@netlify/blobs"
 import { db, diasEnMes, hoyArgentina, isoDate, logActividad, q } from "./core.mts"
 import { descifrarClave, firmarTrabajo, trabajoValido } from "./secretos.mts"
 import {
-  type Comprobante, type MesCcma, type PlanArca, leerTextoFactura, pdfTexto, totalesComprobantesPorMes, ultimosComprobantes,
+  type Comprobante, type MesCcma, type PlanArca, exentoSipaObraSocial, leerTextoFactura, pdfTexto, totalesComprobantesPorMes,
+  ultimosComprobantes,
 } from "./parsers.mts"
 import {
   FalloArca, abrirMisComprobantes, abrirNavegador, bajarComprobantes, capturarEstado, consultarCuentaArt, consultarDeudaCcma,
@@ -198,6 +199,41 @@ export async function sincronizarCliente(clienteId: string, anio: number, mes: n
     await logActividad(clienteId, `Deuda traída de ARCA — ${descripcion}`, cliente.estudio_id)
     await actualizarHistorialCuotas(deuda).catch((e) =>
       registrar("cuotas", "error", `No se pudo actualizar el historial de cuotas: ${e?.message ?? e}`))
+    if (deuda.meses) {
+      await revisarRelacionDependencia(deuda.meses).catch((e) =>
+        console.error(`[arca-sync] relación de dependencia de ${clienteId}: ${e?.message ?? e}`))
+    }
+  }
+
+  // Relación de dependencia según la CCMA (ver exentoSipaObraSocial). Si ARCA no le cobra jubilación ni
+  // obra social, se marca sola una vez y se avisa; si el contador después la desmarca, no se vuelve a
+  // tocar. Al revés (marcado pero ARCA le cobra todo) solo se avisa: puede faltar informarlo en ARCA.
+  async function revisarRelacionDependencia(meses: Map<string, MesCcma>) {
+    const exento = exentoSipaObraSocial(meses)
+    if (exento === null) return
+    const c = await q(d.from("clientes").select("en_relacion_dependencia").eq("id", clienteId).single())
+    const marcado = !!c.en_relacion_dependencia
+    if (exento === marcado) return
+    const nombre = [cliente.apellido, cliente.nombre].filter(Boolean).join(" ")
+    const titulo = exento
+      ? `${nombre}: ARCA no le cobra jubilación ni obra social`
+      : `${nombre}: figura en relación de dependencia, pero ARCA le cobra jubilación y obra social`
+    // Cada aviso una sola vez por cliente (aunque ya lo hayan leído).
+    const ya = await q(d.from("alertas").select("id").eq("cliente_id", clienteId).eq("titulo", titulo).limit(1))
+    if (ya?.length) return
+    if (exento) {
+      await q(d.from("clientes").update({ en_relacion_dependencia: true }).eq("id", clienteId))
+      await logActividad(clienteId, "Marcado en relación de dependencia: según la CCMA de ARCA paga solo el impuesto integrado", cliente.estudio_id)
+    }
+    await q(d.from("alertas").insert({
+      cliente_id: clienteId, estudio_id: cliente.estudio_id, tipo: "arca", icono: "💼", leida: false, titulo,
+      descripcion: exento
+        ? "En la cuenta corriente de ARCA su cuota es solo el impuesto integrado, como pasa con quien trabaja en relación de " +
+          "dependencia (o está exento de aportes). Lo marcamos \"Rel. Dep.\": revisá su cuota en ✏ Editar datos (↺ Recalcular). " +
+          "Si no corresponde, desmarcalo ahí y no se vuelve a cambiar."
+        : "Si trabaja en relación de dependencia, todavía no está informado en ARCA (por eso le cobran jubilación y obra social). " +
+          "Si ya no trabaja en relación de dependencia, desmarcalo en ✏ Editar datos.",
+    }))
   }
 
   // Planes de Mis Facilidades → planes_pago (se emparejan por número; nunca se borra nada).

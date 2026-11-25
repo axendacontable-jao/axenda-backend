@@ -216,6 +216,19 @@ export type MesCcma = {
 
 const redondear = (n: number) => Math.round(n * 100) / 100
 
+// ¿ARCA le cobra jubilación y obra social? En la CCMA cada cuota se divide por impuesto: 020 impuesto
+// integrado, 021 jubilación (SIPA) y 024 obra social. Quien trabaja en relación de dependencia (u otra
+// exención, como algunos jubilados) solo tiene el 020. Se mira el último período con obligación;
+// null si la CCMA no trae ese detalle.
+export function exentoSipaObraSocial(meses: Map<string, MesCcma>): boolean | null {
+  const indice = (k: string) => { const [a, m] = k.split("-").map(Number); return a * 12 + m }
+  const ultimo = [...meses.entries()]
+    .filter(([, m]) => m.obligacion > 0 && Object.keys(m.impuestos).length)
+    .sort(([a], [b]) => indice(b) - indice(a))[0]?.[1]
+  if (!ultimo || !("020" in ultimo.impuestos)) return null
+  return !("021" in ultimo.impuestos) && !("024" in ultimo.impuestos)
+}
+
 function fechaDdmmIso(s: string): string | null {
   const m = s.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
   return m && fechaValida(+m[3], +m[2], +m[1]) ? isoDate(+m[3], +m[2], +m[1]) : null

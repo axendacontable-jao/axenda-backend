@@ -4298,7 +4298,7 @@ function App() {
   const atencion  = activos.filter(c=>{const p=calcPct(c);return p>=0.6&&p<0.85;}).length;
   const limite    = activos.filter(c=>calcPct(c)>=0.85).length;
   const filtrados = clientes
-    .filter(c=>filtro==="todos"?true:filtro==="activos"?c.activo:!c.activo)
+    .filter(c=>filtro==="todos"?true:filtro==="activos"?c.activo:filtro==="portal"?!!c.autoregistro_at:!c.activo)
     .filter(c=>{if(!busqueda)return true;const q=busqueda.toLowerCase();return `${c.nombre} ${c.apellido} ${c.cuit}`.toLowerCase().includes(q);});
   const hoy=new Date();
   const titulos={dashboard:"Dashboard general",clientes:"Clientes",cuotas:"Cuotas del mes",planes:"Planes de pago",topes:"Topes de categoría",config:"Configuración"};
@@ -4428,6 +4428,12 @@ function App() {
                 {["todos","activos","inactivos"].map(f=>(
                   <button key={f} className={`filter-btn ${filtro===f?"active":""}`} onClick={()=>setFiltro(f)}>{f.charAt(0).toUpperCase()+f.slice(1)}</button>
                 ))}
+                {/* Los que se inscribieron solos desde el portal */}
+                {(clientes.some(c=>c.autoregistro_at)||filtro==="portal")&&(
+                  <button className={`filter-btn ${filtro==="portal"?"active":""}`} onClick={()=>setFiltro("portal")} title="Clientes que se inscribieron solos desde el portal">
+                    🆕 Por el portal ({clientes.filter(c=>c.autoregistro_at).length})
+                  </button>
+                )}
                 <button className="add-btn" onClick={()=>setModal(true)}>+ Nuevo cliente</button>
               </div>
               {loading ? (
