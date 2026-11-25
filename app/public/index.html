@@ -698,6 +698,15 @@ function ModalRegistrarRecat({ slug, catActual, onClose, onGuardado }) {
 }
 
 // ── Modal nuevo cliente ──
+// Clientes que se inscribieron solos desde el portal y restricción de solo lectura (el robot no emite facturas).
+const estiloBadge = (color) => ({display:"inline-block",padding:"3px 9px",borderRadius:"20px",fontSize:"11px",fontWeight:"600",color,background:`${color}15`,whiteSpace:"nowrap"});
+function BadgesAlta({ cliente }) {
+  return (<>
+    {cliente.autoregistro_at&&<span style={estiloBadge("#0E7490")} title={`Se inscribió desde el portal el ${new Date(cliente.autoregistro_at).toLocaleDateString("es-AR")}`}>🆕 Se inscribió solo</span>}
+    {cliente.solo_lectura&&<span style={estiloBadge("#6B7A96")} title="El robot usa su clave fiscal solo para consultar ARCA: no emite facturas">🔒 Solo lectura</span>}
+  </>);
+}
+
 function ModalEditarDatos({ cliente, topes, onClose, onGuardado }) {
   const [provincia,setProvincia]         = useState(cliente.provincia||"Rio Negro");
   const [iibbModalidad,setIibbModalidad] = useState(cliente.iibb_modalidad||"monotributo_unificado");
@@ -705,6 +714,7 @@ function ModalEditarDatos({ cliente, topes, onClose, onGuardado }) {
   const [enRelDep,setEnRelDep]           = useState(Boolean(cliente.en_relacion_dependencia));
   const [cuota,setCuota]                 = useState(cliente.cuota?String(Math.round(cliente.cuota)):"");
   const [honorarios,setHonorarios]       = useState(cliente.honorarios?String(Math.round(cliente.honorarios)):"");
+  const [soloLectura,setSoloLectura]     = useState(Boolean(cliente.solo_lectura));
   const [sinDatosProv,setSinDatosProv]   = useState(false);
   const [guardando,setGuardando]         = useState(false);
 
@@ -736,15 +746,19 @@ function ModalEditarDatos({ cliente, topes, onClose, onGuardado }) {
   }
 
   async function guardar() {
+    // Quien se inscribió solo autorizó usar su clave únicamente para consultar: se avisa antes de quitar la restricción.
+    if (cliente.solo_lectura && !soloLectura && cliente.autoregistro_at &&
+      !confirm(`${cliente.nombre} ${cliente.apellido} se inscribió desde el portal y autorizó usar su clave fiscal solo para consultar ARCA. ¿Ya acordaron que también puedas emitir facturas con ella?`)) return;
     setGuardando(true);
     try {
+      const datos = { provincia, iibb_modalidad:iibbModalidad, tipo_actividad:tipoActividad, en_relacion_dependencia:enRelDep, cuota:cuota?parseFloat(cuota):null, honorarios:honorarios?parseFloat(honorarios):null, solo_lectura:soloLectura };
       const res = await apiFetch(`${BACKEND_URL}/clientes/${cliente.slug}/datos`, {
         method:"PATCH", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({ provincia, iibb_modalidad:iibbModalidad, tipo_actividad:tipoActividad, en_relacion_dependencia:enRelDep, cuota:cuota?parseFloat(cuota):null, honorarios:honorarios?parseFloat(honorarios):null }),
+        body:JSON.stringify(datos),
       });
       const d = await res.json();
       if (d.ok) {
-        onGuardado({ provincia, iibb_modalidad:iibbModalidad, tipo_actividad:tipoActividad, en_relacion_dependencia:enRelDep, cuota:cuota?parseFloat(cuota):null, honorarios:honorarios?parseFloat(honorarios):null });
+        onGuardado(soloLectura ? { ...datos, fe_habilitada:false } : datos);
         onClose();
       } else { alert("Error: "+JSON.stringify(d)); }
     } catch(e) { alert("Error: "+e.message); }
@@ -762,7 +776,7 @@ function ModalEditarDatos({ cliente, topes, onClose, onGuardado }) {
           <div className="form-group">
             <label className="form-label">Provincia</label>
             <select className="form-input" value={provincia} onChange={e=>{setProvincia(e.target.value);recalcularCuota(e.target.value,tipoActividad,enRelDep);}}>
-              {PROVINCIAS.map(p=><option key={p} value={p}>{p}</option>)}
+              {[...new Set([...PROVINCIAS, provincia])].map(p=><option key={p} value={p}>{p}</option>)}
             </select>
           </div>
           <div className="form-group">
@@ -805,6 +819,13 @@ function ModalEditarDatos({ cliente, topes, onClose, onGuardado }) {
             <label className="form-label">Honorarios mensuales del estudio</label>
             <input className="form-input" type="number" min="0" value={honorarios} onChange={e=>setHonorarios(e.target.value)} placeholder="ej: 25000"/>
             <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"4px"}}>Lo que el cliente te paga por mes. Se controla en Cuotas del mes.</div>
+          </div>
+          <div className="form-group">
+            <label style={{display:"flex",alignItems:"center",gap:"8px",cursor:"pointer",fontSize:"13px",fontWeight:"500",color:"var(--text)"}}>
+              <input type="checkbox" checked={soloLectura} onChange={e=>setSoloLectura(e.target.checked)} style={{width:"16px",height:"16px"}}/>
+              Solo lectura (la clave fiscal se usa solo para consultar ARCA)
+            </label>
+            <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"4px"}}>Con solo lectura el robot trae comprobantes, deuda y planes, pero no emite facturas: ni vos ni el cliente desde su portal.</div>
           </div>
         </div>
         <div className="modal-footer">
@@ -984,7 +1005,7 @@ function textoBienvenida(cliente) {
     ``,
     `Ingresá en: ${portalUrl()}`,
     `Usuario: tu CUIT (${cuitFmt})`,
-    cliente.portal_password ? `Contraseña: la que elegiste para el portal.` : `Contraseña: tu CUIT, sin guiones. Cambiala desde el menú de tu perfil la primera vez que entres.`,
+    cliente.portal_password || cliente.autoregistro_at ? `Contraseña: la que elegiste para el portal.` : `Contraseña: tu CUIT, sin guiones. Cambiala desde el menú de tu perfil la primera vez que entres.`,
     ``,
     `Si tenés dudas, acá está la ayuda: ${location.origin}/ayuda/cliente/`,
     ``,
@@ -1461,6 +1482,7 @@ function ViewClienteDetalle({ cliente, movs, topes, onBack, onEliminado, onImpor
             </div>
             <IIBBBadge modalidad={cliente.iibb_modalidad}/>
             {cliente.en_relacion_dependencia&&<span style={{display:"inline-block",padding:"3px 9px",borderRadius:"20px",fontSize:"11px",fontWeight:"600",color:"#7C3AED",background:"#7C3AED15"}}>Rel. Dep.</span>}
+            <BadgesAlta cliente={cliente}/>
             {!cliente.activo&&<span style={{fontSize:"11px",background:"#6B7A9614",color:"var(--muted)",padding:"4px 10px",borderRadius:"20px",fontWeight:"600"}}>INACTIVO</span>}
           </div>
         </div>
@@ -2519,10 +2541,11 @@ function FacturacionElectronica({ cliente }) {
 
   if (!datos || !cfg) return <div style={{ height: "80px", borderRadius: "8px" }} className="skeleton" />;
   if (datos.error) return <div style={{ color: "var(--red)", fontSize: "13px" }}>{datos.error}</div>;
-  const puedeEmitir = datos.estudio_habilitado && datos.clave_fiscal;
+  const puedeEmitir = datos.estudio_habilitado && datos.clave_fiscal && !datos.solo_lectura;
   const banner = (txt) => <div style={{ padding: "10px 14px", borderRadius: "8px", background: "#E8A02012", border: "1px solid #E8A02040", fontSize: "12px", marginBottom: "14px" }}>{txt}</div>;
   return (
     <div>
+      {datos.solo_lectura && banner("🔒 Cliente de solo lectura: su clave fiscal se usa solo para consultar ARCA, así que el robot no emite facturas. Si acordaron otra cosa, quitale la restricción en \"✏ Editar datos\".")}
       {!datos.estudio_habilitado && banner("La facturación está desactivada para el estudio. Activala en Configuración → Estudio.")}
       {!datos.clave_fiscal && banner("Para facturar, cargá la clave fiscal del cliente en la pestaña ARCA: el robot la usa para entrar a Comprobantes en línea.")}
       <div className="detail-section" style={{ marginBottom: "16px" }}>
@@ -2531,7 +2554,7 @@ function FacturacionElectronica({ cliente }) {
           El robot entra a "Comprobantes en línea" con la clave fiscal del cliente y genera la Factura C. Antes de confirmar en ARCA compara el resumen con lo pedido; si algo no coincide, no la emite.
         </div>
         <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", fontWeight: "600", marginBottom: "12px" }}>
-          <input type="checkbox" checked={!!cfg.habilitada} onChange={e => setCfg(c => ({ ...c, habilitada: e.target.checked }))} />
+          <input type="checkbox" checked={!!cfg.habilitada && !datos.solo_lectura} disabled={datos.solo_lectura} onChange={e => setCfg(c => ({ ...c, habilitada: e.target.checked }))} />
           El cliente puede emitir facturas desde su portal
         </label>
         <div style={{ maxWidth: "260px" }}><div style={{ fontSize: "11px", color: "var(--muted)", marginBottom: "3px" }}>Punto de venta (solo si tiene más de uno)</div>
@@ -3707,10 +3730,30 @@ function ViewConfig({ estudio, onMarca }) {
   // Botón "Emitir factura" del portal (columna del estudio, no de configuración).
   const [factElec, setFactElec] = useState(null);
   const [factElecMsg, setFactElecMsg] = useState("");
+  // Inscripción de contribuyentes nuevos desde el portal (quedan en solo lectura).
+  const [altaPortal, setAltaPortal] = useState(null);
+  const [altaPortalMsg, setAltaPortalMsg] = useState("");
   useEffect(()=>{
     apiFetch(`${BACKEND_URL}/estudios/me`).then(r=>r.json())
-      .then(d=>setFactElec(!!d.facturacion_electronica_habilitada)).catch(()=>setFactElec(false));
+      .then(d=>{ setFactElec(!!d.facturacion_electronica_habilitada); setAltaPortal(!!d.alta_portal_habilitada); })
+      .catch(()=>{ setFactElec(false); setAltaPortal(false); });
   },[]);
+  const linkAlta = estudio?.id ? `${PORTAL_URL}?e=${estudio.id}&alta=1` : "";
+  async function guardarAltaPortal(valor) {
+    const anterior = altaPortal;
+    setAltaPortal(valor); setAltaPortalMsg("");
+    try {
+      const r = await apiFetch(`${BACKEND_URL}/estudios/me`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({alta_portal_habilitada:valor})});
+      if (!r.ok) throw new Error(`Error ${r.status}`);
+      setAltaPortalMsg("✓ Guardado.");
+    } catch(e) {
+      setAltaPortal(anterior); setAltaPortalMsg("No se pudo guardar: "+e.message);
+    }
+  }
+  async function copiarLinkAlta() {
+    try { await navigator.clipboard.writeText(linkAlta); setAltaPortalMsg("✓ Link copiado."); }
+    catch { prompt("Copiá el link:", linkAlta); }
+  }
   async function guardarFactElec(valor) {
     const anterior = factElec;
     setFactElec(valor); setFactElecMsg("");
@@ -3831,6 +3874,21 @@ function ViewConfig({ estudio, onMarca }) {
               Facturar desde la app (vos y los clientes que habilites en su pestaña "Facturar")
             </label>
             <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"4px"}}>El robot emite la Factura C en "Comprobantes en línea" con la clave fiscal del cliente.{factElecMsg?` ${factElecMsg}`:""}</div>
+          </div>
+          <div className="detail-section" style={{marginTop:"16px"}}>
+            <label style={{display:"flex",alignItems:"center",gap:"8px",fontSize:"13px",fontWeight:"600",cursor:"pointer"}}>
+              <input type="checkbox" checked={!!altaPortal} disabled={altaPortal===null} onChange={e=>guardarAltaPortal(e.target.checked)}/>
+              Recibir inscripciones de contribuyentes nuevos desde el portal
+            </label>
+            <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"4px",lineHeight:1.5}}>
+              El contribuyente se registra solo con su CUIT (se valida en ARCA), elige su contraseña y carga su clave fiscal. Aparece en tu listado marcado "🆕 Se inscribió solo" y en <b>solo lectura</b>: el robot trae sus datos de ARCA pero no emite facturas.{altaPortalMsg?` ${altaPortalMsg}`:""}
+            </div>
+            {altaPortal&&linkAlta&&(
+              <div style={{display:"flex",gap:"8px",alignItems:"center",marginTop:"10px",flexWrap:"wrap"}}>
+                <input className="form-input" readOnly value={linkAlta} style={{flex:"1 1 260px",fontSize:"12px"}} onFocus={e=>e.target.select()}/>
+                <button className="action-chip" onClick={copiarLinkAlta}>📋 Copiar link de inscripción</button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -4396,6 +4454,7 @@ function App() {
                             <div>
                               <div className="cliente-nombre">{c.nombre} {c.apellido}</div>
                               <div className="cliente-cat">{c.categoria?`Categoría ${c.categoria}`:"Sin categoría"}{c.cuit?` · ${c.cuit}`:""}</div>
+                              {(c.autoregistro_at||c.solo_lectura)&&<div style={{display:"flex",gap:"4px",flexWrap:"wrap",marginTop:"4px"}}><BadgesAlta cliente={c}/></div>}
                             </div>
                           </div>
                           <div className={`semaforo-pill ${sem.clase}`}>

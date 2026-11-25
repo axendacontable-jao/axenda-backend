@@ -561,7 +561,12 @@ export async function procesarFactura(facturaId: string) {
   if (!f) return
   const actualizar = (cambios: Record<string, unknown>) =>
     q(d.from("comprobantes_emitidos").update({ ...cambios, actualizado_at: ahora() }).eq("id", facturaId))
-  const cliente = await q(d.from("clientes").select("id,cuit,nombre,apellido,estudio_id,fe_punto_venta").eq("id", f.cliente_id).single())
+  const cliente = await q(d.from("clientes").select("id,cuit,nombre,apellido,estudio_id,fe_punto_venta,solo_lectura").eq("id", f.cliente_id).single())
+  // Última barrera: con la clave de un cliente de solo lectura el robot nunca escribe en ARCA.
+  if (cliente.solo_lectura) {
+    await actualizar({ estado: "error", error: "Cliente de solo lectura: el robot no emite facturas con su clave fiscal" })
+    return
+  }
   const cred = await q(d.from("credenciales_arca").select("clave_cifrada").eq("cliente_id", cliente.id).maybeSingle())
   if (!cred) {
     await actualizar({ estado: "error", error: "El cliente no tiene la clave fiscal cargada" })

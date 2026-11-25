@@ -9,7 +9,8 @@ import {
   facturacionDisponible, feComprobanteAdmin, feEmitirAdmin, feEstado, feGuardarConfig, fePortalComprobante, fePortalEmitir,
   fePortalEstado, fePortalReceptor, feReceptorAdmin, feReintentar, feBorrar,
 } from "./facturacion-electronica.mts"
-import { cifrarClave, exigirSesionPortal, firmarTokenPortal } from "./secretos.mts"
+import { cifrarClave, exigirSesionPortal, firmarTokenPortal, hashPassword, verificarPassword } from "./secretos.mts"
+import { altaPortal, estadoClavePortal, infoAltaPortal, portalBorrarClave, portalGuardarClave, verificarAltaPortal } from "./alta-portal.mts"
 import { TAREAS, despacharSincronizacion, finPeriodoProximaRecategorizacion } from "./sincronizacion.mts"
 import { getStore } from "@netlify/blobs"
 import { randomUUID } from "node:crypto"
@@ -167,7 +168,10 @@ const SECUNDARIO_POR_DEFECTO = "#1B2D4F"
 
 const actualizarEstudio: Handler = async ({ req }) => {
   const estudioId = await getEstudioId(req)
-  const update = elegir(await body(req), ["nombre", "onboarding_completo", "facturacion_electronica_habilitada", "color_primario", "color_secundario"])
+  const update = elegir(await body(req), [
+    "nombre", "onboarding_completo", "facturacion_electronica_habilitada", "alta_portal_habilitada", "color_primario", "color_secundario",
+  ])
+  if ("alta_portal_habilitada" in update) update.alta_portal_habilitada = update.alta_portal_habilitada === true
   for (const [campo, defecto] of [["color_primario", COLOR_POR_DEFECTO], ["color_secundario", SECUNDARIO_POR_DEFECTO]]) {
     if (!(campo in update)) continue
     if (update[campo] === null || update[campo] === "") update[campo] = defecto
@@ -228,11 +232,14 @@ const marcaDe = (e: any) => ({
 
 const marcaEstudio: Handler = async ({ p }) => {
   if (!/^[0-9a-f-]{36}$/i.test(p.id)) throw new HttpError(404, "Estudio no encontrado")
-  const e = await q(db().from("estudios").select("id,nombre,logo_url,color_primario,color_secundario").eq("id", p.id).maybeSingle())
+  const e = await q(db().from("estudios").select("id,nombre,logo_url,color_primario,color_secundario,estado,alta_portal_habilitada")
+    .eq("id", p.id).maybeSingle())
   if (!e) throw new HttpError(404, "Estudio no encontrado")
   // El WhatsApp del estudio, para "¿Olvidaste tu contraseña?" antes de iniciar sesión.
   const wa = await q(db().from("configuracion").select("valor").eq("estudio_id", e.id).eq("clave", "whatsapp_estudio").maybeSingle()).catch(() => null)
-  return { ...marcaDe(e), whatsapp: wa?.valor || null }
+  // "¿Primera vez? Inscribite" en el login del portal (ver alta-portal.mts).
+  const altaPortal = !!e.alta_portal_habilitada && ESTADOS_HABILITADOS.includes(e.estado)
+  return { ...marcaDe(e), whatsapp: wa?.valor || null, alta_portal: altaPortal }
 }
 
 const completarOnboarding: Handler = async ({ req }) => {
@@ -435,11 +442,21 @@ const actualizarCuota: Handler = async ({ req, p }) => {
 
 const actualizarDatosCliente: Handler = async ({ req, p }) => {
   const estudioId = await getEstudioId(req)
-  const update = elegir(await body(req), ["provincia", "iibb_modalidad", "en_relacion_dependencia", "tipo_actividad", "cuota", "honorarios"])
+  const update = elegir(await body(req), ["provincia", "iibb_modalidad", "en_relacion_dependencia", "tipo_actividad", "cuota", "honorarios", "solo_lectura"])
   if ("honorarios" in update) update.honorarios = montoHonorarios(update.honorarios)
+  if ("solo_lectura" in update) {
+    if (typeof update.solo_lectura !== "boolean") throw new HttpError(400, "solo_lectura tiene que ser true o false")
+    // Solo lectura: el robot no emite facturas con esa clave, así que tampoco desde el portal.
+    if (update.solo_lectura) update.fe_habilitada = false
+  }
   if (!Object.keys(update).length) throw new HttpError(400, "Sin campos válidos")
-  await clientePorSlug(p.slug, estudioId)
+  const cliente = await clientePorSlug(p.slug, estudioId, "id,solo_lectura")
   await q(db().from("clientes").update(update).eq("slug", p.slug).eq("estudio_id", estudioId))
+  if ("solo_lectura" in update && update.solo_lectura !== !!cliente.solo_lectura) {
+    await logActividad(cliente.id, update.solo_lectura
+      ? "Pasó a solo lectura: el robot no emite facturas con su clave fiscal"
+      : "Se quitó el solo lectura: el robot ya puede emitir facturas con su clave fiscal", estudioId)
+  }
   return { ok: true }
 }
 
@@ -844,6 +861,8 @@ const datosPortal: Handler = async ({ req, p }) => {
     ultima_recat: ultimaRecat, recat_pendiente: recatPendiente,
     gastos: gastos12, total_gastos: totalGastos,
     arca_auto: arcaAuto, jurisdicciones, cm05_vencimiento: cfg.cm05_vencimiento ?? null,
+    // Quienes se inscribieron solos administran su clave fiscal desde el portal.
+    clave_fiscal: cliente.autoregistro_at ? await estadoClavePortal(cliente.id) : null,
     // Marca blanca: logo, nombre y color del estudio.
     estudio_id: cliente.estudio_id ?? null, estudio: estudio ? marcaDe(estudio) : null,
     logo_url: estudio?.logo_url ?? null, color_primario: estudio ? marcaDe(estudio).color_primario : COLOR_POR_DEFECTO,
@@ -914,6 +933,17 @@ async function clientePorCuit(cuit: string, cols: string) {
   return error || !data ? null : (data as any)
 }
 
+// Las cuentas creadas por inscripción tienen la contraseña con hash en portal_accesos; las demás
+// siguen con la que cargó el estudio (o el CUIT si nunca la cambiaron).
+const accesoPortal = async (clienteId: string) =>
+  q(db().from("portal_accesos").select("password_hash").eq("cliente_id", clienteId).maybeSingle())
+
+async function passwordCorrecta(cliente: any, password: unknown) {
+  const acceso = await accesoPortal(cliente.id)
+  if (acceso) return typeof password === "string" && verificarPassword(password, acceso.password_hash)
+  return password === (cliente.portal_password || cliente.cuit)
+}
+
 const portalLogin: Handler = async ({ req }) => {
   const data = await body(req)
   const cuit = soloDigitos(get(data, "cuit", ""))
@@ -921,7 +951,7 @@ const portalLogin: Handler = async ({ req }) => {
   if (!cuit || !password) return { ok: false, error: "CUIT y contraseña requeridos" }
   const cliente = await clientePorCuit(cuit, "id,slug,nombre,apellido,activo,portal_password,cuit,estudio_id")
   if (!cliente) return { ok: false, error: "Credenciales incorrectas" }
-  if (password !== (cliente.portal_password || cuit)) return { ok: false, error: "Credenciales incorrectas" }
+  if (!(await passwordCorrecta(cliente, password))) return { ok: false, error: "Credenciales incorrectas" }
   const estudio = cliente.estudio_id
     ? await q(db().from("estudios").select("id,nombre,logo_url,color_primario,color_secundario,estado").eq("id", cliente.estudio_id).maybeSingle()).catch(() => null)
     : null
@@ -942,7 +972,14 @@ const portalCambiarPassword: Handler = async ({ req }) => {
   if (!cuit || !actual || !nueva) return { ok: false, error: "Datos incompletos" }
   const cliente = await clientePorCuit(cuit, "id,portal_password,cuit")
   if (!cliente) return { ok: false, error: "Credenciales incorrectas" }
-  if (actual !== (cliente.portal_password || cuit)) return { ok: false, error: "Contraseña actual incorrecta" }
+  if (!(await passwordCorrecta(cliente, actual))) return { ok: false, error: "Contraseña actual incorrecta" }
+  if (await accesoPortal(cliente.id)) {
+    if (typeof nueva !== "string" || nueva.length < 8 || nueva.length > 72) {
+      return { ok: false, error: "La contraseña nueva tiene que tener entre 8 y 72 caracteres" }
+    }
+    await q(db().from("portal_accesos").update({ password_hash: hashPassword(nueva), actualizada_at: ahoraIsoZ() }).eq("cliente_id", cliente.id))
+    return { ok: true }
+  }
   await q(db().from("clientes").update({ portal_password: nueva }).eq("id", cliente.id))
   return { ok: true }
 }
@@ -1836,6 +1873,11 @@ export const rutas: [string, string, Handler][] = [
   ["GET", "/gastos/:slug", gastosCliente],
 
   ["POST", "/portal/login", portalLogin],
+  ["POST", "/portal/alta", altaPortal],
+  ["POST", "/portal/alta/verificar", verificarAltaPortal],
+  ["GET", "/portal/alta/:estudio", infoAltaPortal],
+  ["PUT", "/portal/:slug/clave-fiscal", portalGuardarClave],
+  ["DELETE", "/portal/:slug/clave-fiscal", portalBorrarClave],
   ["PATCH", "/portal/cambiar-password", portalCambiarPassword],
   ["PATCH", "/portal/:slug/marcar-pago", portalMarcarPago],
   ["POST", "/portal/:slug/verificar-arca", portalVerificarArca],

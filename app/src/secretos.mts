@@ -50,6 +50,34 @@ export async function exigirSesionPortal(req: Request, slug: string) {
   }
 }
 
+// ── Contraseñas del portal (clientes que se inscriben solos) ─────────────────
+// scrypt con sal aleatoria: "scrypt$N$r$p$sal$hash" (base64). Las contraseñas que cargó el estudio
+// antes siguen en clientes.portal_password; las nuevas solo se guardan con hash en portal_accesos.
+
+const SCRYPT = { N: 16384, r: 8, p: 1, largo: 32 }
+
+export function hashPassword(password: string): string {
+  const sal = crypto.randomBytes(16)
+  const h = crypto.scryptSync(password, sal, SCRYPT.largo, { N: SCRYPT.N, r: SCRYPT.r, p: SCRYPT.p })
+  return ["scrypt", SCRYPT.N, SCRYPT.r, SCRYPT.p, sal.toString("base64"), h.toString("base64")].join("$")
+}
+
+export function verificarPassword(password: string, guardado: string): boolean {
+  const [alg, n, r, p, sal, hash] = String(guardado ?? "").split("$")
+  if (alg !== "scrypt" || !sal || !hash) return false
+  const esperado = Buffer.from(hash, "base64")
+  const h = crypto.scryptSync(password, Buffer.from(sal, "base64"), esperado.length, { N: Number(n), r: Number(r), p: Number(p) })
+  return h.length === esperado.length && crypto.timingSafeEqual(h, esperado)
+}
+
+// Huella de la IP para los límites del alta pública (no se guarda la IP).
+export function huellaIp(req: Request): string {
+  const ip = req.headers.get("x-nf-client-connection-ip")
+    ?? req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+    ?? "desconocida"
+  return crypto.createHmac("sha256", llave("ip")).update(ip).digest("hex").slice(0, 32)
+}
+
 // ── Trabajos internos (cron → robot) ─────────────────────────────────────────
 
 export const firmarTrabajo = (contenido: string) =>

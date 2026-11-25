@@ -15,7 +15,10 @@ const CONDICIONES_IVA: Record<number, string> = {
 }
 const TIPOS_DOC: Record<number, string> = { 99: "Consumidor Final", 80: "CUIT", 96: "DNI" }
 const CONCEPTOS: Record<number, string> = { 2: "Servicios", 1: "Productos" }
-const COLS_CLIENTE = "id,cuit,nombre,apellido,estudio_id,tipo_actividad,fe_habilitada,fe_punto_venta"
+const COLS_CLIENTE = "id,cuit,nombre,apellido,estudio_id,tipo_actividad,fe_habilitada,fe_punto_venta,solo_lectura"
+// Clientes "solo lectura" (por ejemplo, los que se inscribieron solos desde el portal): el robot usa su
+// clave fiscal únicamente para consultar ARCA, nunca para emitir comprobantes.
+const SOLO_LECTURA = "Este cliente es de solo lectura: su clave fiscal no se usa para emitir facturas. Podés quitarle la restricción en \"Editar datos\"."
 const MAX_POR_DIA_CLIENTE = 20
 const EN_CURSO = ["pendiente", "procesando", "confirmando"]
 
@@ -44,9 +47,9 @@ async function estudioHabilitado(estudioId: string) {
   return !!e?.facturacion_electronica_habilitada && ESTADOS_HABILITADOS.includes(e.estado)
 }
 
-// Disponible si el estudio la activó, el cliente está habilitado y tiene la clave fiscal cargada.
+// Disponible si el estudio la activó, el cliente está habilitado (y no es de solo lectura) y tiene la clave fiscal cargada.
 export async function facturacionDisponible(cliente: any) {
-  return !!cliente.fe_habilitada && (await estudioHabilitado(cliente.estudio_id)) && (await tieneClave(cliente.id))
+  return !!cliente.fe_habilitada && !cliente.solo_lectura && (await estudioHabilitado(cliente.estudio_id)) && (await tieneClave(cliente.id))
 }
 
 const resumen = (c: any) => ({
@@ -191,7 +194,7 @@ export async function feEstado({ req, p }: Ctx) {
   const estudioId = await getEstudioId(req)
   const cliente = await clientePorSlug(p.slug, estudioId, COLS_CLIENTE)
   return {
-    estudio_habilitado: await estudioHabilitado(estudioId), clave_fiscal: await tieneClave(cliente.id),
+    estudio_habilitado: await estudioHabilitado(estudioId), clave_fiscal: await tieneClave(cliente.id), solo_lectura: !!cliente.solo_lectura,
     config: { habilitada: !!cliente.fe_habilitada, punto_venta: cliente.fe_punto_venta ?? null },
     comprobantes: await comprobantesDe(cliente.id, 50), sugerencias: await sugerencias(cliente.id), ...opciones(cliente),
   }
@@ -199,10 +202,11 @@ export async function feEstado({ req, p }: Ctx) {
 
 export async function feGuardarConfig({ req, p }: Ctx) {
   const estudioId = await getEstudioId(req)
-  const cliente = await clientePorSlug(p.slug, estudioId)
+  const cliente = await clientePorSlug(p.slug, estudioId, "id,solo_lectura")
   const d = await cuerpo(req)
   const cambios: Record<string, unknown> = {}
   if ("habilitada" in d) cambios.fe_habilitada = !!d.habilitada
+  if (cambios.fe_habilitada && cliente.solo_lectura) throw new HttpError(409, SOLO_LECTURA)
   if ("punto_venta" in d) {
     const pv = d.punto_venta === null || d.punto_venta === "" ? null : Number(d.punto_venta)
     if (pv !== null && !(Number.isInteger(pv) && pv >= 1 && pv <= 99998)) throw new HttpError(400, "Punto de venta inválido")
@@ -217,6 +221,7 @@ export async function feEmitirAdmin({ req, p }: Ctx) {
   const estudioId = await getEstudioId(req)
   const cliente = await clientePorSlug(p.slug, estudioId, COLS_CLIENTE)
   if (!(await estudioHabilitado(estudioId))) throw new HttpError(409, "Activá la facturación en Configuración → Estudio")
+  if (cliente.solo_lectura) throw new HttpError(409, SOLO_LECTURA)
   if (!(await tieneClave(cliente.id))) throw new HttpError(409, "Cargá la clave fiscal del cliente en la pestaña ARCA")
   return crearPedido(req, cliente, "contador")
 }
@@ -230,7 +235,8 @@ export async function feComprobanteAdmin({ req, p }: Ctx) {
 // Vuelve a intentar un pedido que falló antes de confirmar en ARCA (nunca uno "a revisar").
 export async function feReintentar({ req, p }: Ctx) {
   const estudioId = await getEstudioId(req)
-  const cliente = await clientePorSlug(p.slug, estudioId)
+  const cliente = await clientePorSlug(p.slug, estudioId, "id,solo_lectura")
+  if (cliente.solo_lectura) throw new HttpError(409, SOLO_LECTURA)
   const filas = await q(db().from("comprobantes_emitidos").update({ estado: "pendiente", paso: null, error: null, actualizado_at: new Date().toISOString() })
     .eq("id", p.id).eq("cliente_id", cliente.id).eq("estado", "error").select())
   if (!filas?.length) throw new HttpError(409, "Solo se pueden reintentar las facturas con error")
