@@ -1,4 +1,4 @@
-import type { Browser, Frame, Locator, Page } from "playwright-core"
+import type { Browser, Frame, Locator, Page, Request as PwRequest } from "playwright-core"
 import { readFileSync, readdirSync, rmSync, statfsSync } from "node:fs"
 import {
   type AnticipoArt, type MesCcma, type PlanArca, leerCuentaCorrienteArt, leerPlanesFacilidades, movimientosCcma, parseMonto,
@@ -887,6 +887,67 @@ const casillasDe = (p: Page) => p.locator("input[type='checkbox']").evaluateAll(
   .filter((h) => /pago|venta/i.test(`${(h as HTMLInputElement).name} ${h.id}`))
   .map((h) => `${(h as HTMLInputElement).name || h.id}=${(h as HTMLInputElement).value.slice(0, 20)}`).join(", ")).catch(() => "")
 
+// Cómo maneja la página de ARCA la condición de venta, para diagnosticar un "Condiciones de Venta null":
+// cada casilla (también si venía tildada de entrada o deshabilitada), sus eventos de jQuery, las
+// funciones que corre "Continuar" y los trozos del código de la página que nombran la forma de pago.
+// Dentro de evaluate no se declaran funciones con nombre (el empaquetador les agrega código que el
+// navegador no tiene).
+async function inspeccionarContado(p: Page): Promise<string> {
+  const leer = p.evaluate(async () => {
+    const casillas = [...document.querySelectorAll<HTMLInputElement>("input[type='checkbox']")]
+      .filter((c) => /pago|venta/i.test(`${c.name} ${c.id}`))
+      .map((c) => `${c.id || c.name}=${c.value} ${c.checked ? "✓" : "✗"} (de entrada ${c.defaultChecked ? "✓" : "✗"})${c.disabled ? " DESHABILITADA" : ""}` +
+        `${c.form ? ` form ${c.form.getAttribute("name") || c.form.id || "?"} → ${c.form.getAttribute("action") ?? ""}` : " sin form"}` +
+        `${c.getAttribute("onchange") ? ` onchange=${c.getAttribute("onchange")}` : ""}`)
+    const jq = (window as any).jQuery
+    const primera = document.querySelector<HTMLInputElement>("input[name='formaDePago']")
+    const eventos: string[] = []
+    for (const [que, el] of [["casilla", primera], ["form", primera?.form], ["document", document]] as const) {
+      const ev = el && jq?._data?.(el, "events")
+      if (ev) for (const tipo of Object.keys(ev)) for (const h of ev[tipo]) eventos.push(`${que} ${tipo}${h.selector ? ` (${h.selector})` : ""}: ${String(h.handler).slice(0, 400)}`)
+    }
+    const boton = document.querySelector<HTMLInputElement>("input[value^='Continuar']")
+    const llamadas = `onclick=${boton?.getAttribute("onclick") ?? ""} onsubmit=${boton?.form?.getAttribute("onsubmit") ?? ""}`
+    const funciones: string[] = []
+    for (const nombre of new Set(llamadas.match(/[A-Za-z_$][\w$]*(?=\s*\()/g) ?? [])) {
+      const fn = (window as any)[nombre]
+      if (typeof fn === "function") funciones.push(`${nombre}: ${String(fn).slice(0, 3000)}`)
+    }
+    const fuentes = [...document.querySelectorAll("script")].map((s) => ({ src: s.src, texto: s.src ? "" : s.textContent ?? "" }))
+    for (const f of fuentes) {
+      if (f.src && new URL(f.src).origin === location.origin) f.texto = await fetch(f.src).then((r) => r.text()).catch(() => "")
+    }
+    const trozos: string[] = []
+    for (const f of fuentes) {
+      let ultimo = -1000
+      for (const m of f.texto.matchAll(/formas?_?de_?pago|condicion(es)?_?(de_?)?venta/gi)) {
+        if (m.index! - ultimo < 500 || trozos.length >= 10) continue
+        ultimo = m.index!
+        trozos.push(`${f.src ? f.src.split("/").pop() : "inline"}: ${f.texto.slice(Math.max(0, m.index! - 200), m.index! + 400)}`)
+      }
+    }
+    return { casillas, eventos, llamadas, funciones, scripts: fuentes.map((f) => f.src.split("/").pop() || `inline(${f.texto.length})`), trozos }
+  })
+  const d = await Promise.race([leer, new Promise<null>((r) => setTimeout(() => r(null), 10_000))]).catch((e) => String(e?.message ?? e).slice(0, 120))
+  if (!d || typeof d === "string") return `(no se pudo inspeccionar la página${d ? `: ${d}` : ""})`
+  const una = (s: string) => s.replace(/\s+/g, " ").trim()
+  return [`casillas: ${d.casillas.join(" | ")}`, `eventos jQuery: ${d.eventos.map(una).join(" | ") || "ninguno"}`, `Continuar: ${una(d.llamadas)}`,
+    ...d.funciones.map((f) => `función ${una(f)}`), `scripts: ${d.scripts.join(", ")}`, ...d.trozos.map((t) => `código ${una(t)}`)].join(" ## ")
+}
+
+// Lo que el navegador le manda a ARCA en Comprobantes en línea (formularios y pedidos de fondo), resumido.
+// Solo se anotan los pedidos de RCEL: nunca el ingreso con la clave.
+function resumirEnvio(r: PwRequest): string | null {
+  const tipo = r.resourceType()
+  if (r.method() === "GET" && tipo !== "xhr" && tipo !== "fetch") return null
+  const url = new URL(r.url())
+  if (!/\/rcel\//i.test(url.pathname) || /\.(js|css)$/i.test(url.pathname)) return null
+  const cuerpo = r.postData() ?? url.search.slice(1)
+  const datos = /^\s*[{<[]/.test(cuerpo) ? cuerpo.slice(0, 300)
+    : [...new URLSearchParams(cuerpo)].map(([k, v]) => `${k}=${v.slice(0, 24)}`).join("&").slice(0, 1200)
+  return `${r.method()}${tipo === "document" ? "" : ` ${tipo}`} ${url.pathname.split("/").pop()}${datos ? ` [${datos}]` : ""}`
+}
+
 // Marca la condición de venta "Contado": la casilla visible cuyo texto (etiqueta o texto pegado) dice Contado.
 // ARCA puede traerla tildada de una factura anterior sin registrarla (el resumen dice "null"): con
 // `reclic` se la destilda y se la vuelve a tildar con clics reales. Sin `reclic` solo comprueba que siga.
@@ -950,6 +1011,13 @@ export async function emitirFacturaRcel(
     // Solo se acepta el "¿Confirma...?" final; cualquier otra pregunta se cancela.
     if (d.type() === "confirm" && !puedeConfirmar) d.dismiss().catch(() => {})
     else d.accept().catch(() => {})
+  })
+  const envios: string[] = []
+  rcel.on("request", (r) => {
+    try {
+      const envio = resumirEnvio(r)
+      if (envio && envios.length < 60) envios.push(envio)
+    } catch {}
   })
   const espera = () => rcel.waitForLoadState("networkidle", { timeout: T }).catch(() => {})
   const continuar = async (paso: string) => {
@@ -1041,6 +1109,8 @@ export async function emitirFacturaRcel(
     await espera()
     await new Promise((r) => setTimeout(r, 1500))
   }
+  const paginaReceptor = await inspeccionarContado(rcel)
+  const enviosAntesDeMarcar = envios.length
   await marcarContado(rcel, true)
   // Justo antes de seguir, se comprueba que siga marcada (y se vuelve a marcar si ARCA la limpió).
   await new Promise((r) => setTimeout(r, 800))
@@ -1100,7 +1170,8 @@ export async function emitirFacturaRcel(
   ].filter(Boolean)
   if (faltan.length) {
     throw new FalloArca("error", `El resumen de ARCA no coincide con lo pedido (${faltan.join(", ")}): no se confirmó la factura`,
-      `Casillas al dejar el receptor: ${casillasReceptor} — Resumen de ARCA: ${resumenArca}`)
+      `Casillas al dejar el receptor: ${casillasReceptor} — Resumen de ARCA: ${resumenArca} — Envíos a ARCA (desde el ${enviosAntesDeMarcar + 1}.º ` +
+      `se tildó Contado): ${envios.map((e, i) => `${i + 1}. ${e}`).join(" | ")} — Página del receptor: ${paginaReceptor}`)
   }
   const confirmar = await primeroVisible([rcel.locator("#btngenerar"), rcel.locator("input[value^='Confirmar Datos']")], 10_000)
   if (!confirmar) throw new FalloArca("error", `No encontré "Confirmar Datos..." en el resumen. Botones: ${await describirClickeables(rcel)}`)
